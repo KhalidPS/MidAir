@@ -39,7 +39,7 @@ class FakeTransport : Transport {
 /** A peer to the right of this screen, 8 mm away. */
 class FakePeer(
     override val link: SlideLink = SlideLink(gapMm = 8f, peerSide = ExitEdge.RIGHT),
-    private val onReceive: (IncomingFile) -> Result<String, DataError> = { Result.Success("received-1") },
+    private val onReceive: suspend (IncomingFile) -> Result<String, DataError> = { Result.Success("received-1") },
     /** Progress reported while receiving, before the result. */
     private val progressSteps: List<Float> = emptyList(),
 ) : SlidePeer {

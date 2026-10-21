@@ -34,6 +34,17 @@ private val requiredPermissions: Array<String> = buildList {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.NEARBY_WIFI_DEVICES)
 }.toTypedArray()
 
+/**
+ * Asked for together, but not required: on Android 13+ the notice that keeps a transfer going in the background is
+ * only visible with notification permission. Transfers work without it.
+ */
+private val requestedPermissions: Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        requiredPermissions + Manifest.permission.POST_NOTIFICATIONS
+    } else {
+        requiredPermissions
+    }
+
 @Composable
 actual fun rememberNearbyPermissions(onResult: (granted: Boolean) -> Unit): NearbyPermissions {
     val context = LocalContext.current
@@ -45,7 +56,7 @@ actual fun rememberNearbyPermissions(onResult: (granted: Boolean) -> Unit): Near
         object : NearbyPermissions {
             override fun isGranted(): Boolean = requiredPermissions.all { isGranted(context, it) }
 
-            override fun request() = launcher.launch(requiredPermissions)
+            override fun request() = launcher.launch(requestedPermissions)
 
             override fun isLocationOn(): Boolean {
                 val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return true

@@ -17,10 +17,12 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAlive
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.update
@@ -60,9 +62,18 @@ class ShelfViewModelSlideTest {
         Dispatchers.resetMain()
     }
 
+    private val keepAlive = RecordingKeepAlive()
+
     private fun createViewModel(withPeer: FakePeer) {
         peer = withPeer
-        viewModel = ShelfViewModel(repository, density, peer, clock, TimeZone.UTC)
+        viewModel = ShelfViewModel(
+            repository = repository,
+            density = density,
+            peer = peer,
+            keepAlive = keepAlive,
+            clock = clock,
+            timeZone = TimeZone.UTC,
+        )
     }
 
     /** A 300 px wide card on a 700 px wide screen, its right side [penetrationPx] past the right edge. */
@@ -472,6 +483,35 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
+    fun `the app is kept alive while a handed-over file is sent, and let go after`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
+
+        viewModel.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+
+        assertThat(keepAlive.descriptions).containsExactly("Sending “Q4 Report.pdf”")
+        assertThat(keepAlive.held).isEqualTo(0)
+    }
+
+    @Test
+    fun `while a file comes in, the app is kept alive and messages keep flowing`() = runTest {
+        val arrival = CompletableDeferred<Result<String, DataError>>()
+        createViewModel(FakePeer(onReceive = { arrival.await() }))
+        peer.transport.deliver(peerStart)
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(keepAlive.held).isEqualTo(1)
+        assertThat(keepAlive.descriptions).containsExactly("Receiving “River Valley.jpg”")
+        // Not stuck behind the transfer: a probe still gets its answer.
+        peer.transport.deliver(SlideMessage.Ping(sentAtMillis = 7))
+        assertThat(peer.transport.sent.last()).isEqualTo(SlideMessage.Pong(pingSentAtMillis = 7))
+
+        arrival.complete(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(keepAlive.held).isEqualTo(0)
+    }
+
+    @Test
     fun `a card that can't be received is withdrawn and the error shown`() = runTest {
         createViewModel(FakePeer(onReceive = { Result.Failure(DataError.Local.DISK_FULL) }))
         viewModel.events.test {
@@ -499,6 +539,17 @@ class ShelfViewModelSlideTest {
         var state = awaitItem()
         while (state.isLoading) state = awaitItem()
         return state
+    }
+
+    private class RecordingKeepAlive : TransferKeepAlive {
+        var held = 0
+        val descriptions = mutableListOf<String>()
+
+        override fun hold(description: String): () -> Unit {
+            held++
+            descriptions += description
+            return { held-- }
+        }
     }
 
     private class MutableClock : Clock {

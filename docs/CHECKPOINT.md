@@ -9,11 +9,11 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 
 | Branch | Head | State |
 |---|---|---|
-| `master` | `33717d5` | Phases 0–3 (shelf, slide choreography, Twin Simulator) |
-| `feature/pairing` | `4a03bbe` | Phase 4, on top of `master`. **Not merged** |
-| `feature/cross-device-slide` | `4d69d88` | Phase 5 + Location fix, on top of `feature/pairing`. **Not merged** |
+| `master` | `8699783` | Phases 0–5 and this checkpoint |
+| `feature/transfer-progress` | `0ab28e6` | Phase 6a, on top of `master`. **Not merged** |
+| `feature/background-transfers` | (latest) | Phase 6b, on top of `feature/transfer-progress`. **Not merged** |
 
-Merging `feature/cross-device-slide` into `master` brings in both phases (fast-forward, no conflicts).
+Merging `feature/background-transfers` into `master` brings in both parts of Phase 6 (fast-forward).
 
 ## Done
 
@@ -25,13 +25,18 @@ Merging `feature/cross-device-slide` into `master` brings in both phases (fast-f
 | 3. Twin Simulator | Slide protocol (CBOR, mm geometry, latency prediction), receiver animation and landing, dev-only simulator | `33717d5` |
 | 4. Pairing | Edge-glow screen, hold Connect, 4-digit code confirmed on both phones, bloom on pairing, Nearby link | `4a03bbe` |
 | 5. Real slide between phones | Card mirrored over Nearby, lands on the other phone; the real file is sent and kept in `Downloads/TransferingFileByAir` | `376e7f8`, `4d69d88` |
+| 6a. Transfer progress | Progress ring on the arriving card, tap it to stop the file, Retry on a failed send | `0ab28e6` |
+| 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification, so leaving the app or locking the phone doesn't stop them | `feature/background-transfers` |
 
-**Tests:** 152 unit tests, all passing (`./gradlew testAndroidHostTest`).
+**Tests:** 160 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
 ## Known limitations
 
-- **Big files:** the arriving card waits in the middle until the whole file is there, with no progress shown.
-  Leaving the app or locking the phone during a transfer can interrupt it.
+- **Phase 6 is untested on phones:** the 1 GB video check (also with the app in the background) is still to do.
+- **Notification permission:** asked together with the Nearby permissions on Android 13+. Without it the transfer
+  still runs, but its notification is hidden.
+- **Background start:** the service is started when a transfer begins, which is always while the app is open. If
+  Android refuses it anyway, the transfer runs without the extra protection.
 - **Alignment:** the app doesn't know which side the other phone is on (any edge works) and assumes an 8 mm gap,
   so the card can be slightly off where it crosses.
 - **Pairing needs:** Bluetooth, Wi-Fi and **Location switched on**, plus precise location permission. Android
@@ -43,13 +48,10 @@ Merging `feature/cross-device-slide` into `master` brings in both phases (fast-f
 
 ## What's next
 
-### Phase 6: transfer polish
+### Phase 6: check on phones
 
-- Progress ring on the landing card while a file arrives (from Nearby's transfer updates).
-- A foreground service (`dataSync`), so transfers survive leaving the app or locking the phone.
-- Cancel a transfer, and retry a failed one.
-- Clear errors when the link drops mid-transfer. The sender's item already comes back if the file doesn't arrive.
-- Done when a 1 GB video transfers reliably, also with the app in the background.
+- Send a 1 GB video, leave the app and lock the phone mid-way; it should still arrive.
+- Stop an incoming file by tapping its card; retry a failed send from the snackbar.
 
 ### Phase 7: calibration and polish
 
@@ -65,8 +67,8 @@ Merging `feature/cross-device-slide` into `master` brings in both phases (fast-f
 
 ### Housekeeping
 
-- Merge `feature/cross-device-slide` into `master`.
-- Optionally, one targeted review of Phase 5's file transfer code.
+- Merge `feature/background-transfers` into `master` once Phase 6 works on the phones.
+- Optionally, one targeted review of the file transfer code (Phases 5 and 6 weren't reviewed).
 
 ## How to run it
 

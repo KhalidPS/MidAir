@@ -38,6 +38,8 @@ android {
 dependencies {
     implementation(projects.shared)
     implementation(projects.core.transfer.nearby)
+    implementation(projects.feature.shelf.presentation)
+    implementation(libs.kotlinx.coroutines.core)
     debugImplementation(projects.feature.simulator)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)

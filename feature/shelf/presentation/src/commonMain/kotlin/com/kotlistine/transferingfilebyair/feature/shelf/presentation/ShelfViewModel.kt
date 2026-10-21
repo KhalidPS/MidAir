@@ -10,6 +10,8 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.ApproachRangeMm
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAlive
+import com.kotlistine.transferingfilebyair.core.transfer.domain.keeping
 import com.kotlistine.transferingfilebyair.core.transfer.domain.arrival
 import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardPosition
 import com.kotlistine.transferingfilebyair.core.transfer.domain.predictedAhead
@@ -21,6 +23,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.Inco
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.toUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -48,11 +51,20 @@ class ShelfViewModel(
     private val density: ScreenDensity,
     /** The linked device, if any. Without one, slides only take items off this shelf. */
     private val peer: SlidePeer? = null,
+    /**
+     * Where file transfers run: an app-wide scope, so leaving the screen doesn't stop a file mid-way (this ViewModel's
+     * own scope when not given). Must run on the main thread, like the rest of this class.
+     */
+    private val transfers: CoroutineScope? = null,
+    /** Keeps the app alive while a file moves (a notification on Android). */
+    private val keepAlive: TransferKeepAlive = TransferKeepAlive.None,
     private val clock: Clock = Clock.System,
     private val timeZone: TimeZone = TimeZone.currentSystemDefault(),
 ) : ViewModel() {
 
     private var isObservingItems = false
+
+    private val transferScope: CoroutineScope get() = transfers ?: viewModelScope
 
     /** Everything in the repository, including items that were just sent and are waiting out the undo window. */
     private var shelfItems: List<ShelfItemUi> = emptyList()
@@ -184,12 +196,12 @@ class ShelfViewModel(
         publishItems()
         val slide = outgoing?.takeIf { it.id == id }
         outgoing = null
-        viewModelScope.launch {
+        transferScope.launch {
             if (!handOver(slide, edge)) {
                 eventChannel.send(ShelfEvent.ShowSent(id = id, name = item.name))
                 return@launch
             }
-            deliverFile(item)
+            keepAlive.keeping("Sending “${item.name}”") { deliverFile(item) }
         }
     }
 
@@ -213,7 +225,7 @@ class ShelfViewModel(
         val item = shelfItems.firstOrNull { it.id == id } ?: return
         if (!sentIds.add(id)) return
         publishItems()
-        viewModelScope.launch {
+        transferScope.launch {
             // Sent in this coroutine, not queued: the peer must know the card before it is told it was let go.
             deliver(
                 peer,
@@ -232,7 +244,7 @@ class ShelfViewModel(
                 undoSend(id)
                 eventChannel.send(ShelfEvent.ShowSendFailed(id = item.id, name = item.name, error = committed.error))
             } else {
-                deliverFile(item)
+                keepAlive.keeping("Sending “${item.name}”") { deliverFile(item) }
             }
         }
     }
@@ -244,7 +256,7 @@ class ShelfViewModel(
     private fun finishSend(id: String) {
         // A clear in flight takes sent items with it; removing them as well would race it.
         if (id !in sentIds || isClearing) return
-        viewModelScope.launch {
+        transferScope.launch {
             val removal = repository.removeItem(id)
             sentIds.remove(id)
             removal.onFailure { error ->
@@ -358,7 +370,7 @@ class ShelfViewModel(
     /** Queues [message] for the peer. Messages go out in call order. */
     private fun post(message: SlideMessage) {
         val peer = peer ?: return
-        viewModelScope.launch { deliver(peer, message) }
+        transferScope.launch { deliver(peer, message) }
     }
 
     /** Sends [message] after everything posted before it (the lock is fair) and returns how it went. */
@@ -434,7 +446,11 @@ class ShelfViewModel(
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null
                 eventChannel.send(ShelfEvent.PeerCardArrived(message.itemId))
-                receive(peer, slide.start)
+                // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen
+                // doesn't stop it.
+                transferScope.launch {
+                    keepAlive.keeping("Receiving “${slide.start.name}”") { receive(peer, slide.start) }
+                }
             }
         }
     }
