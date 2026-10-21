@@ -58,6 +58,8 @@ internal fun ShelfCard(
     onOpenClick: () -> Unit,
     onRemoveClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Applied to the preview after its click handling, so gestures added here see touches first. */
+    previewModifier: Modifier = Modifier,
 ) {
     Column(modifier) {
         FilePreview(
@@ -66,7 +68,8 @@ internal fun ShelfCard(
                 .fillMaxWidth()
                 .aspectRatio(item.aspectRatio)
                 .clip(RoundedCornerShape(AirDimens.CardCorner))
-                .clickable(onClick = onOpenClick),
+                .clickable(onClick = onOpenClick)
+                .then(previewModifier),
         )
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.Top) {
@@ -130,8 +133,9 @@ private fun ItemMenu(onOpenClick: () -> Unit, onRemoveClick: () -> Unit) {
     }
 }
 
+/** The card's artwork alone: what lifts off the shelf and slides to the other device. */
 @Composable
-private fun FilePreview(item: ShelfItemUi, modifier: Modifier = Modifier) {
+internal fun FilePreview(item: ShelfItemUi, modifier: Modifier = Modifier) {
     when (item.kind) {
         FileKind.IMAGE -> ImagePreview(item, modifier)
         FileKind.VIDEO -> VideoPreview(item, modifier)

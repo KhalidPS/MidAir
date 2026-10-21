@@ -81,6 +81,10 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
 - **Semantics**: the shelf is a *staging area*. Sending **moves the item off the sender's shelf**. The
   original file in the user's storage is never deleted. The receiver saves the file to
   `Downloads/TransferingFileByAir/` and adds it to its shelf.
+- **Decision (Phase 2):** a card slid off the edge leaves the shelf at once, but it is only removed from storage
+  once the "“Q4 Report.pdf” left the shelf · Undo" snackbar goes away without Undo (however long accessibility
+  settings keep it up). Until a peer actually receives files (Phase 5/6), a slip never loses a staged file. Later,
+  the item comes back if the transfer fails.
 
 ---
 

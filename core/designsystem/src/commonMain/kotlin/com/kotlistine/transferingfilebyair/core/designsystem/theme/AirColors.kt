@@ -22,10 +22,15 @@ object AirColors {
     val GlowMagenta = Color(0xFFB53DFF)
     val GlowOrange = Color(0xFFFF8A1F)
     val GlowBlue = Color(0xFF2F7BFF)
+    val GlowCyan = Color(0xFF3FE0D0)
+    val GlowYellow = Color(0xFFFFE15A)
     val BloomCore = Color(0xFFFFFFFF)
 
     /** Ordered so a sweep gradient loops seamlessly around a rounded screen edge. */
     val GlowSweep = listOf(GlowPink, GlowOrange, GlowMagenta, GlowBlue, GlowPink)
+
+    /** Chromatic fringe on the rim of a bloom, inner band first (warm → cool → pink), like light through a prism. */
+    val IridescentFringe = listOf(GlowYellow, GlowCyan, GlowBlue, GlowMagenta, GlowPink)
 
     /** Pink → orange, used for the peer device name ("Khalid's Pixel"). */
     val HeadlineGradient: Brush = Brush.linearGradient(listOf(GlowPink, GlowMagenta, GlowOrange))

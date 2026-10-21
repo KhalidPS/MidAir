@@ -11,7 +11,10 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
@@ -21,6 +24,9 @@ import com.kotlistine.transferingfilebyair.core.designsystem.motion.stagger
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.ShelfAction
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideState
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotCoordinates
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.liftToSlide
 import kotlin.math.min
 
 // Cascade: each card starts 70 ms after the previous one (capped at the 8th), each slice eases over the remainder.
@@ -35,6 +41,7 @@ private val CascadeRise = 40.dp
 internal fun ShelfGrid(
     items: List<ShelfItemUi>,
     onAction: (ShelfAction) -> Unit,
+    slideState: SlideState,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -42,6 +49,8 @@ internal fun ShelfGrid(
     val intro = remember { Animatable(0f) }
     // Ids present when the grid first appeared play the cascade; anything added later pops in instead.
     val seenIds = remember { items.mapTo(HashSet()) { it.id } }
+    // Forget items that left, so one that comes back (an undone send) pops in again.
+    SideEffect { seenIds.retainAll(items.mapTo(HashSet()) { it.id }) }
 
     LaunchedEffect(Unit) {
         awaitFrames()
@@ -62,11 +71,17 @@ internal fun ShelfGrid(
                 if (appear.value < 1f) appear.animateTo(1f, Motion.pop())
             }
             val cascadeDelay = min(index, CascadeMaxSteps) * CascadeStepMs / CascadeTotalMs.toFloat()
+            val currentItem by rememberUpdatedState(item)
+            val slot = remember(item.id) { SlotCoordinates() }
 
             ShelfCard(
                 item = item,
                 onOpenClick = { onAction(ShelfAction.OnOpenClick(item.id)) },
                 onRemoveClick = { onAction(ShelfAction.OnRemoveClick(item.id)) },
+                previewModifier = Modifier
+                    .liftToSlide(slideState, key = item.id, slot = slot) { slideState.tryLift(currentItem, it) }
+                    // While its copy is in the overlay, the slot shows nothing (the label stays, under the blur).
+                    .graphicsLayer { alpha = if (slideState.hiddenId == item.id) 0f else 1f },
                 modifier = Modifier
                     .animateItem(
                         fadeInSpec = null, // new cards pop in below instead of a plain fade

@@ -19,8 +19,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,9 +35,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kotlistine.transferingfilebyair.core.designsystem.effects.recede
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
@@ -50,8 +54,12 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfBottomBar
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfGrid
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.EdgeBloom
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.LiftedCard
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.rememberSlideState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
@@ -69,6 +77,28 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
         }
     }
 
+    // The snackbar's own lifetime decides the send: it can stay up longer than its nominal duration (accessibility
+    // timeouts), and the item must stay recoverable for as long as Undo is visible.
+    fun offerUndo(event: ShelfEvent.ShowSent) {
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = try {
+                snackbarHostState.showSnackbar(event.toMessage(), UndoLabel, duration = SnackbarDuration.Short)
+            } catch (e: CancellationException) {
+                // The screen went away mid-offer: bring the item back rather than lose it.
+                viewModel.onAction(ShelfAction.OnUndoSend(event.id))
+                throw e
+            }
+            viewModel.onAction(
+                if (result == SnackbarResult.ActionPerformed) {
+                    ShelfAction.OnUndoSend(event.id)
+                } else {
+                    ShelfAction.OnUndoOfferClosed(event.id)
+                },
+            )
+        }
+    }
+
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
             is ShelfEvent.OpenFile -> when (fileOpener.open(event.uri, event.mimeType)) {
@@ -76,6 +106,7 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
                 OpenFileResult.NO_APP -> showMessage(NoAppToOpenMessage)
                 OpenFileResult.NOT_ACCESSIBLE -> showMessage(FileNotAccessibleMessage)
             }
+            is ShelfEvent.ShowSent -> offerUndo(event)
             is ShelfEvent.ShowAddFailed -> showMessage(event.toMessage())
             is ShelfEvent.ShowError -> showMessage(event.error.toMessage())
         }
@@ -110,6 +141,9 @@ fun ShelfScreen(
         barEnter.animateTo(1f, Motion.slideIn())
     }
 
+    val slideState = rememberSlideState(onSend = { id -> onAction(ShelfAction.OnItemSent(id)) })
+    LaunchedEffect(state.items) { slideState.followShelf(state.items) }
+
     val insets = WindowInsets.safeDrawing.asPaddingValues()
     val content = when {
         state.isLoading -> ShelfContent.Loading
@@ -117,49 +151,79 @@ fun ShelfScreen(
         else -> ShelfContent.Items
     }
 
+    // Back to front: the shelf (recedes while a card is lifted), the edge bloom, the lifted card, then the snackbar,
+    // which stays sharp so "Undo" is readable while the shelf is still clearing.
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(AirColors.Background),
+            .background(AirColors.Background)
+            .onPlaced(slideState::attachOverlay),
     ) {
-        AnimatedContent(
-            targetState = content,
-            transitionSpec = { fadeIn(tween(320, delayMillis = 90)) togetherWith fadeOut(tween(160)) },
-            modifier = Modifier.fillMaxSize(),
-        ) { target ->
-            when (target) {
-                ShelfContent.Loading -> Box(Modifier.fillMaxSize())
-                ShelfContent.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    EmptyShelf()
+        Box(
+            Modifier
+                .fillMaxSize()
+                .recede(progress = { slideState.focus.value }),
+        ) {
+            AnimatedContent(
+                targetState = content,
+                transitionSpec = { fadeIn(tween(320, delayMillis = 90)) togetherWith fadeOut(tween(160)) },
+                modifier = Modifier.fillMaxSize(),
+            ) { target ->
+                when (target) {
+                    ShelfContent.Loading -> Box(Modifier.fillMaxSize())
+                    ShelfContent.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        EmptyShelf()
+                    }
+                    ShelfContent.Items -> ShelfGrid(
+                        items = state.items,
+                        onAction = onAction,
+                        slideState = slideState,
+                        contentPadding = PaddingValues(
+                            start = AirDimens.ScreenGutter,
+                            end = AirDimens.ScreenGutter,
+                            top = insets.calculateTopPadding() + 12.dp,
+                            bottom = insets.calculateBottomPadding() + 112.dp,
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
-                ShelfContent.Items -> ShelfGrid(
-                    items = state.items,
-                    onAction = onAction,
-                    contentPadding = PaddingValues(
-                        start = AirDimens.ScreenGutter,
-                        end = AirDimens.ScreenGutter,
-                        top = insets.calculateTopPadding() + 12.dp,
-                        bottom = insets.calculateBottomPadding() + 112.dp,
-                    ),
-                    modifier = Modifier.fillMaxSize(),
-                )
             }
+
+            // Content melts under the status bar and the floating bar instead of being cut off.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(insets.calculateTopPadding() + 20.dp)
+                    .background(Brush.verticalGradient(listOf(AirColors.Background, Color.Transparent))),
+            )
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(insets.calculateBottomPadding() + 120.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, AirColors.Background))),
+            )
+
+            ShelfBottomBar(
+                itemCount = state.items.size,
+                onAddClick = { onAction(ShelfAction.OnAddClick) },
+                onClearClick = { onAction(ShelfAction.OnClearClick) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        val t = barEnter.value
+                        alpha = t.coerceIn(0f, 1f)
+                        translationY = (1f - t) * 56.dp.toPx()
+                    },
+            )
         }
 
-        // Content melts under the status bar and the floating bar instead of being cut off.
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(insets.calculateTopPadding() + 20.dp)
-                .background(Brush.verticalGradient(listOf(AirColors.Background, Color.Transparent))),
-        )
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(insets.calculateBottomPadding() + 120.dp)
-                .background(Brush.verticalGradient(listOf(Color.Transparent, AirColors.Background))),
-        )
+        EdgeBloom(slideState)
+        LiftedCard(slideState)
 
         SnackbarHost(
             hostState = snackbarHostState,
@@ -167,23 +231,6 @@ fun ShelfScreen(
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(bottom = 84.dp),
-        )
-
-        ShelfBottomBar(
-            itemCount = state.items.size,
-            onAddClick = { onAction(ShelfAction.OnAddClick) },
-            onClearClick = { onAction(ShelfAction.OnClearClick) },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
-                .widthIn(max = 420.dp)
-                .fillMaxWidth()
-                .graphicsLayer {
-                    val t = barEnter.value
-                    alpha = t.coerceIn(0f, 1f)
-                    translationY = (1f - t) * 56.dp.toPx()
-                },
         )
     }
 

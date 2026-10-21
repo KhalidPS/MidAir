@@ -14,6 +14,10 @@ internal fun ShelfEvent.ShowAddFailed.toMessage(): String {
     return "Couldn't add $what. ${error.toMessage()}"
 }
 
+internal fun ShelfEvent.ShowSent.toMessage(): String = "“$name” left the shelf"
+
+internal const val UndoLabel = "Undo"
+
 internal const val NoAppToOpenMessage = "No app on this device can open this file."
 
 internal const val FileNotAccessibleMessage =

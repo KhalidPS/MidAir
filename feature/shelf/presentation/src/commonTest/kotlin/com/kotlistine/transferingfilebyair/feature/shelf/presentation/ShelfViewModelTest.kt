@@ -7,6 +7,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isInstanceOf
 import assertk.assertions.isTrue
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
@@ -178,6 +179,108 @@ class ShelfViewModelTest {
 
             assertThat(awaitItem()).isEqualTo(ShelfEvent.ShowError(DataError.Local.DISK_FULL))
         }
+    }
+
+    @Test
+    fun `a sent item leaves the shelf at once but stays stored while undo is offered`() = runTest {
+        repository.items.value = listOf(item("1"), item("2"))
+
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("2")
+        }
+        assertThat(repository.items.value.map { it.id }).containsExactly("1", "2")
+    }
+
+    @Test
+    fun `sending offers to undo it`() = runTest {
+        repository.items.value = listOf(item("1", name = "Q4 Report.pdf"))
+        viewModel.state.test { awaitLoaded() }
+
+        viewModel.events.test {
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.ShowSent(id = "1", name = "Q4 Report.pdf"))
+        }
+    }
+
+    @Test
+    fun `a sent item is removed for good once the undo offer closes`() = runTest {
+        repository.items.value = listOf(item("1"), item("2"))
+
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+            viewModel.onAction(ShelfAction.OnUndoOfferClosed("1"))
+
+            assertThat(repository.items.value.map { it.id }).containsExactly("2")
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("2")
+        }
+    }
+
+    @Test
+    fun `undoing a send brings the item back and keeps it on the shelf`() = runTest {
+        repository.items.value = listOf(item("1"), item("2"))
+
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+            viewModel.onAction(ShelfAction.OnUndoSend("1"))
+
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1", "2")
+        }
+        assertThat(repository.items.value.map { it.id }).containsExactly("1", "2")
+    }
+
+    @Test
+    fun `undo after the offer closed does nothing`() = runTest {
+        repository.items.value = listOf(item("1"), item("2"))
+
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+            viewModel.onAction(ShelfAction.OnUndoOfferClosed("1"))
+            viewModel.onAction(ShelfAction.OnUndoSend("1"))
+
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("2")
+        }
+    }
+
+    @Test
+    fun `a sent item that fails to be removed comes back with the error`() = runTest {
+        repository.items.value = listOf(item("1"))
+        repository.removeFailure = DataError.Local.UNKNOWN
+        viewModel.state.test { awaitLoaded() }
+
+        viewModel.events.test {
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+            assertThat(awaitItem()).isInstanceOf(ShelfEvent.ShowSent::class)
+            viewModel.onAction(ShelfAction.OnUndoOfferClosed("1"))
+
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.ShowError(DataError.Local.UNKNOWN))
+        }
+        viewModel.state.test {
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1")
+        }
+    }
+
+    @Test
+    fun `clearing the shelf drops sends that are still undoable`() = runTest {
+        repository.items.value = listOf(item("1"), item("2"))
+        viewModel.state.test { awaitLoaded() }
+
+        viewModel.events.test {
+            viewModel.onAction(ShelfAction.OnItemSent("1"))
+            assertThat(awaitItem()).isInstanceOf(ShelfEvent.ShowSent::class)
+            viewModel.onAction(ShelfAction.OnClearConfirm)
+            viewModel.onAction(ShelfAction.OnUndoOfferClosed("1"))
+
+            // The removal never runs against the emptied shelf, so there's no "not found" error.
+            expectNoEvents()
+        }
+        assertThat(repository.items.value).isEmpty()
     }
 
     private suspend fun ReceiveTurbine<ShelfState>.awaitLoaded(): ShelfState {
