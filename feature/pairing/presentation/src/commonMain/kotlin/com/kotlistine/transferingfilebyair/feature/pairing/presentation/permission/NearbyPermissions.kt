@@ -11,6 +11,11 @@ interface NearbyPermissions {
 
     /** For when the user declined for good: the app's system settings page. */
     fun openSettings()
+
+    /** Whether the phone's Location setting is on: finding nearby phones needs it, besides the permissions. */
+    fun isLocationOn(): Boolean
+
+    fun openLocationSettings()
 }
 
 @Composable

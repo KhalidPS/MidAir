@@ -39,13 +39,16 @@ class PairingViewModel(private val link: PeerLink) : ViewModel() {
     fun onAction(action: PairingAction) {
         when (action) {
             is PairingAction.OnPermissionsResult -> {
-                hasPermission = action.granted
-                if (action.granted) {
-                    search()
-                } else {
-                    _state.update {
+                hasPermission = action.granted && action.locationOn
+                when {
+                    !action.granted -> _state.update {
                         it.copy(phase = PairingPhase.FAILED, error = DataError.Network.PERMISSION_MISSING)
                     }
+                    // Searching would only fail with a misleading "missing permission": say what's really needed.
+                    !action.locationOn -> _state.update {
+                        it.copy(phase = PairingPhase.FAILED, error = DataError.Network.LOCATION_OFF)
+                    }
+                    else -> search()
                 }
             }
             PairingAction.OnHoldComplete -> connectOrAccept()

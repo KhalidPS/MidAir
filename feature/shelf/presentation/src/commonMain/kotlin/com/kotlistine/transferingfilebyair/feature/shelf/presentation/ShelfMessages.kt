@@ -10,6 +10,7 @@ internal fun DataError.toMessage(): String = when (this) {
     DataError.Network.DISCONNECTED -> "The other device isn't connected."
     DataError.Network.PERMISSION_MISSING -> "Allow nearby devices to pair with the device next to you."
     DataError.Network.RADIO_OFF -> "Turn on Bluetooth and Wi-Fi to reach the device next to you."
+    DataError.Network.LOCATION_OFF -> "Turn on Location to reach the device next to you."
     DataError.Network.PAYLOAD_TOO_LARGE,
     DataError.Network.MALFORMED_MESSAGE,
     DataError.Network.UNKNOWN,

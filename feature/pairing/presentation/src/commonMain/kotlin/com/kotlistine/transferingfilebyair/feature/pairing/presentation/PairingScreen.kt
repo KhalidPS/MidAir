@@ -66,9 +66,13 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val motion = rememberPairingMotion()
     val scope = rememberCoroutineScope()
+    // The permission answer arrives through a callback created before `permissions` exists, so it checks Location
+    // through this holder.
+    val isLocationOn = remember { arrayOf({ true }) }
     val permissions = rememberNearbyPermissions { granted ->
-        viewModel.onAction(PairingAction.OnPermissionsResult(granted))
+        viewModel.onAction(PairingAction.OnPermissionsResult(granted, locationOn = isLocationOn[0]()))
     }
+    isLocationOn[0] = permissions::isLocationOn
     // Leaving happens once: the pairing burst ending and a tap on Done can both ask for it.
     var hasLeft by remember { mutableStateOf(false) }
     fun leave() {
@@ -77,9 +81,11 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
         onDone()
     }
 
-    // Also after coming back from the system settings, where the user may have just allowed it.
+    // Also after coming back from the system settings, where the user may have just allowed it or turned Location on.
     LifecycleResumeEffect(permissions) {
-        if (permissions.isGranted()) viewModel.onAction(PairingAction.OnPermissionsResult(true))
+        if (permissions.isGranted()) {
+            viewModel.onAction(PairingAction.OnPermissionsResult(granted = true, locationOn = permissions.isLocationOn()))
+        }
         onPauseOrDispose { }
     }
 
@@ -98,8 +104,11 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
         motion = motion,
         onAction = { action ->
             when (action) {
-                PairingAction.OnAllowClick ->
-                    if (state.error == DataError.Network.PERMISSION_MISSING) permissions.openSettings() else permissions.request()
+                PairingAction.OnAllowClick -> when (state.error) {
+                    DataError.Network.LOCATION_OFF -> permissions.openLocationSettings()
+                    DataError.Network.PERMISSION_MISSING -> permissions.openSettings()
+                    else -> permissions.request()
+                }
                 PairingAction.OnCloseClick -> leave()
                 else -> viewModel.onAction(action)
             }
@@ -244,8 +253,9 @@ private fun Headline(phase: PairingPhase, peerName: String?, code: String?, erro
 
 @Composable
 private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modifier: Modifier = Modifier) {
-    val needsPermission = state.phase == PairingPhase.NEEDS_PERMISSION ||
-        (state.phase == PairingPhase.FAILED && state.error == DataError.Network.PERMISSION_MISSING)
+    val needsSetting = state.phase == PairingPhase.FAILED &&
+        (state.error == DataError.Network.PERMISSION_MISSING || state.error == DataError.Network.LOCATION_OFF)
+    val needsPermission = state.phase == PairingPhase.NEEDS_PERMISSION || needsSetting
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
@@ -255,7 +265,11 @@ private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modi
             needsPermission -> {
                 TextButton(onClick = { onAction(PairingAction.OnCloseClick) }) { Text("Not now") }
                 PrimaryButton(
-                    text = if (state.phase == PairingPhase.FAILED) "Open settings" else "Allow",
+                    text = when {
+                        state.error == DataError.Network.LOCATION_OFF -> "Turn on Location"
+                        state.phase == PairingPhase.FAILED -> "Open settings"
+                        else -> "Allow"
+                    },
                     onClick = { onAction(PairingAction.OnAllowClick) },
                 )
             }

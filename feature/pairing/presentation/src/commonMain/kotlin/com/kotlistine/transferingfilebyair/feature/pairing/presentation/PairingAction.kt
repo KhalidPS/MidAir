@@ -1,8 +1,11 @@
 package com.kotlistine.transferingfilebyair.feature.pairing.presentation
 
 sealed interface PairingAction {
-    /** The answer to the nearby-devices permission request (or that it was already granted). */
-    data class OnPermissionsResult(val granted: Boolean) : PairingAction
+    /**
+     * The answer to the nearby-devices permission request (or that it was already granted), and whether the phone's
+     * Location setting is on, which finding nearby phones also needs.
+     */
+    data class OnPermissionsResult(val granted: Boolean, val locationOn: Boolean = true) : PairingAction
 
     /** Handled by PairingRoot, which owns the platform permission request. */
     data object OnAllowClick : PairingAction

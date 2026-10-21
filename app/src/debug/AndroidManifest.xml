@@ -1,20 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug builds only: a second launcher entry for the Twin Simulator. -->
+<!--
+    Debug builds only: the Twin Simulator, a developer tool that fakes two phones on one screen to tune the slide.
+    It has no launcher icon, so the only icon is the real app. Open it with:
+    adb shell am start -n com.kotlistine.transferingfilebyair/.SimulatorActivity
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
         <activity
             android:name=".SimulatorActivity"
             android:exported="true"
-            android:label="Air Twin Simulator"
+            android:label="Air Twin Simulator (dev tool)"
             android:taskAffinity=".simulator"
-            android:theme="@style/Theme.TransferingFileByAir">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.TransferingFileByAir" />
     </application>
 
 </manifest>

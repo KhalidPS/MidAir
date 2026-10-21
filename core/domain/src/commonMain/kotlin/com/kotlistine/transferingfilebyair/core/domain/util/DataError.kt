@@ -26,6 +26,9 @@ sealed interface DataError : Error {
 
         /** Bluetooth or Wi-Fi is switched off. */
         RADIO_OFF,
+
+        /** The phone's Location setting is off, and nearby devices can't be found without it. */
+        LOCATION_OFF,
         UNKNOWN,
     }
 }

@@ -1,8 +1,10 @@
 package com.kotlistine.transferingfilebyair.feature.pairing.presentation.permission
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -14,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 
 /**
  * What Nearby Connections needs at runtime on this Android version (the rest are install-time permissions).
@@ -44,6 +47,17 @@ actual fun rememberNearbyPermissions(onResult: (granted: Boolean) -> Unit): Near
 
             override fun request() = launcher.launch(requiredPermissions)
 
+            override fun isLocationOn(): Boolean {
+                val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return true
+                return LocationManagerCompat.isLocationEnabled(manager)
+            }
+
+            override fun openLocationSettings() {
+                context.startActivity(
+                    Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+
             override fun openSettings() {
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -53,5 +67,5 @@ actual fun rememberNearbyPermissions(onResult: (granted: Boolean) -> Unit): Near
     }
 }
 
-private fun isGranted(context: android.content.Context, permission: String) =
+private fun isGranted(context: Context, permission: String) =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED

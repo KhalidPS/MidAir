@@ -70,6 +70,24 @@ class PairingViewModelTest {
     }
 
     @Test
+    fun `with Location switched off it asks for Location instead of searching`() {
+        viewModel.onAction(PairingAction.OnPermissionsResult(granted = true, locationOn = false))
+
+        assertThat(viewModel.state.value.phase).isEqualTo(PairingPhase.FAILED)
+        assertThat(viewModel.state.value.error).isEqualTo(DataError.Network.LOCATION_OFF)
+        assertThat(link.searches).isZero()
+    }
+
+    @Test
+    fun `turning Location on starts the search`() {
+        viewModel.onAction(PairingAction.OnPermissionsResult(granted = true, locationOn = false))
+
+        viewModel.onAction(PairingAction.OnPermissionsResult(granted = true, locationOn = true))
+
+        assertThat(link.searches).isEqualTo(1)
+    }
+
+    @Test
     fun `a phone found nearby is named and ready to connect`() {
         viewModel.onAction(PairingAction.OnPermissionsResult(granted = true))
 
