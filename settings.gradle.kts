@@ -27,6 +27,7 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 rootProject.name = "TransferingFileByAir"
 include(":app")
+include(":baselineprofile")
 include(":shared")
 include(":core:domain")
 include(":core:presentation")

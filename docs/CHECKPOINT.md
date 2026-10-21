@@ -12,7 +12,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 | `master` | `50d75f9` | Phases 0–6 |
 | `feature/calibration` | `c765b7b` | Phase 7a (line-up swipe), on top of `master`. **Not merged** |
 | `feature/auto-reconnect` | `c64ccf8` | Phase 7b, on top of `feature/calibration`. **Not merged** |
-| `feature/glow-and-reduced-motion` | (latest) | Phase 7c, on top of `feature/auto-reconnect`. **Not merged** |
+| `feature/glow-and-reduced-motion` | `4212e94` | Phase 7c, on top of `feature/auto-reconnect`. **Not merged** |
+| `chore/baseline-profile` | (latest) | Phase 7d, on top of `feature/glow-and-reduced-motion`. **Not merged** |
 
 ## Done
 
@@ -29,7 +30,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 | 6c. Land in place | A let-go card flies straight into its slot at the top of the shelf and waits there with its ring (tap to stop); several can arrive at once; the arrival ripples light across the screen; fixed cards drawn off-place on right-to-left phones | `50d75f9` |
 | 7a. Line-up swipe | Right after pairing (or "Line up" on the paired screen), one finger swipes from one phone onto the other; each phone learns which edge faces the other, the gap and the height offset, and slides follow it | `c765b7b` |
 | 7b. Auto-reconnect | Paired phones remember each other (and the line-up) and link up again by themselves while the app is open, after proving they hold the key agreed at pairing; "Unpair" makes both forget | `c64ccf8` |
-| 7c. Flowing glow, reduced motion | On Android 13+ the pairing glow is an AGSL shader whose colours flow along the edge; with "Remove animations" on, the glow and the line-up band stand still | `feature/glow-and-reduced-motion` |
+| 7c. Flowing glow, reduced motion | On Android 13+ the pairing glow is an AGSL shader whose colours flow along the edge; with "Remove animations" on, the glow and the line-up band stand still | `4212e94` |
+| 7d. Baseline Profile setup | `:baselineprofile` module: a profile generator (open the app, scroll the shelf) and benchmarks (cold start with and without the profile, shelf scroll frame times); the app installs the profile itself | `chore/baseline-profile` |
 
 **Tests:** 185 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
@@ -49,6 +51,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
   the remembered phone is spotted before it proves itself). Each phone remembers one other phone.
 - **Review debt:** Phase 5 and the Location fix were not put through the multi-agent review (to save usage).
   The last review round of Phase 4 was also stopped part-way.
+- **Release signing:** there is no release key yet; release builds (and the profile and benchmark builds made from
+  them) are signed with the debug key so they install on a test phone. A real key comes with publishing.
 - **Hardware:** Nearby doesn't work reliably on emulators, so anything about the link needs two real phones.
 
 ## What's next
@@ -66,7 +70,9 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 - ~~Remember the paired phone and its line-up, and reconnect automatically~~ (7b, try it: pair, close the app on
   both phones, open it again; the shelf should say it is paired within a few seconds).
 - ~~AGSL shader glow (Android 13+), reduced-motion mode~~ (7c).
-- Baseline Profile and a 60 fps check on a mid-range phone.
+- Baseline Profile: ~~set up~~ (7d). Still to do, with a phone plugged in (unlocked, a dozen files on the shelf):
+  `./gradlew :app:generateBaselineProfile` (commit the profile it writes under `app/src/release/generated`), then
+  `./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest` for start-up times and shelf frame times.
 - Later (not needed now, the user said): TalkBack "Send to…" action.
 
 ### Phase 8: desktop receiver (KMP)
