@@ -89,7 +89,7 @@ class ShelfViewModel(
 
     fun onAction(action: ShelfAction) {
         when (action) {
-            ShelfAction.OnAddClick -> Unit
+            ShelfAction.OnAddClick, ShelfAction.OnDevicesClick -> Unit
             is ShelfAction.OnFilesPicked -> addFiles(action.uris)
             is ShelfAction.OnOpenClick -> openItem(action.id)
             is ShelfAction.OnRemoveClick -> removeItem(action.id)

@@ -1,0 +1,29 @@
+package com.kotlistine.transferingfilebyair.feature.pairing.presentation
+
+import com.kotlistine.transferingfilebyair.core.domain.util.DataError
+
+enum class PairingPhase {
+    /** Waiting for the user to allow finding nearby devices. */
+    NEEDS_PERMISSION,
+
+    /** Visible and looking; nobody found yet. */
+    SEARCHING,
+
+    /** The other phone is ready: hold Connect. */
+    FOUND,
+
+    /** The other phone asked to pair: check the code, then hold Connect to accept (or decline). */
+    INCOMING,
+    CONNECTING,
+    CONNECTED,
+    FAILED,
+}
+
+data class PairingState(
+    val phase: PairingPhase = PairingPhase.NEEDS_PERMISSION,
+    /** The other phone's name, once found ("Khalid's Pixel"). */
+    val peerName: String? = null,
+    /** Shown on both phones while pairing, so people can check it is the phone in front of them. */
+    val code: String? = null,
+    val error: DataError.Network? = null,
+)

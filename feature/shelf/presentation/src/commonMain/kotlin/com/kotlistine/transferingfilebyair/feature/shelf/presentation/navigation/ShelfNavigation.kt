@@ -13,8 +13,9 @@ data object ShelfGraph
 @Serializable
 internal data object ShelfRoute
 
-fun NavGraphBuilder.shelfGraph() {
+/** [onDevicesClick]: the user wants to pair with a device nearby. */
+fun NavGraphBuilder.shelfGraph(onDevicesClick: () -> Unit) {
     navigation<ShelfGraph>(startDestination = ShelfRoute) {
-        composable<ShelfRoute> { ShelfRoot() }
+        composable<ShelfRoute> { ShelfRoot(onDevicesClick = onDevicesClick) }
     }
 }

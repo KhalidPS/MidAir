@@ -37,6 +37,7 @@ android {
 
 dependencies {
     implementation(projects.shared)
+    implementation(projects.core.transfer.nearby)
     debugImplementation(projects.feature.simulator)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)

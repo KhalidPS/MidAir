@@ -93,6 +93,19 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
   - The receiver pings the sender when a card is lifted; the round trip is known before the card reaches the edge.
   - The Twin Simulator is one debug-only module (`:feature:simulator`, its own launcher entry). Its twins run the
     real shelf screen and ViewModel on in-memory shelves; files picked in it are also staged on the real shelf.
+- **Decisions (Phase 4):**
+  - Pairing opens from the shelf's device button (the shelf stays the start screen); after pairing it returns there.
+  - Both phones advertise and discover at once. The user who holds Connect asks; then **both** phones show
+    "Pair with <name>" and the same 4-digit code, and each pairs only when its own user holds Connect to confirm
+    (or declines / cancels), like Bluetooth pairing. Nothing pairs without a person checking the code on each phone,
+    so a device that copies a name gets nowhere, on either side. If both people press Connect at once, it is one
+    attempt. While pairing with one device, requests from any other are turned down. The bloom plays on each phone as
+    its link comes up.
+  - Permissions: besides the Bluetooth/Wi-Fi ones, Nearby's discovery demands **precise location** on every Android
+    version (verified on Android 13: it fails with `MISSING_PERMISSION_ACCESS_FINE_LOCATION` otherwise), so the app
+    asks for it and says why.
+  - The Nearby link lives in `:core:transfer:nearby` (Android only, Play services) behind `PeerLink`; the app shell
+    binds it. Shelf slides don't use it yet (Phase 5).
 
 ---
 

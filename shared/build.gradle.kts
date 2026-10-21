@@ -13,6 +13,7 @@ kotlin {
             implementation(projects.core.transfer.data)
             implementation(projects.feature.shelf.data)
             implementation(projects.feature.shelf.presentation)
+            implementation(projects.feature.pairing.presentation)
             implementation(libs.jetbrains.navigation.compose)
             implementation(libs.kotlinx.serialization.core)
             api(project.dependencies.platform(libs.koin.bom))

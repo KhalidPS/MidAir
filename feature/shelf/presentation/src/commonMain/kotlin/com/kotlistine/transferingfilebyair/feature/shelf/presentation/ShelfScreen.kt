@@ -77,7 +77,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
-fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
+fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -143,6 +143,7 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
         onAction = { action ->
             when (action) {
                 ShelfAction.OnAddClick -> filePicker.launch()
+                ShelfAction.OnDevicesClick -> onDevicesClick()
                 else -> viewModel.onAction(action)
             }
         },
@@ -278,6 +279,7 @@ fun ShelfScreen(
 
             ShelfBottomBar(
                 itemCount = state.items.size,
+                onDevicesClick = { onAction(ShelfAction.OnDevicesClick) },
                 onAddClick = { onAction(ShelfAction.OnAddClick) },
                 onClearClick = { onAction(ShelfAction.OnClearClick) },
                 modifier = Modifier

@@ -39,6 +39,7 @@ import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 @Composable
 internal fun ShelfBottomBar(
     itemCount: Int,
+    onDevicesClick: () -> Unit,
     onAddClick: () -> Unit,
     onClearClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -52,11 +53,11 @@ internal fun ShelfBottomBar(
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Pairing arrives in a later phase; until then this only shows that no device is connected.
-        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+        // Opens pairing with the device next to this one.
+        IconButton(onClick = onDevicesClick, modifier = Modifier.size(44.dp)) {
             Icon(
                 imageVector = AirIcons.Devices,
-                contentDescription = "No device paired",
+                contentDescription = "Pair with a device nearby",
                 tint = AirColors.OnSurfaceMuted,
                 modifier = Modifier.size(22.dp),
             )

@@ -20,6 +20,12 @@ sealed interface DataError : Error {
 
         /** The bytes received are not a message this version understands. */
         MALFORMED_MESSAGE,
+
+        /** The user hasn't allowed the app to find nearby devices. */
+        PERMISSION_MISSING,
+
+        /** Bluetooth or Wi-Fi is switched off. */
+        RADIO_OFF,
         UNKNOWN,
     }
 }

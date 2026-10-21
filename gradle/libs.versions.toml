@@ -24,6 +24,7 @@ ksp = "2.3.12"
 coil = "3.6.3"
 kotlinxDatetime = "0.8.0"
 androidxTestRunner = "1.7.0"
+playServicesNearby = "19.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -44,6 +45,7 @@ jetbrains-lifecycle-runtime-compose = { group = "org.jetbrains.androidx.lifecycl
 jetbrains-navigation-compose = { group = "org.jetbrains.androidx.navigation", name = "navigation-compose", version.ref = "jetbrainsNavigation" }
 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
 kotlinx-serialization-cbor = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-cbor", version.ref = "kotlinxSerialization" }
@@ -59,6 +61,7 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqlite" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+play-services-nearby = { group = "com.google.android.gms", name = "play-services-nearby", version.ref = "playServicesNearby" }
 coil-video = { group = "io.coil-kt.coil3", name = "coil-video", version.ref = "coil" }
 
 assertk = { group = "com.willowtreeapps.assertk", name = "assertk", version.ref = "assertk" }
