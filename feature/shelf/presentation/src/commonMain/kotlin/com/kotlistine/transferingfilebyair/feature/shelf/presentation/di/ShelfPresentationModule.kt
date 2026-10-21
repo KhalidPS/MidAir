@@ -5,5 +5,5 @@ import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 
 val shelfPresentationModule = module {
-    viewModel { ShelfViewModel(repository = get()) }
+    viewModel { ShelfViewModel(repository = get(), density = get()) }
 }

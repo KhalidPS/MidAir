@@ -9,4 +9,17 @@ sealed interface DataError : Error {
         DISK_FULL,
         UNKNOWN,
     }
+
+    /** Failures talking to the paired device. */
+    enum class Network : DataError {
+        /** No link to the peer (never paired, or the link dropped). */
+        DISCONNECTED,
+
+        /** The message is bigger than the transport accepts in one piece. */
+        PAYLOAD_TOO_LARGE,
+
+        /** The bytes received are not a message this version understands. */
+        MALFORMED_MESSAGE,
+        UNKNOWN,
+    }
 }

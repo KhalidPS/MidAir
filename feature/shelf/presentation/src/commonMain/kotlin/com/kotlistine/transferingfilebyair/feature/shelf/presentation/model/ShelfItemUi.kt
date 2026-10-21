@@ -22,6 +22,7 @@ data class ShelfItemUi(
     val mimeType: String,
     /** Opening lines of a text file, drawn on its page preview. */
     val textPreview: String? = null,
+    val sizeBytes: Long = 0,
 )
 
 internal fun ShelfItem.toUi(now: Instant, timeZone: TimeZone): ShelfItemUi = ShelfItemUi(
@@ -34,6 +35,7 @@ internal fun ShelfItem.toUi(now: Instant, timeZone: TimeZone): ShelfItemUi = She
     uri = uri,
     mimeType = mimeType,
     textPreview = textPreview,
+    sizeBytes = sizeBytes,
 )
 
 /** Decimal units, as the reference design shows them: "208 bytes", "16 KB", "1.6 MB". */

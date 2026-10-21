@@ -2,11 +2,16 @@ package com.kotlistine.transferingfilebyair.feature.shelf.presentation
 
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 
-internal fun DataError.Local.toMessage(): String = when (this) {
+internal fun DataError.toMessage(): String = when (this) {
     DataError.Local.FILE_NOT_FOUND -> "The file couldn't be found."
     DataError.Local.PERMISSION_DENIED -> "Access to the file was denied."
     DataError.Local.DISK_FULL -> "Your device is out of storage."
     DataError.Local.UNKNOWN -> "Something went wrong."
+    DataError.Network.DISCONNECTED -> "The other device isn't connected."
+    DataError.Network.PAYLOAD_TOO_LARGE,
+    DataError.Network.MALFORMED_MESSAGE,
+    DataError.Network.UNKNOWN,
+    -> "Couldn't talk to the other device."
 }
 
 internal fun ShelfEvent.ShowAddFailed.toMessage(): String {

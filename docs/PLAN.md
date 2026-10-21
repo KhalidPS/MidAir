@@ -85,6 +85,14 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
   once the "“Q4 Report.pdf” left the shelf · Undo" snackbar goes away without Undo (however long accessibility
   settings keep it up). Until a peer actually receives files (Phase 5/6), a slip never loses a staged file. Later,
   the item comes back if the transfer fails.
+- **Decisions (Phase 3):**
+  - A card that leaves through the edge facing a linked peer is handed over, and the send is final (no Undo); one
+    that leaves through any other edge behaves as in Phase 2.
+  - The sender captures the lifted card as drawn (a ≤320 px WebP in `DragStart`), so the receiver shows the same
+    card for any file type.
+  - The receiver pings the sender when a card is lifted; the round trip is known before the card reaches the edge.
+  - The Twin Simulator is one debug-only module (`:feature:simulator`, its own launcher entry). Its twins run the
+    real shelf screen and ViewModel on in-memory shelves; files picked in it are also staged on the real shelf.
 
 ---
 

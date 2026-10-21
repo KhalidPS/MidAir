@@ -5,6 +5,7 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isGreaterThan
 import assertk.assertions.isLessThan
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import kotlin.test.Test
 
 class SlideGeometryTest {
@@ -49,6 +50,39 @@ class SlideGeometryTest {
     @Test
     fun `flicking a card back inward keeps it even when it is past the edge`() {
         assertThat(decideRelease(cardEndingAt(1200f), width, velocityX = -2000f)).isEqualTo(ReleaseDecision.Return)
+    }
+
+    private fun frame(left: Float, right: Float, velocityX: Float) = SlideFrame(
+        id = "7",
+        cardLeftPx = left,
+        cardTopPx = 100f,
+        cardRightPx = right,
+        screenWidthPx = width,
+        velocityXPxPerS = velocityX,
+        velocityYPxPerS = 0f,
+        tiltDegrees = 0f,
+    )
+
+    @Test
+    fun `a frame measures how far past either edge the card is`() {
+        val frame = frame(left = 660f, right = 1060f, velocityX = 500f)
+
+        assertThat(frame.penetrationPx(ExitEdge.RIGHT)).isEqualTo(60f)
+        assertThat(frame.penetrationPx(ExitEdge.LEFT)).isEqualTo(-660f)
+    }
+
+    @Test
+    fun `outward speed is positive when moving toward the edge in question`() {
+        val frame = frame(left = -30f, right = 370f, velocityX = -500f)
+
+        assertThat(frame.outwardPxPerS(ExitEdge.LEFT)).isEqualTo(500f)
+        assertThat(frame.outwardPxPerS(ExitEdge.RIGHT)).isEqualTo(-500f)
+    }
+
+    @Test
+    fun `the nearest edge is the one on the side of the card's centre`() {
+        assertThat(frame(left = 600f, right = 1000f, velocityX = 0f).nearestEdge).isEqualTo(ExitEdge.RIGHT)
+        assertThat(frame(left = 0f, right = 400f, velocityX = 0f).nearestEdge).isEqualTo(ExitEdge.LEFT)
     }
 
     @Test

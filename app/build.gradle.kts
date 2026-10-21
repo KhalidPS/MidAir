@@ -37,6 +37,7 @@ android {
 
 dependencies {
     implementation(projects.shared)
+    debugImplementation(projects.feature.simulator)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
     implementation(platform(libs.koin.bom))

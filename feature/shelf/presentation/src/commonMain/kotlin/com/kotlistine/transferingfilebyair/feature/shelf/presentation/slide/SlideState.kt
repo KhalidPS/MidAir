@@ -16,6 +16,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -27,12 +29,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
+import com.kotlistine.transferingfilebyair.core.presentation.image.encodeForTransfer
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.exp
 import kotlin.math.max
 
@@ -44,8 +50,35 @@ private const val VelocitySmoothingSeconds = 0.06f
 private const val FlarePeak = 0.45f
 private val MinExitSpeed = 1400.dp
 
+/**
+ * The card picture sent to the peer must fit in one message (32 KB) with room for the rest of it. Busy pictures are
+ * tried again smaller and softer; past the last attempt the card goes without one (the peer draws a plain card).
+ */
+private const val ThumbnailMaxBytes = 24 * 1024
+private val ThumbnailAttempts = listOf(320 to 80, 256 to 70, 192 to 55)
+
+private fun ImageBitmap.encodeWithinBudget(): ByteArray? =
+    ThumbnailAttempts.firstNotNullOfOrNull { (maxSide, quality) ->
+        encodeForTransfer(maxSide, quality)?.takeIf { it.size <= ThumbnailMaxBytes }
+    }
+
 /** Where the bloom sits and how bright it is. [intensity] goes above 1 while a sent card flares. */
 internal class Bloom(val edge: ExitEdge, val intensity: Float, val centerY: Float)
+
+/** Everything the carried card does, for mirroring it on the device next door. All geometry is in pixels. */
+interface SlideListener {
+    /** A card was lifted. [thumbnail] is the card as drawn, compressed; null when it couldn't be captured. */
+    fun onLifted(id: String, cardWidthPx: Float, cardHeightPx: Float, thumbnail: ByteArray?)
+
+    /** Every frame from lift until the card is gone, including its flight out after a send. */
+    fun onMoved(frame: SlideFrame)
+
+    /** Let go short of the edge: it sprang back into its slot. */
+    fun onReturned(id: String)
+
+    /** It left through [edge] and is now fully off screen. */
+    fun onSent(id: String, edge: ExitEdge)
+}
 
 /**
  * The lift → slide → send / spring-back choreography of one shelf card.
@@ -59,7 +92,9 @@ class SlideState internal constructor(
     private val scope: CoroutineScope,
     private val haptics: HapticFeedback,
     private val density: Density,
-    private val onSend: (id: String) -> Unit,
+    private val listener: SlideListener,
+    /** Whether a peer is watching: only then is the card captured and every frame reported. */
+    private val isMirrored: () -> Boolean,
 ) {
     /** The card being carried, drawn in the overlay. Non-null until its animation fully ends, which also guards re-entry. */
     var item: ShelfItemUi? by mutableStateOf(null)
@@ -84,10 +119,13 @@ class SlideState internal constructor(
     private val glow = Animatable(1f)
     private val flare = Animatable(0f)
 
+    /** The overlay card's recording, set by [LiftedCard]; captured once after lift for the peer. */
+    internal var cardLayer: GraphicsLayer? = null
+
     private var overlay: LayoutCoordinates? = null
     private var fingerOffset = Offset.Zero
     private var dragging = false
-    private var tiltJob: Job? = null
+    private var trackJob: Job? = null
     private var armed = false
     private var pullStep = 0
     private var hiddenItemLeft = false
@@ -117,7 +155,9 @@ class SlideState internal constructor(
             awaitFrames(3)
             if (dragging && this@SlideState.item?.id == item.id) hiddenId = item.id
         }
-        tiltJob = scope.launch { tiltWithVelocity() }
+        val mirrored = isMirrored()
+        if (mirrored) scope.launch { announce(item) }
+        trackJob = scope.launch { track(item.id, report = mirrored) }
         return true
     }
 
@@ -132,12 +172,11 @@ class SlideState internal constructor(
     internal fun release(velocity: Velocity) {
         if (!dragging) return
         dragging = false
-        tiltJob?.cancel()
         val item = item ?: return
-        val width = overlay?.size?.width?.toFloat() ?: return settleBack(velocity)
+        val width = overlay?.size?.width?.toFloat() ?: return settleBack(item, velocity)
         when (val decision = decideRelease(cardRect(fingerOffset, LiftedScale), width, velocity.x)) {
             is ReleaseDecision.Send -> send(item, decision.edge, velocity, width)
-            ReleaseDecision.Return -> settleBack(velocity)
+            ReleaseDecision.Return -> settleBack(item, velocity)
         }
     }
 
@@ -145,8 +184,7 @@ class SlideState internal constructor(
     internal fun cancel() {
         if (!dragging) return
         dragging = false
-        tiltJob?.cancel()
-        settleBack(Velocity.Zero)
+        item?.let { settleBack(it, Velocity.Zero) }
     }
 
     /**
@@ -213,14 +251,16 @@ class SlideState internal constructor(
                 initialVelocity = Offset(direction * speed, velocity.y),
             )
             // Off screen: the grid closes the gap behind the clearing blur.
-            onSend(item.id)
+            trackJob?.cancel()
+            listener.onSent(item.id, edge)
             light.joinAll()
             reset()
         }
     }
 
-    private fun settleBack(velocity: Velocity) {
+    private fun settleBack(item: ShelfItemUi, velocity: Velocity) {
         haptics.performHapticFeedback(HapticFeedbackType.GestureEnd)
+        listener.onReturned(item.id)
         scope.launch {
             listOf(
                 launch { focus.animateTo(0f, tween(300, easing = FastOutSlowInEasing)) },
@@ -238,7 +278,9 @@ class SlideState internal constructor(
     }
 
     private suspend fun reset() {
+        trackJob?.cancel()
         item = null
+        cardLayer = null
         offset.snapTo(Offset.Zero)
         lift.snapTo(0f)
         tilt.snapTo(0f)
@@ -246,20 +288,44 @@ class SlideState internal constructor(
         flare.snapTo(0f)
     }
 
-    /** Leans the card into its motion, from a smoothed per-frame velocity, so it rights itself when the finger rests. */
-    private suspend fun tiltWithVelocity() {
-        var last = fingerOffset
+    /** Tells the listener about the lift once the overlay copy has been drawn, so its picture can go along. */
+    private suspend fun announce(item: ShelfItemUi) {
+        awaitFrames(2)
+        if (this.item?.id != item.id) return
+        val picture = cardLayer?.toImageBitmap()
+        val thumbnail = picture?.let { withContext(Dispatchers.Default) { it.encodeWithinBudget() } }
+        // Let go while the picture was being made: its return or send has already been reported, so a late lift
+        // would open a slide on the peer that nothing ever closes.
+        if (!dragging || this.item?.id != item.id) return
+        listener.onLifted(item.id, restRect.width * LiftedScale, restRect.height * LiftedScale, thumbnail)
+    }
+
+    /**
+     * One frame loop for the card's whole flight: a smoothed velocity leans the card into its motion while it is
+     * held (righting itself when the finger rests) and, when [report] is set, every frame goes to the listener.
+     */
+    private suspend fun track(id: String, report: Boolean) {
+        var last = offset.value
         var lastNanos = withFrameNanos { it }
-        var velocityX = 0f
+        var velocity = Offset.Zero
         while (true) {
             val now = withFrameNanos { it }
             val dt = ((now - lastNanos) / 1_000_000_000f).coerceAtLeast(0.001f)
-            val current = fingerOffset
-            velocityX += ((current.x - last.x) / dt - velocityX) * (1f - exp(-dt / VelocitySmoothingSeconds))
+            val current = offset.value
+            velocity += ((current - last) / dt - velocity) * (1f - exp(-dt / VelocitySmoothingSeconds))
             last = current
             lastNanos = now
-            val thousandDps = velocityX / density.density / 1000f
-            tilt.snapTo((thousandDps * TiltDegreesPerThousandDps).coerceIn(-MaxTiltDegrees, MaxTiltDegrees))
+            if (dragging) {
+                val thousandDps = velocity.x / density.density / 1000f
+                tilt.snapTo((thousandDps * TiltDegreesPerThousandDps).coerceIn(-MaxTiltDegrees, MaxTiltDegrees))
+            }
+            val width = overlay?.size?.width?.toFloat() ?: continue
+            if (report) {
+                val card = currentCard()
+                listener.onMoved(
+                    SlideFrame(id, card.left, card.top, card.right, width, velocity.x, velocity.y, tilt.value),
+                )
+            }
         }
     }
 
@@ -290,12 +356,21 @@ private fun Rect.scaledBy(scale: Float): Rect {
 }
 
 @Composable
-internal fun rememberSlideState(onSend: (id: String) -> Unit): SlideState {
+internal fun rememberSlideState(listener: SlideListener, isMirrored: Boolean): SlideState {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
-    val currentOnSend by rememberUpdatedState(onSend)
+    val currentListener by rememberUpdatedState(listener)
+    val currentIsMirrored by rememberUpdatedState(isMirrored)
     return remember(scope, haptics, density) {
-        SlideState(scope, haptics, density, onSend = { currentOnSend(it) })
+        val forwarding = object : SlideListener {
+            override fun onLifted(id: String, cardWidthPx: Float, cardHeightPx: Float, thumbnail: ByteArray?) =
+                currentListener.onLifted(id, cardWidthPx, cardHeightPx, thumbnail)
+
+            override fun onMoved(frame: SlideFrame) = currentListener.onMoved(frame)
+            override fun onReturned(id: String) = currentListener.onReturned(id)
+            override fun onSent(id: String, edge: ExitEdge) = currentListener.onSent(id, edge)
+        }
+        SlideState(scope, haptics, density, forwarding, isMirrored = { currentIsMirrored })
     }
 }

@@ -4,19 +4,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.FilePreview
 import kotlin.math.roundToInt
 
@@ -30,6 +35,9 @@ private val LiftedElevation = 28.dp
 internal fun LiftedCard(state: SlideState, modifier: Modifier = Modifier) {
     val item = state.item ?: return
     val rest = state.restRect
+    // The card's content (untransformed) is recorded as it draws, so the slide can send a picture of it.
+    val recording = rememberGraphicsLayer()
+    SideEffect { state.cardLayer = recording }
     FilePreview(
         item = item,
         modifier = modifier
@@ -51,17 +59,24 @@ internal fun LiftedCard(state: SlideState, modifier: Modifier = Modifier) {
                 shadowElevation = LiftedElevation.toPx() * lift.coerceIn(0f, 1f)
                 shape = RoundedCornerShape(AirDimens.CardCorner)
                 clip = true
+            }
+            .drawWithContent {
+                recording.record { this@drawWithContent.drawContent() }
+                drawLayer(recording)
             },
     )
 }
 
-/** White light swelling from the edge the card is heading for, with a prism-coloured rim. Full screen, draw phase only. */
+/**
+ * White light swelling from an edge, with a prism-coloured rim: where a card is heading on the sender, where it is
+ * arriving on the receiver. [bloom] gets the layer width and is read in the draw phase only.
+ */
 @Composable
-internal fun EdgeBloom(state: SlideState, modifier: Modifier = Modifier) {
+internal fun EdgeBloom(bloom: (width: Float) -> Bloom?, modifier: Modifier = Modifier) {
     Spacer(
         modifier
             .fillMaxSize()
-            .drawBehind { state.bloom(size.width)?.let { drawBloom(it) } },
+            .drawBehind { bloom(size.width)?.let { drawBloom(it) } },
     )
 }
 

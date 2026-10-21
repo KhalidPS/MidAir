@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -32,12 +33,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kotlistine.transferingfilebyair.core.designsystem.effects.recede
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
@@ -50,16 +56,24 @@ import com.kotlistine.transferingfilebyair.core.presentation.ObserveAsEvents
 import com.kotlistine.transferingfilebyair.core.presentation.file.OpenFileResult
 import com.kotlistine.transferingfilebyair.core.presentation.file.rememberFileOpener
 import com.kotlistine.transferingfilebyair.core.presentation.file.rememberFilePickerLauncher
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.EmptyShelf
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfBottomBar
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfGrid
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.EdgeBloom
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.IncomingCard
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.IncomingSlideState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.LiftedCard
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideListener
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotRegistry
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.rememberIncomingSlideState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.rememberSlideState
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.max
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.coroutines.cancellation.CancellationException
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
@@ -69,6 +83,7 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
     val scope = rememberCoroutineScope()
     val filePicker = rememberFilePickerLauncher { uris -> viewModel.onAction(ShelfAction.OnFilesPicked(uris)) }
     val fileOpener = rememberFileOpener()
+    val incomingSlide = rememberIncomingSlideState()
 
     fun showMessage(message: String) {
         scope.launch {
@@ -109,6 +124,17 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
             is ShelfEvent.ShowSent -> offerUndo(event)
             is ShelfEvent.ShowAddFailed -> showMessage(event.toMessage())
             is ShelfEvent.ShowError -> showMessage(event.error.toMessage())
+            is ShelfEvent.PeerCardLifted -> incomingSlide.onLifted(event.card)
+            is ShelfEvent.PeerCardMoved -> incomingSlide.onMoved(
+                id = event.id,
+                leftPx = event.leftPx,
+                topPx = event.topPx,
+                tiltDegrees = event.tiltDegrees,
+                arrival = event.arrival,
+                entryEdge = event.entryEdge,
+            )
+            is ShelfEvent.PeerCardWithdrawn -> incomingSlide.onWithdrawn(event.id)
+            is ShelfEvent.PeerCardArrived -> incomingSlide.onArrived(event.id)
         }
     }
 
@@ -121,6 +147,7 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel()) {
             }
         },
         snackbarHostState = snackbarHostState,
+        incomingSlide = incomingSlide,
     )
 }
 
@@ -132,6 +159,7 @@ fun ShelfScreen(
     onAction: (ShelfAction) -> Unit,
     modifier: Modifier = Modifier,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    incomingSlide: IncomingSlideState = rememberIncomingSlideState(),
 ) {
     // Bottom chrome rises into place shortly after the first frame.
     val barEnter = remember { Animatable(0f) }
@@ -141,8 +169,43 @@ fun ShelfScreen(
         barEnter.animateTo(1f, Motion.slideIn())
     }
 
-    val slideState = rememberSlideState(onSend = { id -> onAction(ShelfAction.OnItemSent(id)) })
+    val slideState = rememberSlideState(
+        listener = object : SlideListener {
+            override fun onLifted(id: String, cardWidthPx: Float, cardHeightPx: Float, thumbnail: ByteArray?) =
+                onAction(ShelfAction.OnSlideLifted(id, cardWidthPx, cardHeightPx, thumbnail))
+
+            override fun onMoved(frame: SlideFrame) = onAction(ShelfAction.OnSlideMoved(frame))
+            override fun onReturned(id: String) = onAction(ShelfAction.OnSlideReturned(id))
+            override fun onSent(id: String, edge: ExitEdge) = onAction(ShelfAction.OnItemSent(id, edge))
+        },
+        isMirrored = state.isPaired,
+    )
     LaunchedEffect(state.items) { slideState.followShelf(state.items) }
+
+    val gridState = rememberLazyStaggeredGridState()
+    val slots = remember { SlotRegistry() }
+
+    // The slot's rect in overlay coordinates, from both corners so it is right even while the shelf is scaled.
+    fun slotRect(id: String): Rect? {
+        val slot = slots[id] ?: return null
+        val size = slot.size
+        val topLeft = slideState.toOverlay(slot, Offset.Zero) ?: return null
+        val bottomRight = slideState.toOverlay(slot, Offset(size.width.toFloat(), size.height.toFloat())) ?: return null
+        return Rect(topLeft, bottomRight)
+    }
+
+    // A received card lands in its new slot at the top of the shelf, then the slot takes over from it.
+    LaunchedEffect(state.landingItemId) {
+        val id = state.landingItemId ?: return@LaunchedEffect
+        gridState.animateScrollToItem(0)
+        var landedCard: String? = incomingSlide.card?.id
+        try {
+            landedCard = incomingSlide.land(slot = { slotRect(id) })
+        } finally {
+            // Even when the landing is cut short, the slot must show: the item is on the shelf either way.
+            incomingSlide.handOff(landedCard, showSlot = { onAction(ShelfAction.OnLandingFinished) })
+        }
+    }
 
     val insets = WindowInsets.safeDrawing.asPaddingValues()
     val content = when {
@@ -151,18 +214,24 @@ fun ShelfScreen(
         else -> ShelfContent.Items
     }
 
-    // Back to front: the shelf (recedes while a card is lifted), the edge bloom, the lifted card, then the snackbar,
-    // which stays sharp so "Undo" is readable while the shelf is still clearing.
+    // Back to front: the shelf (recedes while a card is lifted or arriving), the edge blooms, the cards in flight,
+    // then the snackbar, which stays sharp so "Undo" is readable while the shelf is still clearing.
+    // Clipped, so a card past the edge is cut there even when the screen is not the whole window (Twin Simulator).
     Box(
         modifier = modifier
             .fillMaxSize()
+            .clipToBounds()
             .background(AirColors.Background)
-            .onPlaced(slideState::attachOverlay),
+            .onPlaced(slideState::attachOverlay)
+            .onSizeChanged { size ->
+                incomingSlide.containerSize = size.toSize()
+                onAction(ShelfAction.OnViewportChanged(size.width, size.height))
+            },
     ) {
         Box(
             Modifier
                 .fillMaxSize()
-                .recede(progress = { slideState.focus.value }),
+                .recede(progress = { max(slideState.focus.value, incomingSlide.focus()) }),
         ) {
             AnimatedContent(
                 targetState = content,
@@ -178,6 +247,9 @@ fun ShelfScreen(
                         items = state.items,
                         onAction = onAction,
                         slideState = slideState,
+                        slots = slots,
+                        landingItemId = state.landingItemId,
+                        gridState = gridState,
                         contentPadding = PaddingValues(
                             start = AirDimens.ScreenGutter,
                             end = AirDimens.ScreenGutter,
@@ -222,7 +294,9 @@ fun ShelfScreen(
             )
         }
 
-        EdgeBloom(slideState)
+        EdgeBloom(bloom = { width -> slideState.bloom(width) })
+        EdgeBloom(bloom = { incomingSlide.bloom() })
+        IncomingCard(incomingSlide)
         LiftedCard(slideState)
 
         SnackbarHost(

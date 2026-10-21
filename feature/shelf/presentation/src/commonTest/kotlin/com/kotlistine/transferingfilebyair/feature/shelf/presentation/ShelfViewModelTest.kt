@@ -10,6 +10,7 @@ import assertk.assertions.isFalse
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isTrue
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,7 +35,12 @@ class ShelfViewModelTest {
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         repository = FakeShelfRepository()
-        viewModel = ShelfViewModel(repository = repository, clock = FixedClock, timeZone = TimeZone.UTC)
+        viewModel = ShelfViewModel(
+            repository = repository,
+            density = ScreenDensity(xdpi = 254f, ydpi = 254f),
+            clock = FixedClock,
+            timeZone = TimeZone.UTC,
+        )
     }
 
     @AfterTest

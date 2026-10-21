@@ -6,6 +6,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(projects.feature.shelf.domain)
+            implementation(projects.core.transfer.domain)
             implementation(libs.coil.compose)
             implementation(libs.kotlinx.datetime)
         }

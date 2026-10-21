@@ -6,10 +6,13 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +29,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.ShelfActio
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotCoordinates
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotRegistry
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.liftToSlide
 import kotlin.math.min
 
@@ -42,8 +46,12 @@ internal fun ShelfGrid(
     items: List<ShelfItemUi>,
     onAction: (ShelfAction) -> Unit,
     slideState: SlideState,
+    slots: SlotRegistry,
+    /** A received item still flying in: its slot stays empty and it doesn't pop in (the flying card is its entrance). */
+    landingItemId: String?,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
 ) {
     // One clock for the whole first-load cascade; every card reads its own slice in the draw phase.
     val intro = remember { Animatable(0f) }
@@ -62,10 +70,11 @@ internal fun ShelfGrid(
         contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(AirDimens.GridSpacing),
         verticalItemSpacing = 18.dp,
+        state = gridState,
         modifier = modifier,
     ) {
         itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
-            val isNew = remember(item.id) { seenIds.add(item.id) }
+            val isNew = remember(item.id) { seenIds.add(item.id) && item.id != landingItemId }
             val appear = remember(item.id) { Animatable(if (isNew) 0f else 1f) }
             LaunchedEffect(item.id) {
                 if (appear.value < 1f) appear.animateTo(1f, Motion.pop())
@@ -73,6 +82,11 @@ internal fun ShelfGrid(
             val cascadeDelay = min(index, CascadeMaxSteps) * CascadeStepMs / CascadeTotalMs.toFloat()
             val currentItem by rememberUpdatedState(item)
             val slot = remember(item.id) { SlotCoordinates() }
+            DisposableEffect(item.id, slot) {
+                slots.register(item.id, slot)
+                onDispose { slots.unregister(item.id, slot) }
+            }
+            val isLanding = item.id == landingItemId
 
             ShelfCard(
                 item = item,
@@ -80,8 +94,9 @@ internal fun ShelfGrid(
                 onRemoveClick = { onAction(ShelfAction.OnRemoveClick(item.id)) },
                 previewModifier = Modifier
                     .liftToSlide(slideState, key = item.id, slot = slot) { slideState.tryLift(currentItem, it) }
-                    // While its copy is in the overlay, the slot shows nothing (the label stays, under the blur).
-                    .graphicsLayer { alpha = if (slideState.hiddenId == item.id) 0f else 1f },
+                    // While a copy is in the overlay (lifted, or still landing), the slot shows nothing; the label
+                    // stays, under the blur.
+                    .graphicsLayer { alpha = if (isLanding || slideState.hiddenId == item.id) 0f else 1f },
                 modifier = Modifier
                     .animateItem(
                         fadeInSpec = null, // new cards pop in below instead of a plain fade

@@ -1,9 +1,7 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide
 
 import androidx.compose.ui.geometry.Rect
-
-/** The screen edge a card leaves through. The paired device is assumed to sit beside that edge. */
-enum class ExitEdge { LEFT, RIGHT }
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 
 sealed interface ReleaseDecision {
     data class Send(val edge: ExitEdge) : ReleaseDecision
@@ -12,6 +10,34 @@ sealed interface ReleaseDecision {
 
 /** How strongly an edge draws the card toward it: 0 = not at all, 1 = far enough past the edge to send. */
 data class EdgePull(val edge: ExitEdge, val strength: Float)
+
+/**
+ * One frame of a carried card on a screen [screenWidthPx] wide: where it is and how fast it moves (pixels, pixels per
+ * second). Which edge it is measured against is up to whoever mirrors it, so the edge never flips under them.
+ */
+data class SlideFrame(
+    val id: String,
+    val cardLeftPx: Float,
+    val cardTopPx: Float,
+    val cardRightPx: Float,
+    val screenWidthPx: Float,
+    val velocityXPxPerS: Float,
+    val velocityYPxPerS: Float,
+    val tiltDegrees: Float,
+) {
+    /** The edge the card is closer to (by its centre). */
+    val nearestEdge: ExitEdge
+        get() = if ((cardLeftPx + cardRightPx) / 2f >= screenWidthPx / 2f) ExitEdge.RIGHT else ExitEdge.LEFT
+
+    /** How far the card's leading side is past [edge]; negative while it is inside. */
+    fun penetrationPx(edge: ExitEdge): Float = when (edge) {
+        ExitEdge.LEFT -> -cardLeftPx
+        ExitEdge.RIGHT -> cardRightPx - screenWidthPx
+    }
+
+    /** Speed toward [edge]; negative when moving back inward. */
+    fun outwardPxPerS(edge: ExitEdge): Float = if (edge == ExitEdge.RIGHT) velocityXPxPerS else -velocityXPxPerS
+}
 
 /** Fraction of the card's width that must be past an edge when it is let go for it to be sent. */
 internal const val SendThreshold = 0.35f
