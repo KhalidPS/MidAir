@@ -1,7 +1,9 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation
 
-import com.kotlistine.transferingfilebyair.core.domain.shelf.ShelfItem
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 
 data class ShelfState(
-    val items: List<ShelfItem> = emptyList(),
+    val items: List<ShelfItemUi> = emptyList(),
+    val isLoading: Boolean = true,
+    val isClearConfirmationVisible: Boolean = false,
 )

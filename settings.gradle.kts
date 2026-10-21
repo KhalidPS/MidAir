@@ -31,5 +31,7 @@ include(":shared")
 include(":core:domain")
 include(":core:presentation")
 include(":core:designsystem")
+include(":feature:shelf:domain")
+include(":feature:shelf:data")
 include(":feature:shelf:presentation")
  

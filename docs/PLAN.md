@@ -174,11 +174,16 @@ We follow the **`compose-motion-design`** skill guidelines: springs over tweens,
 on every frame (read animated values inside `graphicsLayer`/`drawBehind`), stable keys, Baseline Profile.
 
 ### 4.6 File handling
-- Add files: **Photo Picker** (`PickMultipleVisualMedia`) and **SAF** `OpenMultipleDocuments`. Keep
-  persistable URI permissions. Store shelf entries (URI, name, mime, size, addedAt) in a small local
-  store (DataStore, or Room KMP if we need queries).
-- Thumbnails: **Coil 3** (KMP-ready) for images. Use a first-page render for PDF (`PdfRenderer`) and a
-  text preview for MD/TXT. Otherwise show a type badge.
+- Add files: **SAF** `OpenMultipleDocuments` only, which also lists photos.
+  - Persistable URI permissions are kept, so staged files survive restarts.
+  - **Decision (Phase 1):** the Photo Picker (`PickMultipleVisualMedia`) is left out. Its grants are not
+    reliably persistable across API levels and the backported picker, so a photo staged today could be
+    unreadable tomorrow. Revisit if users find SAF too heavy for photos.
+  - Shelf entries (URI, name, mime, size, image size, text preview, addedAt) are stored in **Room KMP**.
+- Thumbnails: **Coil 3** (KMP-ready) with app-wide decoders:
+  - images, video frames (`coil-video`), and the first PDF page (`PdfRenderer` decoder)
+  - for MD/TXT, the first ~600 characters, read when the file is added
+  - otherwise a type badge
 - Receive: write to `MediaStore.Downloads` (API 29+) or the app folder (older), then insert into the shelf.
 - Large files: run the transfer under a **foreground service** (`dataSync` type) so it survives leaving
   the app. Show progress as a ring on the receiver's landing card. Support cancellation.
@@ -245,7 +250,7 @@ The build needs JDK 17+. Use Android Studio's bundled JBR (the `java` on PATH he
 | Phase | Deliverable | Done when… |
 |---|---|---|
 | **0. Foundation** | Module split, version catalog entries, Koin, theme and design tokens (dark), Navigation | App builds and launches into an empty shelf |
-| **1. Shelf** | Staggered grid, add files (photo picker + SAF), thumbnails, bottom bar, item menu (remove/open) | Shelf looks like the video's grid and persists across restarts |
+| **1. Shelf** | Staggered grid, add files (SAF; see 4.6), thumbnails, bottom bar, item menu (remove/open) | Shelf looks like the video's grid and persists across restarts |
 | **2. Single-device choreography** | Lift, blur others, drag, edge clipping, bloom at the edge, spring-back, commit animation, grid reflow, haptics | Dragging a card off the edge on one phone looks and feels right |
 | **3. Twin Simulator + protocol** | `LoopbackTransport`, protocol and codec, receiver rendering, geometry mapping, prediction | In the simulator a card crosses from the left device to the right one with no visible seam, and lands in the receiver's shelf |
 | **4. Pairing** | Edge-glow screen, gradient headline, hold-to-connect, dual bloom burst, `NearbyTransport` discovery and connection, permissions flow | Two real phones pair with the video's ritual |

@@ -9,6 +9,8 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(projects.core.designsystem)
+            implementation(projects.core.presentation)
+            implementation(projects.feature.shelf.data)
             implementation(projects.feature.shelf.presentation)
             implementation(libs.jetbrains.navigation.compose)
             implementation(libs.kotlinx.serialization.core)

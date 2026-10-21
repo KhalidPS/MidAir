@@ -12,6 +12,11 @@ object AirColors {
     val OnSurface = Color(0xFFF5F5F7)
     val OnSurfaceMuted = Color(0xFF8E8E96)
 
+    // Document previews: a light sheet of paper on the dark card.
+    val Paper = Color(0xFFEDEDF1)
+    val PaperLine = Color(0xFFD3D3DB)
+    val PaperInk = Color(0xFF3A3A44)
+
     // Edge glow / bloom palette (pairing ring, portal rim).
     val GlowPink = Color(0xFFFF2E93)
     val GlowMagenta = Color(0xFFB53DFF)
