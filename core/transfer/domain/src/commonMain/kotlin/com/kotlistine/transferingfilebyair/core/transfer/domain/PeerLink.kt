@@ -49,6 +49,15 @@ interface PeerLink {
 
     fun stopSearching()
 
+    /**
+     * While the app is open: if this phone paired before, look for that phone and link up again by itself whenever
+     * it comes into reach (no code to check: it proves it is the same phone). Quietly does nothing if it can't look.
+     */
+    suspend fun reconnect()
+
+    /** The app went to the background: stop looking for the remembered phone (a live link stays up). */
+    fun pauseReconnecting()
+
     /** Asks [peer] to pair; it pairs once the peer's user accepts. */
     suspend fun connect(peer: PeerDevice): EmptyResult<DataError.Network>
 
@@ -58,6 +67,7 @@ interface PeerLink {
     /** Turns down the pending [LinkState.Incoming] request from [peer]. */
     fun decline(peer: PeerDevice)
 
+    /** Unpairs: both phones forget each other and won't link up again by themselves. */
     fun disconnect()
 
     /**

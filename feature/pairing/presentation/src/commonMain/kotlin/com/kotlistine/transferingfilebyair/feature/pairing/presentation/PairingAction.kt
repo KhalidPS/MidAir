@@ -19,6 +19,7 @@ sealed interface PairingAction {
 
     /** Stop waiting for the other phone to accept. */
     data object OnCancelClick : PairingAction
+    /** Unpair: both phones forget each other and stop linking up by themselves. */
     data object OnDisconnectClick : PairingAction
 
     /** Handled by PairingRoot: line the screens up (again). */

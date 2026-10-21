@@ -252,6 +252,10 @@ private class FakePeerLink : PeerLink {
         return Result.Success(Unit)
     }
 
+    override suspend fun reconnect() = Unit
+
+    override fun pauseReconnecting() = Unit
+
     var withdrawals = 0
 
     override fun stopSearching() {

@@ -127,6 +127,16 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
     that faces the other phone, the gap (speed × time across, 2–40 mm) and the height offset (minus the drift while
     crossing). The shelf follows it through the shared `LinkGeometry`.
 
+- **Decisions (Phase 7b, auto-reconnect):**
+  - After a pairing both users confirmed (the code check makes the Nearby link safe from a phone in the middle),
+    the phone with the smaller random id hands the other a 32-byte key; each remembers the other's id, name and key,
+    and the line-up, in private storage.
+  - While the app is on screen, a phone that remembers another looks for it. Found by name, the one with the smaller
+    id asks and the other accepts without asking. That link counts only once each end proves the key (HMAC-SHA256 of
+    the other end's fresh nonce and its own id); until then nothing it sends gets through, and after 8 s it is
+    dropped. These introductions are link frames, kept apart from slide messages by their first byte.
+  - "Unpair" tells the other phone to forget too, so neither links up again by itself.
+
 ---
 
 ## 4. Technical study: what we need

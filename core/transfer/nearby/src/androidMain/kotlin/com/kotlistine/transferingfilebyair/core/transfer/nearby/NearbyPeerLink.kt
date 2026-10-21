@@ -28,6 +28,11 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -36,20 +41,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Only installs of this app find each other. */
 private const val ServiceId = "com.kotlistine.transferingfilebyair.slide"
 
+/** How long a link that came up by itself has to prove it is the remembered phone. */
+private const val ProofTimeoutMillis = 8_000L
+
 /**
  * [PeerLink] on Nearby Connections: Bluetooth to find the other phone and connect, then an automatic upgrade to
  * Wi-Fi Direct or a hotspot for bandwidth. No shared Wi-Fi network is needed. Point-to-point, since a slide goes to
  * exactly one device. Nearby calls back on the main thread, so all state here changes on it.
+ *
+ * Once both users have confirmed a pairing, the two phones agree on a key ([LinkFrame.Trust]) and remember each other
+ * ([memory]). In later sessions they look for each other while the app is open and link up without asking, but a
+ * link that came up that way only counts once the other end proves it holds the key ([LinkFrame.Proof]); until then
+ * nothing it sends gets through.
  */
-internal class NearbyPeerLink(context: Context) : PeerLink {
+internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) : PeerLink {
 
     private val appContext = context.applicationContext
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val client = Nearby.getConnectionsClient(context)
     private val localName = deviceName(context)
     private val strategy = Strategy.P2P_POINT_TO_POINT
@@ -63,6 +78,15 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
 
     /** The endpoint this device asked to pair with (its user held Connect), until the attempt ends. */
     private var requestedEndpoint: String? = null
+
+    /** The remembered phone, linking up by itself: accepted without asking, then it must prove who it is. */
+    private var rememberedEndpoint: String? = null
+
+    /** The live link's introductions (see [LinkFrame]). */
+    private var handshake: Handshake? = null
+
+    /** The app is open and wants the remembered phone found again whenever it is out of reach. */
+    private var wantsReconnect = false
     private val received = MutableSharedFlow<SlideMessage>(extraBufferCapacity = 256)
 
     /**
@@ -90,7 +114,25 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
         }
     }
 
-    override suspend fun startSearching(): EmptyResult<DataError.Network> {
+    override suspend fun startSearching(): EmptyResult<DataError.Network> = search()
+
+    override suspend fun reconnect() {
+        wantsReconnect = true
+        if (memory.peer == null || _state.value !is LinkState.Idle) return
+        // Quietly: a phone that can't search right now (Location off, no permission) just doesn't reconnect.
+        if (search() is Result.Failure) {
+            client.stopAdvertising()
+            client.stopDiscovery()
+            _state.value = LinkState.Idle
+        }
+    }
+
+    override fun pauseReconnecting() {
+        wantsReconnect = false
+        if (_state.value is LinkState.Searching || _state.value is LinkState.Found) stopSearching()
+    }
+
+    private suspend fun search(): EmptyResult<DataError.Network> {
         // Paired, or a pairing attempt is under way (e.g. the screen just resumed): leave it be.
         val current = _state.value
         if (current is LinkState.Connected || current is LinkState.Incoming || current is LinkState.Connecting) {
@@ -122,7 +164,10 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
             client.disconnectFromEndpoint(endpoint)
         }
         requestedEndpoint = null
+        rememberedEndpoint = null
         _state.value = LinkState.Idle
+        // Leaving the pairing screen unpaired: keep looking for the remembered phone, as before it opened.
+        if (wantsReconnect) scope.launch { reconnect() }
     }
 
     override suspend fun connect(peer: PeerDevice): EmptyResult<DataError.Network> {
@@ -165,11 +210,75 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
     /** Back to whatever is in range once a pairing attempt is over. */
     private fun afterAttempt(): LinkState = nearby.values.lastOrNull()?.let(LinkState::Found) ?: LinkState.Searching
 
+    /** Unpairs: the other phone is told to forget this one too, so neither links up again by itself. */
     override fun disconnect() {
-        connectedEndpoint?.let(client::disconnectFromEndpoint)
+        connectedEndpoint?.let { endpoint ->
+            client.sendPayload(endpoint, Payload.fromBytes(LinkFrame.Forget.encode()))
+                .addOnCompleteListener { client.disconnectFromEndpoint(endpoint) }
+        }
+        memory.forget()
+        dropLink()
+    }
+
+    /** The live link is gone (or never counted): every transfer on it fails, and the remembered phone is looked for. */
+    private fun dropLink() {
         connectedEndpoint = null
+        handshake?.timeout?.cancel()
+        handshake = null
         abandonTransfers()
         _state.value = LinkState.Idle
+        if (wantsReconnect) scope.launch { reconnect() }
+    }
+
+    /** Ends a link that didn't prove it is the remembered phone. */
+    private fun refuse(endpointId: String) {
+        client.disconnectFromEndpoint(endpointId)
+        if (connectedEndpoint == endpointId) dropLink()
+    }
+
+    private fun sendFrame(endpointId: String, frame: LinkFrame) {
+        client.sendPayload(endpointId, Payload.fromBytes(frame.encode()))
+    }
+
+    /** The two ends introduce themselves, then agree on a key (after a confirmed pairing) or prove they hold it. */
+    private fun onFrame(endpointId: String, frame: LinkFrame) {
+        val shake = handshake?.takeIf { it.endpointId == endpointId } ?: return
+        when (frame) {
+            is LinkFrame.Hello -> {
+                shake.peerId = frame.deviceId
+                val trusted = memory.peer?.takeIf { it.id.contentEquals(frame.deviceId) }
+                // Whenever this end remembers the other, it proves it: the other end may have linked up by itself
+                // (and does, even when this end's user held Connect).
+                if (trusted != null) sendFrame(endpointId, LinkFrame.Proof(prove(trusted.key, frame.nonce, memory.ownId)))
+                when {
+                    // After a pairing both users confirmed, a fresh key for next time (sent after the proof).
+                    shake.isConfirmed -> if (handsOutKey(memory.ownId, frame.deviceId)) {
+                        val key = memory.random(KeyBytes)
+                        memory.trust(TrustedPeer(frame.deviceId, shake.peer.name, key))
+                        sendFrame(endpointId, LinkFrame.Trust(key))
+                    }
+                    trusted == null -> refuse(endpointId)
+                }
+            }
+            is LinkFrame.Proof -> {
+                if (shake.isConfirmed || shake.isProven) return
+                val trusted = memory.peer
+                val peerId = shake.peerId
+                val expected = if (trusted != null && peerId != null) prove(trusted.key, shake.nonce, peerId) else null
+                if (expected == null || !MessageDigest.isEqual(expected, frame.mac)) return refuse(endpointId)
+                shake.isProven = true
+                shake.timeout?.cancel()
+                _state.value = LinkState.Connected(shake.peer)
+            }
+            is LinkFrame.Trust -> {
+                val peerId = shake.peerId ?: return
+                // Only from an end both users confirmed, or that has proven itself; and only from the end that hands
+                // out keys.
+                if (!(shake.isConfirmed || shake.isProven) || handsOutKey(memory.ownId, peerId)) return
+                memory.trust(TrustedPeer(peerId, shake.peer.name, frame.key))
+            }
+            LinkFrame.Forget -> memory.forget()
+        }
     }
 
     override suspend fun sendFile(
@@ -226,6 +335,33 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
         incomingFiles.clear()
     }
 
+    /** A phone in range with the remembered phone's name (it still has to prove it is that phone). */
+    private fun isRemembered(name: String): Boolean = memory.peer?.name == name
+
+    /** Not linked, and no pairing attempt under way. */
+    private fun isFree(): Boolean {
+        val current = _state.value
+        return connectedEndpoint == null && requestedEndpoint == null && rememberedEndpoint == null &&
+            current !is LinkState.Incoming && current !is LinkState.Connecting && current !is LinkState.Connected
+    }
+
+    /** Asks the remembered phone to link up; it accepts without asking its user (see onConnectionInitiated). */
+    private fun linkUpWith(peer: PeerDevice) {
+        requestedEndpoint = peer.id
+        rememberedEndpoint = peer.id
+        _state.value = LinkState.Connecting(peer)
+        scope.launch {
+            val requested = nearbyCall { client.requestConnection(localName, peer.id, connections).await() }
+            if (requested is Result.Failure && rememberedEndpoint == peer.id) giveUpLinkingUp()
+        }
+    }
+
+    private fun giveUpLinkingUp() {
+        requestedEndpoint = null
+        rememberedEndpoint = null
+        _state.value = afterAttempt()
+    }
+
     private fun fail(error: DataError.Network): EmptyResult<DataError.Network> {
         _state.value = LinkState.Failed(error)
         return Result.Failure(error)
@@ -236,6 +372,10 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
             if (info.serviceId != ServiceId) return
             val peer = PeerDevice(endpointId, info.endpointName)
             nearby[endpointId] = peer
+            if (isRemembered(info.endpointName) && asksToReconnect(memory.ownId, memory.peer!!.id) && isFree()) {
+                linkUpWith(peer)
+                return
+            }
             if (_state.value is LinkState.Searching) _state.value = LinkState.Found(peer)
         }
 
@@ -252,6 +392,17 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
             val peer = PeerDevice(endpointId, info.endpointName)
             val code = info.authenticationDigits
+            val asksBack = info.isIncomingConnection && isRemembered(info.endpointName) && isFree()
+            if (endpointId == rememberedEndpoint || asksBack) {
+                // The remembered phone: no need to ask, it proves who it is once linked.
+                rememberedEndpoint = endpointId
+                _state.value = LinkState.Connecting(peer)
+                scope.launch {
+                    val accepted = nearbyCall { client.acceptConnection(endpointId, payloads).await() }
+                    if (accepted is Result.Failure && rememberedEndpoint == endpointId) giveUpLinkingUp()
+                }
+                return
+            }
             val decision = decideRequest(
                 isIncoming = info.isIncomingConnection,
                 endpointId = endpointId,
@@ -274,6 +425,8 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
             val pending = (current as? LinkState.Connecting)?.peer?.takeIf { it.id == endpointId }
                 ?: (current as? LinkState.Incoming)?.peer?.takeIf { it.id == endpointId }
             val peer = pending ?: nearby[endpointId] ?: PeerDevice(endpointId, endpointId)
+            val isRemembered = endpointId == rememberedEndpoint
+            rememberedEndpoint = null
             if (resolution.status.isSuccess) {
                 connectedEndpoint = endpointId
                 client.stopAdvertising()
@@ -281,7 +434,21 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
                 // Discovery has stopped, so nothing will report these leaving: forget them, or a later search would
                 // offer phones that may no longer be there.
                 nearby.clear()
-                _state.value = LinkState.Connected(peer)
+                val shake = Handshake(endpointId, peer, isConfirmed = !isRemembered, nonce = memory.random(NonceBytes))
+                handshake = shake
+                sendFrame(endpointId, LinkFrame.Hello(memory.ownId, shake.nonce))
+                if (isRemembered) {
+                    // Not linked until it proves it is the remembered phone.
+                    shake.timeout = scope.launch {
+                        delay(ProofTimeoutMillis)
+                        if (!shake.isProven) refuse(endpointId)
+                    }
+                } else {
+                    _state.value = LinkState.Connected(peer)
+                }
+            } else if (isRemembered) {
+                // It didn't work out by itself; nothing to show, keep looking.
+                _state.value = afterAttempt()
             } else if (resolution.status.statusCode == ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED) {
                 // The other person said no (or this one did): carry on looking.
                 _state.value = afterAttempt()
@@ -292,18 +459,26 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
 
         override fun onDisconnected(endpointId: String) {
             if (connectedEndpoint != endpointId) return
-            connectedEndpoint = null
-            abandonTransfers()
-            _state.value = LinkState.Idle
+            dropLink()
         }
     }
 
     private val payloads = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             if (endpointId != connectedEndpoint) return
+            val bytes = if (payload.type == Payload.Type.BYTES) payload.asBytes() else null
+            if (bytes != null && isLinkFrame(bytes)) {
+                decodeLinkFrame(bytes)?.let { onFrame(endpointId, it) }
+                return
+            }
+            // Nothing gets through until the link counts (a remembered phone that hasn't proven itself yet).
+            if (_state.value !is LinkState.Connected) {
+                if (payload.type == Payload.Type.FILE) client.cancelPayload(payload.id)
+                return
+            }
             when (payload.type) {
                 Payload.Type.BYTES -> {
-                    val bytes = payload.asBytes() ?: return
+                    if (bytes == null) return
                     (SlideMessageCodec.decode(bytes) as? Result.Success)?.let { received.tryEmit(it.data) }
                 }
                 // Its bytes are still arriving; it is usable once its transfer reports success.
@@ -350,6 +525,13 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
             }
         }
     }
+}
+
+/** One link's introductions. [isConfirmed]: both users checked the code; otherwise the other end must prove itself. */
+private class Handshake(val endpointId: String, val peer: PeerDevice, val isConfirmed: Boolean, val nonce: ByteArray) {
+    var peerId: ByteArray? = null
+    var isProven = false
+    var timeout: Job? = null
 }
 
 /** Runs a Nearby call, turning its failures into [DataError.Network]. */

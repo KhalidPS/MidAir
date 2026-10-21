@@ -229,7 +229,8 @@ private fun Headline(phase: PairingPhase, peerName: String?, code: String?, erro
             PairingPhase.INCOMING ->
                 "Pair with" to "Check that both phones show this code, then press and hold Connect."
             PairingPhase.CONNECTING -> "Connecting to" to "Waiting for the other phone to accept."
-            PairingPhase.CONNECTED -> "Paired with" to "Slide files off the edge to send them."
+            PairingPhase.CONNECTED ->
+                "Paired with" to "Slide files off the edge to send them. Next time, the phones link up by themselves."
             PairingPhase.FAILED -> "Couldn't pair" to (error?.toPairingMessage() ?: DataError.Network.UNKNOWN.toPairingMessage())
         }
         Text(
@@ -303,7 +304,7 @@ private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modi
                 TextButton(onClick = { onAction(PairingAction.OnCancelClick) }) { Text("Cancel") }
             }
             state.phase == PairingPhase.CONNECTED -> {
-                TextButton(onClick = { onAction(PairingAction.OnDisconnectClick) }) { Text("Disconnect") }
+                TextButton(onClick = { onAction(PairingAction.OnDisconnectClick) }) { Text("Unpair") }
                 TextButton(onClick = { onAction(PairingAction.OnLineUpClick) }) { Text("Line up") }
                 PrimaryButton("Done") { onAction(PairingAction.OnCloseClick) }
             }

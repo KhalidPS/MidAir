@@ -169,6 +169,8 @@ private class FakeLink : PeerLink {
 
     override suspend fun startSearching(): EmptyResult<DataError.Network> = Result.Success(Unit)
     override fun stopSearching() = Unit
+    override suspend fun reconnect() = Unit
+    override fun pauseReconnecting() = Unit
     override suspend fun connect(peer: PeerDevice): EmptyResult<DataError.Network> = Result.Success(Unit)
     override suspend fun accept(peer: PeerDevice): EmptyResult<DataError.Network> = Result.Success(Unit)
     override fun decline(peer: PeerDevice) = Unit

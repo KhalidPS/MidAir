@@ -10,7 +10,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 | Branch | Head | State |
 |---|---|---|
 | `master` | `50d75f9` | Phases 0–6 |
-| `feature/calibration` | (latest) | Phase 7a (line-up swipe), on top of `master`. **Not merged** |
+| `feature/calibration` | `c765b7b` | Phase 7a (line-up swipe), on top of `master`. **Not merged** |
+| `feature/auto-reconnect` | (latest) | Phase 7b, on top of `feature/calibration`. **Not merged** |
 
 ## Done
 
@@ -25,9 +26,10 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 | 6a. Transfer progress | Progress ring on the arriving card, tap it to stop the file, Retry on a failed send | `0ab28e6` |
 | 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification, so leaving the app or locking the phone doesn't stop them | `7d3f984` |
 | 6c. Land in place | A let-go card flies straight into its slot at the top of the shelf and waits there with its ring (tap to stop); several can arrive at once; the arrival ripples light across the screen; fixed cards drawn off-place on right-to-left phones | `50d75f9` |
-| 7a. Line-up swipe | Right after pairing (or "Line up" on the paired screen), one finger swipes from one phone onto the other; each phone learns which edge faces the other, the gap and the height offset, and slides follow it | `feature/calibration` |
+| 7a. Line-up swipe | Right after pairing (or "Line up" on the paired screen), one finger swipes from one phone onto the other; each phone learns which edge faces the other, the gap and the height offset, and slides follow it | `c765b7b` |
+| 7b. Auto-reconnect | Paired phones remember each other (and the line-up) and link up again by themselves while the app is open, after proving they hold the key agreed at pairing; "Unpair" makes both forget | `feature/auto-reconnect` |
 
-**Tests:** 178 unit tests, all passing (`./gradlew testAndroidHostTest`).
+**Tests:** 185 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
 ## Known limitations
 
@@ -37,11 +39,12 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 - **Background start:** the service is started when a transfer begins, which is always while the app is open. If
   Android refuses it anyway, the transfer runs without the extra protection.
 - **Alignment:** until the screens are lined up, any edge leads to the other phone and the gap is assumed to be
-  8 mm. The line-up is kept only while the app runs (remembering it comes with auto-reconnect). Its gap depends on
-  comparing the two clocks over Nearby, so it can be a few millimetres off; side and height are measured directly.
+  8 mm. The line-up is remembered with the paired phone. Its gap depends on comparing the two clocks over Nearby,
+  so it can be a few millimetres off; side and height are measured directly.
 - **Pairing needs:** Bluetooth, Wi-Fi and **Location switched on**, plus precise location permission. Android
   only lets apps find nearby phones while Location is on. The pairing screen now says so and offers a button.
-- **Reconnect:** pairing is forgotten when the app closes; the phones pair again next time.
+- **Reconnect:** only while the app is open on both phones, and only if the phone's name hasn't changed (it is how
+  the remembered phone is spotted before it proves itself). Each phone remembers one other phone.
 - **Review debt:** Phase 5 and the Location fix were not put through the multi-agent review (to save usage).
   The last review round of Phase 4 was also stopped part-way.
 - **Hardware:** Nearby doesn't work reliably on emulators, so anything about the link needs two real phones.
@@ -57,9 +60,11 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 
 ### Phase 7: calibration and polish
 
-- ~~Calibration swipe~~ (7a, try it on the phones: swipe through the band from one phone onto the other).
-- Remember the paired phone and its line-up, and reconnect automatically.
-- AGSL shader glow (Android 13+), reduced-motion mode, TalkBack "Send to…" action.
+- ~~Calibration swipe~~ (7a).
+- ~~Remember the paired phone and its line-up, and reconnect automatically~~ (7b, try it: pair, close the app on
+  both phones, open it again; the shelf should say it is paired within a few seconds).
+- AGSL shader glow (Android 13+), reduced-motion mode.
+- Later (not needed now, the user said): TalkBack "Send to…" action.
 - Baseline Profile and a 60 fps check on a mid-range phone.
 
 ### Phase 8: desktop receiver (KMP)
