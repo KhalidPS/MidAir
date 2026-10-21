@@ -11,7 +11,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 |---|---|---|
 | `master` | `50d75f9` | Phases 0–6 |
 | `feature/calibration` | `c765b7b` | Phase 7a (line-up swipe), on top of `master`. **Not merged** |
-| `feature/auto-reconnect` | (latest) | Phase 7b, on top of `feature/calibration`. **Not merged** |
+| `feature/auto-reconnect` | `c64ccf8` | Phase 7b, on top of `feature/calibration`. **Not merged** |
+| `feature/glow-and-reduced-motion` | (latest) | Phase 7c, on top of `feature/auto-reconnect`. **Not merged** |
 
 ## Done
 
@@ -27,7 +28,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 | 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification, so leaving the app or locking the phone doesn't stop them | `7d3f984` |
 | 6c. Land in place | A let-go card flies straight into its slot at the top of the shelf and waits there with its ring (tap to stop); several can arrive at once; the arrival ripples light across the screen; fixed cards drawn off-place on right-to-left phones | `50d75f9` |
 | 7a. Line-up swipe | Right after pairing (or "Line up" on the paired screen), one finger swipes from one phone onto the other; each phone learns which edge faces the other, the gap and the height offset, and slides follow it | `c765b7b` |
-| 7b. Auto-reconnect | Paired phones remember each other (and the line-up) and link up again by themselves while the app is open, after proving they hold the key agreed at pairing; "Unpair" makes both forget | `feature/auto-reconnect` |
+| 7b. Auto-reconnect | Paired phones remember each other (and the line-up) and link up again by themselves while the app is open, after proving they hold the key agreed at pairing; "Unpair" makes both forget | `c64ccf8` |
+| 7c. Flowing glow, reduced motion | On Android 13+ the pairing glow is an AGSL shader whose colours flow along the edge; with "Remove animations" on, the glow and the line-up band stand still | `feature/glow-and-reduced-motion` |
 
 **Tests:** 185 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
@@ -63,9 +65,9 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 - ~~Calibration swipe~~ (7a).
 - ~~Remember the paired phone and its line-up, and reconnect automatically~~ (7b, try it: pair, close the app on
   both phones, open it again; the shelf should say it is paired within a few seconds).
-- AGSL shader glow (Android 13+), reduced-motion mode.
-- Later (not needed now, the user said): TalkBack "Send to…" action.
+- ~~AGSL shader glow (Android 13+), reduced-motion mode~~ (7c).
 - Baseline Profile and a 60 fps check on a mid-range phone.
+- Later (not needed now, the user said): TalkBack "Send to…" action.
 
 ### Phase 8: desktop receiver (KMP)
 

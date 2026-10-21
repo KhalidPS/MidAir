@@ -6,10 +6,13 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kotlistine.transferingfilebyair.core.designsystem.motion.LocalReducedMotion
+import com.kotlistine.transferingfilebyair.core.designsystem.motion.systemReducedMotion
 
 private val AirColorScheme = darkColorScheme(
     primary = AirColors.OnSurface,
@@ -44,10 +47,12 @@ private val AirShapes = Shapes(
 /** The app is dark-only, like the reference: the glow and bloom effects need a black canvas. */
 @Composable
 fun AirTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = AirColorScheme,
-        typography = AirTypography,
-        shapes = AirShapes,
-        content = content,
-    )
+    CompositionLocalProvider(LocalReducedMotion provides systemReducedMotion()) {
+        MaterialTheme(
+            colorScheme = AirColorScheme,
+            typography = AirTypography,
+            shapes = AirShapes,
+            content = content,
+        )
+    }
 }

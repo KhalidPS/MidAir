@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -26,8 +27,8 @@ import kotlin.math.sin
 /**
  * A multicolour light flowing around the rounded screen edge, slowly turning and breathing (the pairing screen's
  * halo). [phase] is the turn (0..1, wraps) and [intensity] the strength (0 dark, 1 resting, up to 2 charged); both
- * are read in the draw phase, so animating them never recomposes. Below API 31 the soft halo is layered strokes
- * instead of a blur.
+ * are read in the draw phase, so animating them never recomposes. On Android 13+ a shader makes the colours flow
+ * along the edge; before that they turn as a sweep. Below API 31 the soft halo is layered strokes instead of a blur.
  */
 @Composable
 fun EdgeGlow(
@@ -36,6 +37,7 @@ fun EdgeGlow(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 36.dp,
 ) {
+    val flowing = remember { flowingGlowBrush() }
     Box(modifier.fillMaxSize()) {
         // Soft halo.
         Spacer(
@@ -50,10 +52,10 @@ fun EdgeGlow(
                 .drawBehind {
                     val i = intensity()
                     if (isBlurSupported) {
-                        drawGlowRing(phase(), i, width = 26.dp, alpha = 0.6f, cornerRadius)
+                        drawGlowRing(phase(), i, width = 26.dp, alpha = 0.6f, cornerRadius, flowing)
                     } else {
-                        drawGlowRing(phase(), i, width = 30.dp, alpha = 0.12f, cornerRadius)
-                        drawGlowRing(phase(), i, width = 16.dp, alpha = 0.22f, cornerRadius)
+                        drawGlowRing(phase(), i, width = 30.dp, alpha = 0.12f, cornerRadius, flowing)
+                        drawGlowRing(phase(), i, width = 16.dp, alpha = 0.22f, cornerRadius, flowing)
                     }
                 },
         )
@@ -61,12 +63,19 @@ fun EdgeGlow(
         Spacer(
             Modifier
                 .fillMaxSize()
-                .drawBehind { drawGlowRing(phase(), intensity(), width = 3.dp, alpha = 0.95f, cornerRadius) },
+                .drawBehind { drawGlowRing(phase(), intensity(), width = 3.dp, alpha = 0.95f, cornerRadius, flowing) },
         )
     }
 }
 
-private fun DrawScope.drawGlowRing(phase: Float, intensity: Float, width: Dp, alpha: Float, cornerRadius: Dp) {
+private fun DrawScope.drawGlowRing(
+    phase: Float,
+    intensity: Float,
+    width: Dp,
+    alpha: Float,
+    cornerRadius: Dp,
+    flowing: FlowingGlowBrush?,
+) {
     if (intensity <= 0.01f) return
     val strength = intensity.coerceIn(0f, 2f)
     // Breathes three times per turn; a charged glow is also wider.
@@ -74,7 +83,7 @@ private fun DrawScope.drawGlowRing(phase: Float, intensity: Float, width: Dp, al
     val stroke = width.toPx() * breath * (0.6f + 0.4f * strength)
     val inset = stroke / 2f
     drawRoundRect(
-        brush = turnedSweep(phase, center),
+        brush = flowing?.at(size, phase) ?: turnedSweep(phase, center),
         topLeft = Offset(inset, inset),
         size = Size(size.width - stroke, size.height - stroke),
         cornerRadius = CornerRadius(cornerRadius.toPx()),

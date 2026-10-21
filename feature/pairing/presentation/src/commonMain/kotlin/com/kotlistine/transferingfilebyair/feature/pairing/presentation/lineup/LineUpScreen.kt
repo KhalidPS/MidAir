@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kotlistine.transferingfilebyair.core.designsystem.motion.LocalReducedMotion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.textSwap
@@ -118,12 +120,15 @@ fun LineUpScreen(state: LineUpState, onAction: (LineUpAction) -> Unit, modifier:
         linedUp.animateTo(if (state.phase == LineUpPhase.LINED_UP) 1f else 0f, Motion.pop())
     }
     val flow = rememberInfiniteTransition(label = "lane")
-    val flowPhase by flow.animateFloat(
+    val flowing = flow.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(1_600, easing = LinearEasing), RepeatMode.Restart),
         label = "lane flow",
     )
+    // With less motion asked for, the dots in the band stand still.
+    val reducedMotion = LocalReducedMotion.current
+    val flowPhase by remember(reducedMotion) { if (reducedMotion) mutableFloatStateOf(0.5f) else flowing }
 
     Box(
         modifier = modifier

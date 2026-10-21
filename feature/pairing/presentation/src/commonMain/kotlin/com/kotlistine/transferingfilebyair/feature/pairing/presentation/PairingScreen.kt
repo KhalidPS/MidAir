@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kotlistine.transferingfilebyair.core.designsystem.effects.EdgeGlow
+import com.kotlistine.transferingfilebyair.core.designsystem.motion.LocalReducedMotion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.textSwap
@@ -144,7 +145,10 @@ fun PairingScreen(
 ) {
     // The glow sits low while waiting, wakes when the other phone is found, and charges while Connect is held.
     val restingGlow by animateFloatAsState(state.phase.glow(), Motion.slideIn(), label = "glow")
-    LaunchedEffect(motion) {
+    // With less motion asked for, the glow stays lit but stands still.
+    val reducedMotion = LocalReducedMotion.current
+    LaunchedEffect(motion, reducedMotion) {
+        if (reducedMotion) return@LaunchedEffect
         var last = withFrameNanos { it }
         motion.turnGlowForever {
             val now = withFrameNanos { it }
