@@ -11,6 +11,7 @@ internal fun DataError.toMessage(): String = when (this) {
     DataError.Network.PERMISSION_MISSING -> "Allow nearby devices to pair with the device next to you."
     DataError.Network.RADIO_OFF -> "Turn on Bluetooth and Wi-Fi to reach the device next to you."
     DataError.Network.LOCATION_OFF -> "Turn on Location to reach the device next to you."
+    DataError.Network.CANCELLED -> "The transfer was cancelled."
     DataError.Network.PAYLOAD_TOO_LARGE,
     DataError.Network.MALFORMED_MESSAGE,
     DataError.Network.UNKNOWN,
@@ -25,6 +26,15 @@ internal fun ShelfEvent.ShowAddFailed.toMessage(): String {
 internal fun ShelfEvent.ShowSent.toMessage(): String = "“$name” left the shelf"
 
 internal const val UndoLabel = "Undo"
+
+internal const val RetryLabel = "Retry"
+
+internal fun ShelfEvent.ShowSendFailed.toMessage(): String =
+    if (error == DataError.Network.CANCELLED) {
+        "“$name” wasn't sent: the other phone stopped it."
+    } else {
+        "Couldn't send “$name”. It's back on your shelf."
+    }
 
 internal const val NoAppToOpenMessage = "No app on this device can open this file."
 

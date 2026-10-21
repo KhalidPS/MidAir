@@ -29,6 +29,9 @@ sealed interface DataError : Error {
 
         /** The phone's Location setting is off, and nearby devices can't be found without it. */
         LOCATION_OFF,
+
+        /** Someone stopped the transfer (on this phone or the other one). */
+        CANCELLED,
         UNKNOWN,
     }
 }

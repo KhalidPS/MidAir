@@ -40,6 +40,8 @@ class FakeTransport : Transport {
 class FakePeer(
     override val link: SlideLink = SlideLink(gapMm = 8f, peerSide = ExitEdge.RIGHT),
     private val onReceive: (IncomingFile) -> Result<String, DataError> = { Result.Success("received-1") },
+    /** Progress reported while receiving, before the result. */
+    private val progressSteps: List<Float> = emptyList(),
 ) : SlidePeer {
     override val transport = FakeTransport()
     val received = mutableListOf<IncomingFile>()
@@ -55,8 +57,15 @@ class FakePeer(
         return sendResult
     }
 
-    override suspend fun receive(file: IncomingFile): Result<String, DataError> {
+    val cancelledReceives = mutableListOf<String>()
+
+    override suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit): Result<String, DataError> {
         received += file
+        progressSteps.forEach(onProgress)
         return onReceive(file)
+    }
+
+    override fun cancelReceive(peerItemId: String) {
+        cancelledReceives += peerItemId
     }
 }

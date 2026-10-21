@@ -265,10 +265,27 @@ class ShelfViewModelSlideTest {
 
                 viewModel.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
 
-                assertThat(awaitItem()).isEqualTo(ShelfEvent.ShowError(DataError.Network.DISCONNECTED))
+                assertThat(awaitItem()).isEqualTo(
+                    ShelfEvent.ShowSendFailed(id = "1", name = "Q4 Report.pdf", error = DataError.Network.DISCONNECTED),
+                )
             }
             assertThat(repository.items.value.map { it.id }).containsExactly("1")
             assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1")
+        }
+    }
+
+    @Test
+    fun `retrying a failed send announces the card again and delivers the file`() = runTest {
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.onAction(ShelfAction.OnRetrySend("1"))
+
+            val messages = peer.transport.sentSlides
+            assertThat(messages.first()).isInstanceOf(SlideMessage.DragStart::class)
+            assertThat(messages.last()).isEqualTo(SlideMessage.DragCommit("1", outwardMmPerS = 0f, alongEdgeMmPerS = 0f))
+            assertThat(peer.sentFiles).containsExactly(OutgoingFile(itemId = "1", uri = "content://file/1"))
+            assertThat(repository.items.value).isEmpty()
+            assertThat(expectMostRecentItem().items).isEmpty()
         }
     }
 
@@ -416,6 +433,42 @@ class ShelfViewModelSlideTest {
             viewModel.onAction(ShelfAction.OnLandingFinished)
             assertThat(awaitItem().landingItemId).isNull()
         }
+    }
+
+    @Test
+    fun `the arriving file's progress is reported`() = runTest {
+        createViewModel(FakePeer(progressSteps = listOf(0.25f, 0.25f, 0.5f)))
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+            skipItems(1)
+
+            peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardArrived("9"))
+            // Repeats within the same percent are dropped.
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardProgress("9", 0.25f))
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardProgress("9", 0.5f))
+        }
+    }
+
+    @Test
+    fun `a tap before the file is coming in does nothing, and a stopped transfer withdraws quietly`() = runTest {
+        var tapped = false
+        createViewModel(FakePeer(onReceive = { Result.Failure(DataError.Network.CANCELLED) }))
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+            skipItems(1)
+            // A tap only stops a file that is coming in.
+            viewModel.onAction(ShelfAction.OnIncomingCardTap("9"))
+            tapped = peer.cancelledReceives.isNotEmpty()
+
+            peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardArrived("9"))
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardWithdrawn("9"))
+            expectNoEvents()
+        }
+        assertThat(tapped).isEqualTo(false)
     }
 
     @Test

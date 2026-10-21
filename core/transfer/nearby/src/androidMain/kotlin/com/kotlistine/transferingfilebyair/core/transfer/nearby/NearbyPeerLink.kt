@@ -72,6 +72,9 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
     private val transfers = ConcurrentHashMap<Long, CompletableDeferred<Result<String?, DataError.Network>>>()
     private val incomingFiles = ConcurrentHashMap<Long, Payload>()
 
+    /** Who wants to hear how far an incoming file has got, by transfer id. */
+    private val progressListeners = ConcurrentHashMap<Long, (Float) -> Unit>()
+
     private fun transfer(id: Long) = transfers.getOrPut(id) { CompletableDeferred() }
 
     override val transport: Transport = object : Transport {
@@ -196,13 +199,25 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
         }
     }
 
-    override suspend fun receiveFile(transferId: Long): Result<String, DataError.Network> {
-        val result = transfer(transferId).await()
+    override suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit): Result<String, DataError.Network> {
+        progressListeners[transferId] = onProgress
+        val result = try {
+            transfer(transferId).await()
+        } finally {
+            progressListeners.remove(transferId)
+        }
         transfers.remove(transferId)
         return when (result) {
             is Result.Failure -> result
             is Result.Success -> result.data?.let { Result.Success(it) } ?: Result.Failure(DataError.Network.UNKNOWN)
         }
+    }
+
+    override fun cancelTransfer(transferId: Long) {
+        client.cancelPayload(transferId)
+        // Settle it here too, in case the link reports nothing more for it.
+        transfer(transferId).complete(Result.Failure(DataError.Network.CANCELLED))
+        incomingFiles.remove(transferId)
     }
 
     /** The link is gone: every transfer still under way has failed. Finished ones keep their result. */
@@ -319,9 +334,17 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
                         outcome.complete(Result.Success(location?.toString()))
                     }
                 }
-                PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> {
+                PayloadTransferUpdate.Status.FAILURE -> {
                     incomingFiles.remove(id)
                     outcome.complete(Result.Failure(DataError.Network.UNKNOWN))
+                }
+                PayloadTransferUpdate.Status.CANCELED -> {
+                    incomingFiles.remove(id)
+                    outcome.complete(Result.Failure(DataError.Network.CANCELLED))
+                }
+                PayloadTransferUpdate.Status.IN_PROGRESS -> {
+                    val total = update.totalBytes
+                    if (total > 0) progressListeners[id]?.invoke((update.bytesTransferred.toFloat() / total).coerceIn(0f, 1f))
                 }
                 else -> Unit
             }

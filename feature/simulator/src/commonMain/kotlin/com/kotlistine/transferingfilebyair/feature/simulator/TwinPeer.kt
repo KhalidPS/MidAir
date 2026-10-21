@@ -34,8 +34,12 @@ internal class TwinPeer(
     /** Both twins share the simulator's storage, so there are no bytes to move: the other twin copies on receive. */
     override suspend fun send(file: OutgoingFile): EmptyResult<DataError> = Result.Success(Unit)
 
-    override suspend fun receive(file: IncomingFile): Result<String, DataError> {
+    override suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit): Result<String, DataError> {
         val sent = storage[file.peerItemId] ?: return Result.Failure(DataError.Local.FILE_NOT_FOUND)
+        onProgress(1f)
         return Result.Success(shelf.add(sent))
     }
+
+    /** Twins copy instantly; there is nothing in flight to stop. */
+    override fun cancelReceive(peerItemId: String) = Unit
 }

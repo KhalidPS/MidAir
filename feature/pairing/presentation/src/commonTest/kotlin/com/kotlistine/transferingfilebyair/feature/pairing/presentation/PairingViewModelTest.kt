@@ -279,8 +279,10 @@ private class FakePeerLink : PeerLink {
         announce: suspend (transferId: Long) -> Unit,
     ): EmptyResult<DataError.Network> = Result.Failure(DataError.Network.DISCONNECTED)
 
-    override suspend fun receiveFile(transferId: Long): Result<String, DataError.Network> =
+    override suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit): Result<String, DataError.Network> =
         Result.Failure(DataError.Network.DISCONNECTED)
+
+    override fun cancelTransfer(transferId: Long) = Unit
 
     override fun disconnect() {
         disconnects++

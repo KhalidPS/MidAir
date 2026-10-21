@@ -16,6 +16,9 @@ sealed interface ShelfEvent {
     data class ShowAddFailed(val failedCount: Int, val error: DataError.Local) : ShelfEvent
     data class ShowError(val error: DataError) : ShelfEvent
 
+    /** A handed-over file didn't reach the peer; the item is back on the shelf. Offer [ShelfAction.OnRetrySend]. */
+    data class ShowSendFailed(val id: String, val name: String, val error: DataError) : ShelfEvent
+
     // A card sliding over from the paired device. These stream at frame rate while it crosses; they are effects for
     // the incoming-card animation, not screen state, so they never recompose the shelf.
 
@@ -34,6 +37,9 @@ sealed interface ShelfEvent {
 
     /** The peer's card went back (or couldn't be received): withdraw it. */
     data class PeerCardWithdrawn(val id: String) : ShelfEvent
+
+    /** How much of the arriving card's file is here (0..1), while it comes in. */
+    data class PeerCardProgress(val id: String, val fraction: Float) : ShelfEvent
 
     /** The peer let go past the edge: the card is ours. It lands once [ShelfState.landingItemId] appears. */
     data class PeerCardArrived(val id: String) : ShelfEvent

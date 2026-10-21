@@ -45,4 +45,10 @@ sealed interface ShelfAction {
 
     /** A received card finished flying into its slot. */
     data object OnLandingFinished : ShelfAction
+
+    /** The arriving card was tapped while its file was still coming in: stop the transfer. */
+    data class OnIncomingCardTap(val id: String) : ShelfAction
+
+    /** Send again a file whose transfer failed (from the failure message). */
+    data class OnRetrySend(val id: String) : ShelfAction
 }

@@ -8,6 +8,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -24,11 +25,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -111,6 +116,13 @@ class IncomingSlideState internal constructor(
 
     /** 0 → 1 while the card flies from where it rests into its slot. */
     internal val landing = Animatable(0f)
+
+    /** How much of the card's file is here (0..1); shown as a ring while [isTransferring]. */
+    internal val progress = Animatable(0f)
+
+    /** Let go by the peer and waiting for its file: the ring shows, and a tap stops the transfer. */
+    internal var isTransferring: Boolean by mutableStateOf(false)
+        private set
     private val arrival = Animatable(0f)
     private val glow = Animatable(1f)
 
@@ -193,6 +205,7 @@ class IncomingSlideState internal constructor(
         val card = card?.takeIf { it.id == id } ?: return
         followJob?.cancel()
         arrivalJob?.cancel()
+        isTransferring = false
         withdrawJob = scope.launch {
             val outside = if (entryEdge == ExitEdge.LEFT) -card.widthPx * 1.2f else containerSize.width + card.widthPx * 0.2f
             listOf(
@@ -203,10 +216,18 @@ class IncomingSlideState internal constructor(
         }
     }
 
+    /** How much of the arriving card's file is here. */
+    fun onProgress(id: String, fraction: Float) {
+        if (card?.id != id) return
+        scope.launch { progress.animateTo(fraction.coerceIn(0f, 1f), tween(180, easing = FastOutSlowInEasing)) }
+    }
+
     /** The sender let go past the edge: the card springs to the middle with a 3D turn and waits for its slot. */
     fun onArrived(id: String) {
         val card = card?.takeIf { it.id == id } ?: return
         followJob?.cancel()
+        isTransferring = true
+        scope.launch { progress.snapTo(0f) }
         arrivalJob = scope.launch {
             if (!isShown) {
                 // Nothing streamed (a fast flick, or moves lost): start just outside the facing edge.
@@ -249,6 +270,9 @@ class IncomingSlideState internal constructor(
             glow.animateTo(0f, tween(400, easing = FastOutLinearInEasing))
             return card.id
         }
+        // Every byte is here: the ring closes and gives way to the landing.
+        progress.animateTo(1f, tween(160, easing = FastOutSlowInEasing))
+        isTransferring = false
         landingFrom = Rect(position.value, Size(card.widthPx, card.heightPx))
         lastLandingTo = destination
         landingTo = slot
@@ -276,6 +300,7 @@ class IncomingSlideState internal constructor(
         if (card?.id != id) return
         followJob?.cancel()
         arrivalJob = null
+        isTransferring = false
         card = null
         picture = null
         isShown = false
@@ -307,9 +332,16 @@ internal fun rememberIncomingSlideState(): IncomingSlideState {
     return remember(scope, haptics) { IncomingSlideState(scope, haptics) }
 }
 
-/** The peer's card on this screen: its picture at the sender's physical size, moved only by its layer. */
+/**
+ * The peer's card on this screen: its picture at the sender's physical size, moved only by its layer. While its file
+ * comes in, a ring shows how much has arrived, and [onTapWhileTransferring] lets the user stop it.
+ */
 @Composable
-internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifier) {
+internal fun IncomingCard(
+    state: IncomingSlideState,
+    onTapWhileTransferring: (id: String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val card = state.card ?: return
     val picture = state.picture
     Box(
@@ -338,6 +370,16 @@ internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifi
                 shape = RoundedCornerShape(AirDimens.CardCorner)
                 clip = true
             }
+            .clickable(
+                enabled = state.isTransferring,
+                interactionSource = null,
+                indication = null,
+                onClickLabel = "Stop receiving",
+            ) { onTapWhileTransferring(card.id) }
+            .drawWithContent {
+                drawContent()
+                if (state.isTransferring) drawProgressRing(state.progress.value)
+            }
             .background(AirColors.SurfaceRaised),
         contentAlignment = Alignment.Center,
     ) {
@@ -354,4 +396,23 @@ internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifi
             )
         }
     }
+}
+
+/** A dimmed card with a ring filling clockwise from the top: how much of the file has arrived. */
+private fun DrawScope.drawProgressRing(progress: Float) {
+    drawRect(AirColors.Background.copy(alpha = 0.35f))
+    val radius = size.minDimension * 0.18f
+    val stroke = 4.dp.toPx()
+    val topLeft = Offset(center.x - radius, center.y - radius)
+    val ringSize = Size(radius * 2, radius * 2)
+    drawCircle(AirColors.OnSurface.copy(alpha = 0.25f), radius = radius, center = center, style = Stroke(stroke))
+    drawArc(
+        color = AirColors.OnSurface,
+        startAngle = -90f,
+        sweepAngle = 360f * progress,
+        useCenter = false,
+        topLeft = topLeft,
+        size = ringSize,
+        style = Stroke(width = stroke, cap = StrokeCap.Round),
+    )
 }

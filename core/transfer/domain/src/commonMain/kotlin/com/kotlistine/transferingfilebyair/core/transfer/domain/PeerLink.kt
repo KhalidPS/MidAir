@@ -66,6 +66,12 @@ interface PeerLink {
      */
     suspend fun sendFile(uri: String, announce: suspend (transferId: Long) -> Unit): EmptyResult<DataError.Network>
 
-    /** Waits for the file the peer sends as [transferId] to arrive in full; returns where it was stored locally. */
-    suspend fun receiveFile(transferId: Long): Result<String, DataError.Network>
+    /**
+     * Waits for the file the peer sends as [transferId] to arrive in full, reporting how much has arrived (0..1) to
+     * [onProgress] as it comes in. Returns where it was stored locally.
+     */
+    suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit = {}): Result<String, DataError.Network>
+
+    /** Stops transfer [transferId] in either direction; both sides then fail it with [DataError.Network.CANCELLED]. */
+    fun cancelTransfer(transferId: Long)
 }

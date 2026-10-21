@@ -52,6 +52,9 @@ class LinkedSlidePeer(
     /** Transfer ids announced by the peer, by the item id on its shelf. */
     private val offers = MutableStateFlow<Map<String, Long>>(emptyMap())
 
+    /** Items the user stopped before their transfer was known; their receive fails as soon as it is. */
+    private val cancelled = MutableStateFlow<Set<String>>(emptySet())
+
     init {
         peerLink.transport.incoming
             .filterIsInstance<SlideMessage.FileOffer>()
@@ -64,16 +67,26 @@ class LinkedSlidePeer(
             peerLink.transport.send(SlideMessage.FileOffer(file.itemId, transferId))
         }
 
-    override suspend fun receive(file: IncomingFile): Result<String, DataError> {
+    override suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit): Result<String, DataError> {
         val transferId = withTimeoutOrNull(OfferWait) {
             offers.map { it[file.peerItemId] }.filterNotNull().first()
         } ?: return Result.Failure(DataError.Network.DISCONNECTED)
-        offers.update { it - file.peerItemId }
-        val location = when (val arrived = peerLink.receiveFile(transferId)) {
+        if (file.peerItemId in cancelled.value) {
+            cancelled.update { it - file.peerItemId }
+            offers.update { it - file.peerItemId }
+            peerLink.cancelTransfer(transferId)
+            return Result.Failure(DataError.Network.CANCELLED)
+        }
+        val location = try {
+            peerLink.receiveFile(transferId, onProgress)
+        } finally {
+            offers.update { it - file.peerItemId }
+        }
+        val arrivedAt = when (val arrived = location) {
             is Result.Failure -> return arrived
             is Result.Success -> arrived.data
         }
-        val kept = when (val stored = store.keep(location, file.name, file.mimeType)) {
+        val kept = when (val stored = store.keep(arrivedAt, file.name, file.mimeType)) {
             is Result.Failure -> return stored
             is Result.Success -> stored.data
         }
@@ -82,5 +95,10 @@ class LinkedSlidePeer(
         val item = repository.observeItems().first().firstOrNull { it.uri == kept }
             ?: return Result.Failure(DataError.Local.FILE_NOT_FOUND)
         return Result.Success(item.id)
+    }
+
+    override fun cancelReceive(peerItemId: String) {
+        val transferId = offers.value[peerItemId]
+        if (transferId != null) peerLink.cancelTransfer(transferId) else cancelled.update { it + peerItemId }
     }
 }

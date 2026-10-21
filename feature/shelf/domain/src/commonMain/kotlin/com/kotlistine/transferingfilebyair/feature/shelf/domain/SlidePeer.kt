@@ -20,8 +20,14 @@ interface SlidePeer {
     /** Sends the file behind a handed-over card; returns once the peer has all of it. */
     suspend fun send(file: OutgoingFile): EmptyResult<DataError>
 
-    /** Takes in a file the peer slid over and puts it on this shelf. Returns the new shelf item's id. */
-    suspend fun receive(file: IncomingFile): Result<String, DataError>
+    /**
+     * Takes in a file the peer slid over and puts it on this shelf, reporting how much has arrived (0..1) to
+     * [onProgress]. Returns the new shelf item's id.
+     */
+    suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit = {}): Result<String, DataError>
+
+    /** Stops receiving the file of the peer's item [peerItemId]; its receive then fails as cancelled. */
+    fun cancelReceive(peerItemId: String)
 }
 
 /** A file this device is handing over: the shelf item and the reference to its bytes. */

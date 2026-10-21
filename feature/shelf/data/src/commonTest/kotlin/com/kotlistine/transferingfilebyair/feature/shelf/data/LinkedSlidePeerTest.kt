@@ -61,6 +61,40 @@ class LinkedSlidePeerTest {
     }
 
     @Test
+    fun `progress of the incoming file is passed on`() = runTest(UnconfinedTestDispatcher()) {
+        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
+        link.arrived[5] = "content://nearby/5"
+        val progress = mutableListOf<Float>()
+
+        peer.receive(incoming) { progress += it }
+
+        assertThat(progress).containsExactly(0.5f, 1f)
+    }
+
+    @Test
+    fun `stopping a receive cancels its transfer`() = runTest(UnconfinedTestDispatcher()) {
+        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
+
+        peer.cancelReceive("9")
+
+        assertThat(link.cancelledTransfers).containsExactly(5L)
+    }
+
+    @Test
+    fun `stopping before the transfer is known fails it as cancelled once it is`() = runTest(UnconfinedTestDispatcher()) {
+        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        peer.cancelReceive("9")
+        link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
+        link.arrived[5] = "content://nearby/5"
+
+        assertThat(peer.receive(incoming)).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(link.cancelledTransfers).containsExactly(5L)
+        assertThat(shelf.items.value.size).isEqualTo(0)
+    }
+
+    @Test
     fun `a file that never arrives fails the receive`() = runTest(UnconfinedTestDispatcher()) {
         val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
@@ -112,8 +146,18 @@ private class FakeLink : PeerLink {
         return Result.Success(Unit)
     }
 
-    override suspend fun receiveFile(transferId: Long): Result<String, DataError.Network> =
-        arrived[transferId]?.let { Result.Success(it) } ?: Result.Failure(DataError.Network.DISCONNECTED)
+    val cancelledTransfers = mutableListOf<Long>()
+
+    override suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit): Result<String, DataError.Network> {
+        val location = arrived[transferId] ?: return Result.Failure(DataError.Network.DISCONNECTED)
+        onProgress(0.5f)
+        onProgress(1f)
+        return Result.Success(location)
+    }
+
+    override fun cancelTransfer(transferId: Long) {
+        cancelledTransfers += transferId
+    }
 
     override suspend fun startSearching(): EmptyResult<DataError.Network> = Result.Success(Unit)
     override fun stopSearching() = Unit

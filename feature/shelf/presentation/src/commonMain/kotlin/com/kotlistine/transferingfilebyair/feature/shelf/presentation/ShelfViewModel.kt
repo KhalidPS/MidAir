@@ -37,6 +37,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
 import kotlin.time.Clock
 
+/** A card sent again after a failure has no slide to measure; the peer draws it this wide. */
+private const val RetryCardWidthMm = 40f
+
 /** How long the incoming card's on-screen smoothing trails its target; prediction runs this much further ahead. */
 private const val SmoothingLeadSeconds = 0.03f
 
@@ -58,8 +61,14 @@ class ShelfViewModel(
     private val sentIds = mutableSetOf<String>()
     private var isClearing = false
 
-    /** While a received file is being stored, newly appearing items wait so they appear together with [landingItemId]. */
-    private var isReceiving = false
+    /**
+     * The name of a file being received. An item with that name appearing meanwhile is held back, so it shows up
+     * together with [landingItemId] (other new items appear as usual).
+     */
+    private var receivingName: String? = null
+
+    /** The peer's item whose file is coming in, which a tap on the arriving card can stop. */
+    private var receivingPeerItemId: String? = null
     private var landingItemId: String? = null
 
     private var outgoing: OutgoingSlide? = null
@@ -107,6 +116,9 @@ class ShelfViewModel(
             is ShelfAction.OnSlideMoved -> mirrorMove(action.frame)
             is ShelfAction.OnSlideReturned -> stopMirroring(action.id)
             is ShelfAction.OnViewportChanged -> viewportWidthPx = action.widthPx
+            is ShelfAction.OnIncomingCardTap ->
+                if (action.id == receivingPeerItemId) peer?.cancelReceive(action.id)
+            is ShelfAction.OnRetrySend -> resend(action.id)
             ShelfAction.OnLandingFinished -> {
                 landingItemId = null
                 publishItems()
@@ -127,10 +139,11 @@ class ShelfViewModel(
     private fun publishItems() {
         _state.update { state ->
             val visible = shelfItems.filterNot { it.id in sentIds }
-            val shown = if (isReceiving) {
+            val holdBack = receivingName
+            val shown = if (holdBack != null) {
                 // Hold back the arriving item until its id is known, so it never shows without its landing.
                 val published = state.items.mapTo(HashSet()) { it.id }
-                visible.filter { it.id in published }
+                visible.filter { it.id in published || it.name != holdBack }
             } else {
                 visible
             }
@@ -176,13 +189,50 @@ class ShelfViewModel(
                 eventChannel.send(ShelfEvent.ShowSent(id = id, name = item.name))
                 return@launch
             }
-            // The file follows the card; the item leaves this shelf for good only once the peer has all of it.
-            val delivered = peer?.send(OutgoingFile(itemId = id, uri = item.uri))
-            if (delivered is Result.Failure) {
+            deliverFile(item)
+        }
+    }
+
+    /** The file follows the card; the item leaves this shelf for good only once the peer has all of it. */
+    private suspend fun deliverFile(item: ShelfItemUi) {
+        val delivered = peer?.send(OutgoingFile(itemId = item.id, uri = item.uri))
+        if (delivered is Result.Failure) {
+            undoSend(item.id)
+            eventChannel.send(ShelfEvent.ShowSendFailed(id = item.id, name = item.name, error = delivered.error))
+        } else {
+            finishSend(item.id)
+        }
+    }
+
+    /**
+     * Sends a file again after a failed transfer, without a slide: the peer is told about the card and that it was let
+     * go, so it plays the arrival and takes the file as usual.
+     */
+    private fun resend(id: String) {
+        val peer = peer ?: return
+        val item = shelfItems.firstOrNull { it.id == id } ?: return
+        if (!sentIds.add(id)) return
+        publishItems()
+        viewModelScope.launch {
+            // Sent in this coroutine, not queued: the peer must know the card before it is told it was let go.
+            deliver(
+                peer,
+                SlideMessage.DragStart(
+                    itemId = item.id,
+                    name = item.name,
+                    mimeType = item.mimeType,
+                    sizeBytes = item.sizeBytes,
+                    cardWidthMm = RetryCardWidthMm,
+                    cardHeightMm = RetryCardWidthMm / item.aspectRatio,
+                    thumbnail = null,
+                ),
+            )
+            val committed = deliver(peer, SlideMessage.DragCommit(item.id, outwardMmPerS = 0f, alongEdgeMmPerS = 0f))
+            if (committed is Result.Failure) {
                 undoSend(id)
-                eventChannel.send(ShelfEvent.ShowError(delivered.error))
+                eventChannel.send(ShelfEvent.ShowSendFailed(id = item.id, name = item.name, error = committed.error))
             } else {
-                finishSend(id)
+                deliverFile(item)
             }
         }
     }
@@ -390,9 +440,19 @@ class ShelfViewModel(
     }
 
     private suspend fun receive(peer: SlidePeer, start: SlideMessage.DragStart) {
-        isReceiving = true
-        val result = peer.receive(IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes))
-        isReceiving = false
+        receivingName = start.name
+        receivingPeerItemId = start.itemId
+        var lastPercent = -1
+        val result = peer.receive(IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes)) { fraction ->
+            // Whole percents are plenty for a ring, and keep the event stream light on big files.
+            val percent = (fraction * 100).toInt()
+            if (percent != lastPercent) {
+                lastPercent = percent
+                eventChannel.trySend(ShelfEvent.PeerCardProgress(start.itemId, fraction))
+            }
+        }
+        receivingName = null
+        receivingPeerItemId = null
         when (result) {
             is Result.Success -> {
                 landingItemId = result.data
@@ -401,7 +461,8 @@ class ShelfViewModel(
             is Result.Failure -> {
                 publishItems()
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(start.itemId))
-                eventChannel.send(ShelfEvent.ShowError(result.error))
+                // A transfer this user stopped needs no message.
+                if (result.error != DataError.Network.CANCELLED) eventChannel.send(ShelfEvent.ShowError(result.error))
             }
         }
     }

@@ -11,6 +11,7 @@ internal fun DataError.Network.toPairingMessage(): String = when (this) {
     DataError.Network.DISCONNECTED -> "The other phone went out of reach."
     DataError.Network.PAYLOAD_TOO_LARGE,
     DataError.Network.MALFORMED_MESSAGE,
+    DataError.Network.CANCELLED,
     DataError.Network.UNKNOWN,
     -> "Couldn't connect. Keep the phones close together and try again."
 }
