@@ -194,22 +194,25 @@ physical Android phones**.
 
 ## 5. Architecture (KMP-ready from day one)
 
-Clean architecture plus MVI-style ViewModels. Shared modules use **`kotlin-multiplatform` with only the
-Android target** for now. Migration then means adding `jvm()`/`iosArm64()` targets, not rewriting code.
+Clean Architecture with feature-layered modules and MVI presentation (State / sealed Action / Event via
+`Channel`). The full conventions are in `CLAUDE.md`. Shared modules use **`kotlin-multiplatform` with
+only the Android target** for now, through the `build-logic` convention plugins. Migration then means
+adding `jvm()`/`iosArm64()` targets in one place, not rewriting code.
 
 ```
-:app                         Thin Android shell: Application (starts Koin), Activity, permissions, foreground service
-:shared              (KMP)   App() root composable, navigation graph, list of Koin modules.
-                             Desktop/iOS entry points will just call App().
-:core:model          (KMP)   ShelfItem, Peer, DeviceGeometry, DragState… (pure Kotlin)
-:core:protocol       (KMP)   Message sealed classes + kotlinx.serialization codec
-:core:transport      (KMP)   Transport interface, LoopbackTransport
-:core:transport-nearby (Android) NearbyTransport (Play services)
-:core:designsystem   (KMP)   Theme, tokens, EdgeGlow, Bloom, GradientText, LiftCard (Compose MPP-safe APIs;
-                             Android-only bits like RenderEffect/AGSL behind small interfaces)
-:feature:pairing     (KMP)   Pairing screen + ViewModel
-:feature:shelf       (KMP)   Shelf grid, drag/lift, send/receive choreography + ViewModel
-:feature:simulator   (debug) Twin Simulator
+:app                              Thin Android shell: Application (starts Koin), Activity, permissions, foreground service
+:shared                   (KMP)   App() root composable, root NavHost, list of Koin modules.
+                                  Desktop/iOS entry points will just call App().
+:core:domain              (KMP)   ShelfItem, Peer, DeviceGeometry… + Result / DataError
+:core:presentation        (KMP)   ObserveAsEvents and other shared presentation helpers
+:core:designsystem        (KMP)   Theme, tokens, EdgeGlow, Bloom, GradientText, LiftCard (Android-only bits
+                                  like RenderEffect/AGSL behind small interfaces)
+:core:transfer:domain     (KMP)   Transport interface, protocol messages
+:core:transfer:data       (KMP)   Protocol codec (kotlinx.serialization), LoopbackTransport
+:core:transfer:nearby     (Android) NearbyTransport (Play services)
+:feature:pairing:{domain,data,presentation}
+:feature:shelf:{domain,data,presentation}   Shelf grid, drag/lift, send/receive choreography
+:feature:simulator        (debug) Twin Simulator
 ```
 
 Libraries (KMP-friendly choices; exact versions checked when we add them):

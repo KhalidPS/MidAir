@@ -1,4 +1,5 @@
 pluginManagement {
+    includeBuild("build-logic")
     repositories {
         google {
             content {
@@ -27,7 +28,8 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 rootProject.name = "TransferingFileByAir"
 include(":app")
 include(":shared")
-include(":core:model")
+include(":core:domain")
+include(":core:presentation")
 include(":core:designsystem")
-include(":feature:shelf")
+include(":feature:shelf:presentation")
  
