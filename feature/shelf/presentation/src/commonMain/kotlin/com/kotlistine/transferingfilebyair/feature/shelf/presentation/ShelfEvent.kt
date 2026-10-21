@@ -38,9 +38,6 @@ sealed interface ShelfEvent {
     /** The peer's card went back (or couldn't be received): withdraw it. */
     data class PeerCardWithdrawn(val id: String) : ShelfEvent
 
-    /** How much of the arriving card's file is here (0..1), while it comes in. */
-    data class PeerCardProgress(val id: String, val fraction: Float) : ShelfEvent
-
-    /** The peer let go past the edge: the card is ours. It lands once [ShelfState.landingItemId] appears. */
+    /** The peer let go past the edge: the card is ours, and flies into its slot in [ShelfState.arriving]. */
     data class PeerCardArrived(val id: String) : ShelfEvent
 }

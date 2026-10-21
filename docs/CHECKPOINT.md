@@ -11,9 +11,10 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 |---|---|---|
 | `master` | `8699783` | Phases 0–5 and this checkpoint |
 | `feature/transfer-progress` | `0ab28e6` | Phase 6a, on top of `master`. **Not merged** |
-| `feature/background-transfers` | (latest) | Phase 6b, on top of `feature/transfer-progress`. **Not merged** |
+| `feature/background-transfers` | `7d3f984` | Phase 6b, on top of `feature/transfer-progress`. **Not merged** |
+| `feature/land-in-place` | (latest) | Phase 6c, on top of `feature/background-transfers`. **Not merged** |
 
-Merging `feature/background-transfers` into `master` brings in both parts of Phase 6 (fast-forward).
+Merging `feature/land-in-place` into `master` brings in all of Phase 6 (fast-forward).
 
 ## Done
 
@@ -26,9 +27,10 @@ Merging `feature/background-transfers` into `master` brings in both parts of Pha
 | 4. Pairing | Edge-glow screen, hold Connect, 4-digit code confirmed on both phones, bloom on pairing, Nearby link | `4a03bbe` |
 | 5. Real slide between phones | Card mirrored over Nearby, lands on the other phone; the real file is sent and kept in `Downloads/TransferingFileByAir` | `376e7f8`, `4d69d88` |
 | 6a. Transfer progress | Progress ring on the arriving card, tap it to stop the file, Retry on a failed send | `0ab28e6` |
-| 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification, so leaving the app or locking the phone doesn't stop them | `feature/background-transfers` |
+| 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification, so leaving the app or locking the phone doesn't stop them | `7d3f984` |
+| 6c. Land in place | A let-go card flies straight into its slot at the top of the shelf and waits there with its ring (tap to stop); several can arrive at once; the arrival ripples light across the screen; fixed cards drawn off-place on right-to-left phones | `feature/land-in-place` |
 
-**Tests:** 160 unit tests, all passing (`./gradlew testAndroidHostTest`).
+**Tests:** 161 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
 ## Known limitations
 
@@ -51,7 +53,9 @@ Merging `feature/background-transfers` into `master` brings in both parts of Pha
 ### Phase 6: check on phones
 
 - Send a 1 GB video, leave the app and lock the phone mid-way; it should still arrive.
-- Stop an incoming file by tapping its card; retry a failed send from the snackbar.
+- Slide several cards one after another: each lands in its own slot and fills its ring; tap one to stop it.
+- Retry a failed send from the snackbar.
+- Try it with the Arabic (right-to-left) phone as sender and as receiver.
 
 ### Phase 7: calibration and polish
 

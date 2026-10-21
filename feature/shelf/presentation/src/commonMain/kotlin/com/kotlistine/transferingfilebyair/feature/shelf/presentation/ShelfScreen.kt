@@ -28,9 +28,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -60,7 +62,10 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.EmptyShelf
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfBottomBar
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfGrid
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.arrivingKey
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.ArrivalWave
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.EdgeBloom
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.IncomingCard
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.IncomingSlideState
@@ -135,7 +140,6 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
             )
             is ShelfEvent.PeerCardWithdrawn -> incomingSlide.onWithdrawn(event.id)
             is ShelfEvent.PeerCardArrived -> incomingSlide.onArrived(event.id)
-            is ShelfEvent.PeerCardProgress -> incomingSlide.onProgress(event.id, event.fraction)
             is ShelfEvent.ShowSendFailed -> scope.launch {
                 snackbarHostState.currentSnackbarData?.dismiss()
                 val result = snackbarHostState.showSnackbar(event.toMessage(), RetryLabel, duration = SnackbarDuration.Long)
@@ -159,6 +163,8 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
 }
 
 private enum class ShelfContent { Loading, Empty, Items }
+
+private const val PictureKeepMillis = 1_500L
 
 @Composable
 fun ShelfScreen(
@@ -201,23 +207,24 @@ fun ShelfScreen(
         return Rect(topLeft, bottomRight)
     }
 
-    // A received card lands in its new slot at the top of the shelf, then the slot takes over from it.
-    LaunchedEffect(state.landingItemId) {
-        val id = state.landingItemId ?: return@LaunchedEffect
-        gridState.animateScrollToItem(0)
-        var landedCard: String? = incomingSlide.card?.id
-        try {
-            landedCard = incomingSlide.land(slot = { slotRect(id) })
-        } finally {
-            // Even when the landing is cut short, the slot must show: the item is on the shelf either way.
-            incomingSlide.handOff(landedCard, showSlot = { onAction(ShelfAction.OnLandingFinished) })
-        }
+    // A card let go by the peer flies into its slot at the top of the shelf, so the top is brought into view.
+    SideEffect { incomingSlide.slotOf = { id -> slotRect(arrivingKey(id)) } }
+    val newestArriving = state.arriving.firstOrNull()?.id
+    LaunchedEffect(newestArriving) {
+        if (newestArriving != null && gridState.layoutInfo.totalItemsCount > 0) gridState.animateScrollToItem(0)
+    }
+    // Pictures are only needed while their cards wait, and for a moment while the received item takes over.
+    LaunchedEffect(state.arriving) {
+        delay(PictureKeepMillis)
+        val keep = state.arriving.mapTo(HashSet()) { it.id }
+        incomingSlide.card?.let { keep += it.id }
+        incomingSlide.pictures.keys.retainAll(keep)
     }
 
     val insets = WindowInsets.safeDrawing.asPaddingValues()
     val content = when {
         state.isLoading -> ShelfContent.Loading
-        state.items.isEmpty() -> ShelfContent.Empty
+        state.items.isEmpty() && state.arriving.isEmpty() -> ShelfContent.Empty
         else -> ShelfContent.Items
     }
 
@@ -255,7 +262,10 @@ fun ShelfScreen(
                         onAction = onAction,
                         slideState = slideState,
                         slots = slots,
-                        landingItemId = state.landingItemId,
+                        arriving = state.arriving,
+                        arrivedFrom = state.arrivedFrom,
+                        pictures = incomingSlide.pictures,
+                        flyingId = incomingSlide.flyingId,
                         gridState = gridState,
                         contentPadding = PaddingValues(
                             start = AirDimens.ScreenGutter,
@@ -304,8 +314,10 @@ fun ShelfScreen(
 
         EdgeBloom(bloom = { width -> slideState.bloom(width) })
         EdgeBloom(bloom = { incomingSlide.bloom() })
-        IncomingCard(incomingSlide, onTapWhileTransferring = { id -> onAction(ShelfAction.OnIncomingCardTap(id)) })
-        LiftedCard(slideState)
+        ArrivalWave(wave = { incomingSlide.wave() })
+        // Absolute, not start-aligned: the cards' offsets are overlay pixels, also in right-to-left layouts.
+        IncomingCard(incomingSlide, Modifier.align(AbsoluteAlignment.TopLeft))
+        LiftedCard(slideState, Modifier.align(AbsoluteAlignment.TopLeft))
 
         SnackbarHost(
             hostState = snackbarHostState,
@@ -354,6 +366,7 @@ private fun ShelfScreenItemsPreview() {
                     previewItem("4", "Q4 Report.pdf", "16 KB · 13:25", FileKind.PDF, "PDF", 0.78f),
                     previewItem("5", "Walrus.mp4", "18 MB · 13:24", FileKind.VIDEO, "MP4", 1.6f),
                 ),
+                arriving = listOf(ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 4f / 3f, progress = 0.42f)),
             ),
             onAction = {},
         )

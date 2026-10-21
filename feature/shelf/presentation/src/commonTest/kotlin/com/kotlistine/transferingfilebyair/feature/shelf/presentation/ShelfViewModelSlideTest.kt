@@ -21,6 +21,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAliv
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -113,6 +114,8 @@ class ShelfViewModelSlideTest {
         alongEdgeMmPerS = 0f,
         tiltDegrees = 2f,
     )
+
+    private fun commit(id: String) = SlideMessage.DragCommit(id, outwardMmPerS = 200f, alongEdgeMmPerS = 0f)
 
     private val peerStart = SlideMessage.DragStart(
         itemId = "9",
@@ -417,69 +420,94 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
-    fun `a card let go on the peer lands on this shelf`() = runTest {
-        createViewModel(
-            FakePeer(onReceive = {
-                repository.items.update { items -> listOf(item("received-1")) + items }
-                Result.Success("received-1")
-            }),
-        )
+    fun `a card let go on the peer waits in its slot, then becomes the received item in place`() = runTest {
+        val arrival = CompletableDeferred<Result<String, DataError>>()
+        createViewModel(FakePeer(onReceive = { arrival.await() }))
         viewModel.state.test {
             awaitLoaded()
             viewModel.events.test {
                 peer.transport.deliver(peerStart)
                 skipItems(1)
 
-                peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+                peer.transport.deliver(commit("9"))
 
                 assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardArrived("9"))
             }
+            // The 30 × 40 mm card keeps its shape in its slot.
+            assertThat(expectMostRecentItem().arriving)
+                .containsExactly(ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 0.75f))
             assertThat(peer.received).containsExactly(
                 IncomingFile(peerItemId = "9", name = "River Valley.jpg", mimeType = "image/jpeg", sizeBytes = 395_000),
             )
-            val landing = expectMostRecentItem()
-            assertThat(landing.landingItemId).isEqualTo("received-1")
-            assertThat(landing.items.map { it.id }).containsExactly("received-1", "1")
 
-            viewModel.onAction(ShelfAction.OnLandingFinished)
-            assertThat(awaitItem().landingItemId).isNull()
+            // On the shelf before the transfer is done: held back, so it never shows next to its card.
+            repository.items.update { items -> listOf(item("received-1", name = "River Valley.jpg")) + items }
+            expectNoEvents()
+
+            arrival.complete(Result.Success("received-1"))
+
+            val received = expectMostRecentItem()
+            assertThat(received.arriving).isEmpty()
+            assertThat(received.items.map { it.id }).containsExactly("received-1", "1")
+            assertThat(received.arrivedFrom).isEqualTo(mapOf("received-1" to "9"))
         }
     }
 
     @Test
-    fun `the arriving file's progress is reported`() = runTest {
-        createViewModel(FakePeer(progressSteps = listOf(0.25f, 0.25f, 0.5f)))
-        viewModel.events.test {
+    fun `the arriving card shows how much of its file is here`() = runTest {
+        val arrival = CompletableDeferred<Result<String, DataError>>()
+        createViewModel(FakePeer(onReceive = { arrival.await() }, progressSteps = listOf(0.25f, 0.251f, 0.5f)))
+        viewModel.state.test {
+            awaitLoaded()
             peer.transport.deliver(peerStart)
-            skipItems(1)
+            peer.transport.deliver(commit("9"))
 
-            peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
-
-            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardArrived("9"))
-            // Repeats within the same percent are dropped.
-            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardProgress("9", 0.25f))
-            assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardProgress("9", 0.5f))
+            assertThat(expectMostRecentItem().arriving.single().progress).isEqualTo(0.5f)
         }
     }
 
     @Test
-    fun `a tap before the file is coming in does nothing, and a stopped transfer withdraws quietly`() = runTest {
-        var tapped = false
-        createViewModel(FakePeer(onReceive = { Result.Failure(DataError.Network.CANCELLED) }))
+    fun `cards keep arriving while earlier files are still coming in`() = runTest {
+        val arrivals = mutableMapOf<String, CompletableDeferred<Result<String, DataError>>>()
+        createViewModel(
+            FakePeer(onReceive = { file ->
+                CompletableDeferred<Result<String, DataError>>().also { arrivals[file.peerItemId] = it }.await()
+            }),
+        )
+        viewModel.state.test {
+            awaitLoaded()
+            peer.transport.deliver(peerStart)
+            peer.transport.deliver(commit("9"))
+            peer.transport.deliver(peerStart.copy(itemId = "10", name = "Notes.md"))
+            peer.transport.deliver(commit("10"))
+
+            assertThat(expectMostRecentItem().arriving.map { it.id }).containsExactly("10", "9")
+
+            arrivals.getValue("9").complete(Result.Failure(DataError.Network.DISCONNECTED))
+
+            assertThat(expectMostRecentItem().arriving.map { it.id }).containsExactly("10")
+        }
+    }
+
+    @Test
+    fun `a tap stops only a file that is coming in, and a stopped transfer withdraws quietly`() = runTest {
+        val arrival = CompletableDeferred<Result<String, DataError>>()
+        createViewModel(FakePeer(onReceive = { arrival.await() }))
         viewModel.events.test {
             peer.transport.deliver(peerStart)
             skipItems(1)
-            // A tap only stops a file that is coming in.
             viewModel.onAction(ShelfAction.OnIncomingCardTap("9"))
-            tapped = peer.cancelledReceives.isNotEmpty()
+            assertThat(peer.cancelledReceives).isEmpty()
 
-            peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
-
+            peer.transport.deliver(commit("9"))
             assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardArrived("9"))
+            viewModel.onAction(ShelfAction.OnIncomingCardTap("9"))
+            assertThat(peer.cancelledReceives).containsExactly("9")
+
+            arrival.complete(Result.Failure(DataError.Network.CANCELLED))
             assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardWithdrawn("9"))
             expectNoEvents()
         }
-        assertThat(tapped).isEqualTo(false)
     }
 
     @Test
@@ -499,7 +527,7 @@ class ShelfViewModelSlideTest {
         val arrival = CompletableDeferred<Result<String, DataError>>()
         createViewModel(FakePeer(onReceive = { arrival.await() }))
         peer.transport.deliver(peerStart)
-        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+        peer.transport.deliver(commit("9"))
 
         assertThat(keepAlive.held).isEqualTo(1)
         assertThat(keepAlive.descriptions).containsExactly("Receiving “River Valley.jpg”")
@@ -518,7 +546,7 @@ class ShelfViewModelSlideTest {
             peer.transport.deliver(peerStart)
             skipItems(1)
 
-            peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+            peer.transport.deliver(commit("9"))
 
             assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardArrived("9"))
             assertThat(awaitItem()).isEqualTo(ShelfEvent.PeerCardWithdrawn("9"))

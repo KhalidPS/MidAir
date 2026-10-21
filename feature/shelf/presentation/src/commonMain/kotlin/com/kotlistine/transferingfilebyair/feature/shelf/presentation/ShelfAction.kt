@@ -43,10 +43,7 @@ sealed interface ShelfAction {
     /** The shelf's size on screen, needed to place a card arriving from the peer. */
     data class OnViewportChanged(val widthPx: Int, val heightPx: Int) : ShelfAction
 
-    /** A received card finished flying into its slot. */
-    data object OnLandingFinished : ShelfAction
-
-    /** The arriving card was tapped while its file was still coming in: stop the transfer. */
+    /** An arriving card was tapped while its file was still coming in: stop that transfer. */
     data class OnIncomingCardTap(val id: String) : ShelfAction
 
     /** Send again a file whose transfer failed (from the failure message). */

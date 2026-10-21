@@ -19,6 +19,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.toUi
@@ -74,14 +75,16 @@ class ShelfViewModel(
     private var isClearing = false
 
     /**
-     * The name of a file being received. An item with that name appearing meanwhile is held back, so it shows up
-     * together with [landingItemId] (other new items appear as usual).
+     * Names of the files being received. An item with one of these names appearing meanwhile is held back, so it
+     * takes over from its arriving card in one step (other new items appear as usual).
      */
-    private var receivingName: String? = null
+    private val receivingNames = mutableListOf<String>()
 
-    /** The peer's item whose file is coming in, which a tap on the arriving card can stop. */
-    private var receivingPeerItemId: String? = null
-    private var landingItemId: String? = null
+    /** Cards from the peer whose files are coming in, newest first. */
+    private val arriving = mutableListOf<ArrivingItemUi>()
+
+    /** Received item id → the id of the arriving card it took over from. */
+    private val arrivedFrom = mutableMapOf<String, String>()
 
     private var outgoing: OutgoingSlide? = null
     private var incoming: IncomingSlide? = null
@@ -129,12 +132,8 @@ class ShelfViewModel(
             is ShelfAction.OnSlideReturned -> stopMirroring(action.id)
             is ShelfAction.OnViewportChanged -> viewportWidthPx = action.widthPx
             is ShelfAction.OnIncomingCardTap ->
-                if (action.id == receivingPeerItemId) peer?.cancelReceive(action.id)
+                if (arriving.any { it.id == action.id }) peer?.cancelReceive(action.id)
             is ShelfAction.OnRetrySend -> resend(action.id)
-            ShelfAction.OnLandingFinished -> {
-                landingItemId = null
-                publishItems()
-            }
         }
     }
 
@@ -151,15 +150,19 @@ class ShelfViewModel(
     private fun publishItems() {
         _state.update { state ->
             val visible = shelfItems.filterNot { it.id in sentIds }
-            val holdBack = receivingName
-            val shown = if (holdBack != null) {
-                // Hold back the arriving item until its id is known, so it never shows without its landing.
+            val shown = if (receivingNames.isNotEmpty()) {
+                // Hold back a received item until its id is known, so it never shows next to its arriving card.
                 val published = state.items.mapTo(HashSet()) { it.id }
-                visible.filter { it.id in published || it.name != holdBack }
+                visible.filter { it.id in published || it.name !in receivingNames }
             } else {
                 visible
             }
-            state.copy(items = shown, isLoading = false, landingItemId = landingItemId)
+            state.copy(
+                items = shown,
+                isLoading = false,
+                arriving = arriving.toList(),
+                arrivedFrom = arrivedFrom.toMap(),
+            )
         }
     }
 
@@ -379,7 +382,7 @@ class ShelfViewModel(
 
     // endregion
 
-    // region Receiving side: show the peer's card arriving, then land it.
+    // region Receiving side: show the peer's card arriving, then keep it in its slot while its file comes in.
 
     private fun talkTo(peer: SlidePeer) {
         peer.isLinked
@@ -445,6 +448,11 @@ class ShelfViewModel(
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null
+                val start = slide.start
+                // Its slot opens at the top of the shelf at once; the card flies into it and waits there for its file.
+                arriving.removeAll { it.id == start.itemId }
+                arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
+                publishItems()
                 eventChannel.send(ShelfEvent.PeerCardArrived(message.itemId))
                 // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen
                 // doesn't stop it.
@@ -456,22 +464,23 @@ class ShelfViewModel(
     }
 
     private suspend fun receive(peer: SlidePeer, start: SlideMessage.DragStart) {
-        receivingName = start.name
-        receivingPeerItemId = start.itemId
+        receivingNames += start.name
         var lastPercent = -1
         val result = peer.receive(IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes)) { fraction ->
-            // Whole percents are plenty for a ring, and keep the event stream light on big files.
+            // Whole percents are plenty for a ring, and keep the state light on big files.
             val percent = (fraction * 100).toInt()
             if (percent != lastPercent) {
                 lastPercent = percent
-                eventChannel.trySend(ShelfEvent.PeerCardProgress(start.itemId, fraction))
+                // Back on the transfer scope's thread, whichever thread the link reports from.
+                transferScope.launch { showProgress(start.itemId, fraction) }
             }
         }
-        receivingName = null
-        receivingPeerItemId = null
+        receivingNames.remove(start.name)
+        arriving.removeAll { it.id == start.itemId }
         when (result) {
             is Result.Success -> {
-                landingItemId = result.data
+                // The item takes the arriving card's place in the same update.
+                arrivedFrom[result.data] = start.itemId
                 publishItems()
             }
             is Result.Failure -> {
@@ -482,6 +491,16 @@ class ShelfViewModel(
             }
         }
     }
+
+    private fun showProgress(id: String, fraction: Float) {
+        val index = arriving.indexOfFirst { it.id == id }
+        if (index < 0) return
+        arriving[index] = arriving[index].copy(progress = fraction.coerceIn(0f, 1f))
+        publishItems()
+    }
+
+    private fun SlideMessage.DragStart.aspectRatio(): Float =
+        if (cardHeightMm > 0f) (cardWidthMm / cardHeightMm).coerceIn(0.5f, 2f) else 1f
 
     // endregion
 
