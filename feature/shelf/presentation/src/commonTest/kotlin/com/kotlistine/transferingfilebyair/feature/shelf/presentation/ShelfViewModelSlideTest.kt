@@ -18,6 +18,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
 import kotlinx.coroutines.Dispatchers
@@ -186,6 +187,7 @@ class ShelfViewModelSlideTest {
             val commit = peer.transport.sentSlides.last() as SlideMessage.DragCommit
             assertThat(commit.itemId).isEqualTo("1")
             assertThat(commit.outwardMmPerS).isCloseTo(90f, Tolerance)
+            assertThat(peer.sentFiles).containsExactly(OutgoingFile(itemId = "1", uri = "content://file/1"))
             assertThat(repository.items.value).isEmpty()
             assertThat(expectMostRecentItem().items).isEmpty()
         }
@@ -250,6 +252,24 @@ class ShelfViewModelSlideTest {
         assertThat(start.thumbnail).isNull()
         assertThat(peer.transport.sentSlides.last()).isInstanceOf(SlideMessage.DragCommit::class)
         assertThat(repository.items.value).isEmpty()
+    }
+
+    @Test
+    fun `a file that fails to reach the peer stays on the shelf, with the error`() = runTest {
+        peer.sendResult = Result.Failure(DataError.Network.DISCONNECTED)
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.events.test {
+                viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+                viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
+
+                viewModel.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+
+                assertThat(awaitItem()).isEqualTo(ShelfEvent.ShowError(DataError.Network.DISCONNECTED))
+            }
+            assertThat(repository.items.value.map { it.id }).containsExactly("1")
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1")
+        }
     }
 
     @Test

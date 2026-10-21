@@ -1,12 +1,16 @@
 package com.kotlistine.transferingfilebyair.feature.simulator
 
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
+import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /**
  * One twin's view of the other: messages travel over [transport], and "receiving" a file copies what the other twin
@@ -23,6 +27,12 @@ internal class TwinPeer(
 
     override val link: SlideLink
         get() = SlideLink(gapMm = gapMm(), peerSide = peerSide)
+
+    /** The twins are always linked. */
+    override val isLinked: Flow<Boolean> = flowOf(true)
+
+    /** Both twins share the simulator's storage, so there are no bytes to move: the other twin copies on receive. */
+    override suspend fun send(file: OutgoingFile): EmptyResult<DataError> = Result.Success(Unit)
 
     override suspend fun receive(file: IncomingFile): Result<String, DataError> {
         val sent = storage[file.peerItemId] ?: return Result.Failure(DataError.Local.FILE_NOT_FOUND)

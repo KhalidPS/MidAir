@@ -45,6 +45,7 @@ class SlideMessageCodecTest {
             move,
             SlideMessage.DragCancel("7"),
             SlideMessage.DragCommit("7", outwardMmPerS = 300f, alongEdgeMmPerS = 5f),
+            SlideMessage.FileOffer("7", transferId = -4_611_686_018_427_387_904),
             SlideMessage.Ping(sentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000),
         )

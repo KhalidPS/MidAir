@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.ExifInterface
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.kotlistine.transferingfilebyair.core.domain.shelf.FileKind
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
@@ -20,7 +21,8 @@ import kotlin.coroutines.cancellation.CancellationException
 
 internal class AndroidFileMetadataSource(context: Context) : FileMetadataSource {
 
-    private val resolver: ContentResolver = context.applicationContext.contentResolver
+    private val context: Context = context.applicationContext
+    private val resolver: ContentResolver = this.context.contentResolver
 
     override suspend fun read(uri: String): Result<FileMetadata, DataError.Local> = withContext(Dispatchers.IO) {
         guarded {
@@ -42,8 +44,14 @@ internal class AndroidFileMetadataSource(context: Context) : FileMetadataSource 
     }
 
     override suspend fun retainAccess(uri: String): EmptyResult<DataError.Local> = withContext(Dispatchers.IO) {
+        val parsed = Uri.parse(uri)
         guarded {
-            resolver.takePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (DocumentsContract.isDocumentUri(context, parsed)) {
+                resolver.takePersistableUriPermission(parsed, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } else {
+                // A file this app stored itself (one it received): readable without any grant, as long as it exists.
+                resolver.openInputStream(parsed)?.close() ?: throw FileNotFoundException(uri)
+            }
         }
     }
 

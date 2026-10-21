@@ -69,6 +69,12 @@ sealed interface SlideMessage {
         val alongEdgeMmPerS: Float,
     ) : SlideMessage
 
+    /**
+     * The file behind a handed-over card is on its way as transfer [transferId] (sent just before the bytes), so the
+     * receiver knows which incoming file is which card.
+     */
+    data class FileOffer(val itemId: String, val transferId: Long) : SlideMessage
+
     /** Round-trip time probe; answered with [Pong] carrying the same timestamp. */
     data class Ping(val sentAtMillis: Long) : SlideMessage
 

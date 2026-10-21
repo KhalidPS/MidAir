@@ -8,9 +8,11 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flowOf
 
 class FakeTransport : Transport {
     val sent = mutableListOf<SlideMessage>()
@@ -41,6 +43,17 @@ class FakePeer(
 ) : SlidePeer {
     override val transport = FakeTransport()
     val received = mutableListOf<IncomingFile>()
+    val sentFiles = mutableListOf<OutgoingFile>()
+
+    /** What sending a file returns. */
+    var sendResult: EmptyResult<DataError> = Result.Success(Unit)
+
+    override val isLinked: Flow<Boolean> = flowOf(true)
+
+    override suspend fun send(file: OutgoingFile): EmptyResult<DataError> {
+        sentFiles += file
+        return sendResult
+    }
 
     override suspend fun receive(file: IncomingFile): Result<String, DataError> {
         received += file

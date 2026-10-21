@@ -25,6 +25,9 @@ kotlin {
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.core)
         }
+        androidMain.dependencies {
+            implementation(libs.androidx.core.ktx)
+        }
         commonTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)

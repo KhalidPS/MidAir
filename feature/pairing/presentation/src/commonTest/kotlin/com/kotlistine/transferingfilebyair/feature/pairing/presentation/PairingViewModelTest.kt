@@ -256,6 +256,14 @@ private class FakePeerLink : PeerLink {
         state.value = LinkState.Searching
     }
 
+    override suspend fun sendFile(
+        uri: String,
+        announce: suspend (transferId: Long) -> Unit,
+    ): EmptyResult<DataError.Network> = Result.Failure(DataError.Network.DISCONNECTED)
+
+    override suspend fun receiveFile(transferId: Long): Result<String, DataError.Network> =
+        Result.Failure(DataError.Network.DISCONNECTED)
+
     override fun disconnect() {
         disconnects++
         state.value = LinkState.Idle

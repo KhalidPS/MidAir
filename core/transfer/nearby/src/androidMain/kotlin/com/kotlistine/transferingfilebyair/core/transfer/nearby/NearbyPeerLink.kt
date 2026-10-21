@@ -1,6 +1,7 @@
 package com.kotlistine.transferingfilebyair.core.transfer.nearby
 
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import com.google.android.gms.common.api.ApiException
@@ -26,12 +27,16 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Only installs of this app find each other. */
@@ -44,6 +49,7 @@ private const val ServiceId = "com.kotlistine.transferingfilebyair.slide"
  */
 internal class NearbyPeerLink(context: Context) : PeerLink {
 
+    private val appContext = context.applicationContext
     private val client = Nearby.getConnectionsClient(context)
     private val localName = deviceName(context)
     private val strategy = Strategy.P2P_POINT_TO_POINT
@@ -58,6 +64,15 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
     /** The endpoint this device asked to pair with (its user held Connect), until the attempt ends. */
     private var requestedEndpoint: String? = null
     private val received = MutableSharedFlow<SlideMessage>(extraBufferCapacity = 256)
+
+    /**
+     * File transfers by payload id, completed with their outcome (for incoming files, where the bytes landed). Kept
+     * after completing, so a file that finished before anyone asked for it is still there to collect.
+     */
+    private val transfers = ConcurrentHashMap<Long, CompletableDeferred<Result<String?, DataError.Network>>>()
+    private val incomingFiles = ConcurrentHashMap<Long, Payload>()
+
+    private fun transfer(id: Long) = transfers.getOrPut(id) { CompletableDeferred() }
 
     override val transport: Transport = object : Transport {
         override val incoming: Flow<SlideMessage> = received
@@ -150,7 +165,50 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
     override fun disconnect() {
         connectedEndpoint?.let(client::disconnectFromEndpoint)
         connectedEndpoint = null
+        abandonTransfers()
         _state.value = LinkState.Idle
+    }
+
+    override suspend fun sendFile(
+        uri: String,
+        announce: suspend (transferId: Long) -> Unit,
+    ): EmptyResult<DataError.Network> {
+        val endpoint = connectedEndpoint ?: return Result.Failure(DataError.Network.DISCONNECTED)
+        val descriptor = try {
+            withContext(Dispatchers.IO) { appContext.contentResolver.openFileDescriptor(Uri.parse(uri), "r") }
+        } catch (_: Exception) {
+            null
+        } ?: return Result.Failure(DataError.Network.UNKNOWN)
+        return descriptor.use {
+            val payload = Payload.fromFile(descriptor)
+            val outcome = transfer(payload.id)
+            try {
+                announce(payload.id)
+                val sent = nearbyCall { client.sendPayload(endpoint, payload).await() }
+                if (sent is Result.Failure) return@use sent
+                when (val result = outcome.await()) {
+                    is Result.Success -> Result.Success(Unit)
+                    is Result.Failure -> result
+                }
+            } finally {
+                transfers.remove(payload.id)
+            }
+        }
+    }
+
+    override suspend fun receiveFile(transferId: Long): Result<String, DataError.Network> {
+        val result = transfer(transferId).await()
+        transfers.remove(transferId)
+        return when (result) {
+            is Result.Failure -> result
+            is Result.Success -> result.data?.let { Result.Success(it) } ?: Result.Failure(DataError.Network.UNKNOWN)
+        }
+    }
+
+    /** The link is gone: every transfer still under way has failed. Finished ones keep their result. */
+    private fun abandonTransfers() {
+        transfers.values.forEach { it.complete(Result.Failure(DataError.Network.DISCONNECTED)) }
+        incomingFiles.clear()
     }
 
     private fun fail(error: DataError.Network): EmptyResult<DataError.Network> {
@@ -220,18 +278,54 @@ internal class NearbyPeerLink(context: Context) : PeerLink {
         override fun onDisconnected(endpointId: String) {
             if (connectedEndpoint != endpointId) return
             connectedEndpoint = null
+            abandonTransfers()
             _state.value = LinkState.Idle
         }
     }
 
     private val payloads = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            if (endpointId != connectedEndpoint || payload.type != Payload.Type.BYTES) return
-            val bytes = payload.asBytes() ?: return
-            (SlideMessageCodec.decode(bytes) as? Result.Success)?.let { received.tryEmit(it.data) }
+            if (endpointId != connectedEndpoint) return
+            when (payload.type) {
+                Payload.Type.BYTES -> {
+                    val bytes = payload.asBytes() ?: return
+                    (SlideMessageCodec.decode(bytes) as? Result.Success)?.let { received.tryEmit(it.data) }
+                }
+                // Its bytes are still arriving; it is usable once its transfer reports success.
+                Payload.Type.FILE -> incomingFiles[payload.id] = payload
+                else -> Unit
+            }
         }
 
-        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            val id = update.payloadId
+            val incoming = incomingFiles[id]
+            // Message payloads report too; only file transfers are tracked.
+            val outcome = if (incoming != null) transfer(id) else transfers[id] ?: return
+            when (update.status) {
+                PayloadTransferUpdate.Status.SUCCESS -> {
+                    incomingFiles.remove(id)
+                    val location = incoming?.asFile()?.let { file ->
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            file.asUri()
+                        } else {
+                            @Suppress("DEPRECATION")
+                            file.asJavaFile()?.let(Uri::fromFile)
+                        }
+                    }
+                    if (incoming != null && location == null) {
+                        outcome.complete(Result.Failure(DataError.Network.UNKNOWN))
+                    } else {
+                        outcome.complete(Result.Success(location?.toString()))
+                    }
+                }
+                PayloadTransferUpdate.Status.FAILURE, PayloadTransferUpdate.Status.CANCELED -> {
+                    incomingFiles.remove(id)
+                    outcome.complete(Result.Failure(DataError.Network.UNKNOWN))
+                }
+                else -> Unit
+            }
+        }
     }
 }
 

@@ -1,9 +1,11 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.domain
 
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
+import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
+import kotlinx.coroutines.flow.Flow
 
 /** The device on the other side of the gap: where slid cards go, and where incoming ones come from. */
 interface SlidePeer {
@@ -12,9 +14,18 @@ interface SlidePeer {
     /** How the two screens sit next to each other. */
     val link: SlideLink
 
+    /** Whether a device is paired right now; slides are mirrored only then. */
+    val isLinked: Flow<Boolean>
+
+    /** Sends the file behind a handed-over card; returns once the peer has all of it. */
+    suspend fun send(file: OutgoingFile): EmptyResult<DataError>
+
     /** Takes in a file the peer slid over and puts it on this shelf. Returns the new shelf item's id. */
     suspend fun receive(file: IncomingFile): Result<String, DataError>
 }
+
+/** A file this device is handing over: the shelf item and the reference to its bytes. */
+data class OutgoingFile(val itemId: String, val uri: String)
 
 /** A file the peer is handing over, as described when its card was lifted. */
 data class IncomingFile(

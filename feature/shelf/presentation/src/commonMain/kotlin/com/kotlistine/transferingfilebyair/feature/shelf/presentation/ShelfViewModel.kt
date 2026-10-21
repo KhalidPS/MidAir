@@ -14,6 +14,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.arrival
 import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardPosition
 import com.kotlistine.transferingfilebyair.core.transfer.domain.predictedAhead
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
@@ -69,7 +70,7 @@ class ShelfViewModel(
     /** Messages to the peer go out one at a time, in order, whatever the transport's own threading. */
     private val sendLock = Mutex()
 
-    private val _state = MutableStateFlow(ShelfState(isPaired = peer != null))
+    private val _state = MutableStateFlow(ShelfState())
     val state: StateFlow<ShelfState> = _state
         .onStart {
             if (!isObservingItems) {
@@ -77,7 +78,7 @@ class ShelfViewModel(
                 observeItems()
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), ShelfState(isPaired = peer != null))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), ShelfState())
 
     // Buffered: incoming-card moves arrive at frame rate and must not wait on a collector that is mid-event.
     private val eventChannel = Channel<ShelfEvent>(Channel.BUFFERED)
@@ -171,10 +172,17 @@ class ShelfViewModel(
         val slide = outgoing?.takeIf { it.id == id }
         outgoing = null
         viewModelScope.launch {
-            if (handOver(slide, edge)) {
-                finishSend(id)
-            } else {
+            if (!handOver(slide, edge)) {
                 eventChannel.send(ShelfEvent.ShowSent(id = id, name = item.name))
+                return@launch
+            }
+            // The file follows the card; the item leaves this shelf for good only once the peer has all of it.
+            val delivered = peer?.send(OutgoingFile(itemId = id, uri = item.uri))
+            if (delivered is Result.Failure) {
+                undoSend(id)
+                eventChannel.send(ShelfEvent.ShowError(delivered.error))
+            } else {
+                finishSend(id)
             }
         }
     }
@@ -312,6 +320,9 @@ class ShelfViewModel(
     // region Receiving side: show the peer's card arriving, then land it.
 
     private fun talkTo(peer: SlidePeer) {
+        peer.isLinked
+            .onEach { linked -> _state.update { it.copy(isPaired = linked) } }
+            .launchIn(viewModelScope)
         peer.transport.incoming
             .onEach { onPeerMessage(peer, it) }
             .launchIn(viewModelScope)
@@ -367,6 +378,8 @@ class ShelfViewModel(
                 incoming = null
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(message.itemId))
             }
+            // Matched to its card by the peer link, which is waiting for the file.
+            is SlideMessage.FileOffer -> Unit
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null

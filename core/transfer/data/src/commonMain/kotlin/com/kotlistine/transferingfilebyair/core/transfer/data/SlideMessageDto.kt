@@ -49,6 +49,10 @@ internal sealed interface SlideMessageDto {
     data class DragCommit(val itemId: String, val outwardMmPerS: Float, val alongEdgeMmPerS: Float) : SlideMessageDto
 
     @Serializable
+    @SerialName("file")
+    data class FileOffer(val itemId: String, val transferId: Long) : SlideMessageDto
+
+    @Serializable
     @SerialName("ping")
     data class Ping(val sentAtMillis: Long) : SlideMessageDto
 

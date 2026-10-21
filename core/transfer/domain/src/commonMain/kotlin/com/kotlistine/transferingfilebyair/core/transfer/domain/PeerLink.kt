@@ -2,6 +2,7 @@ package com.kotlistine.transferingfilebyair.core.transfer.domain
 
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
+import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import kotlinx.coroutines.flow.StateFlow
 
 /** A nearby device running the app. [id] is only meaningful to the link that found it. */
@@ -58,4 +59,13 @@ interface PeerLink {
     fun decline(peer: PeerDevice)
 
     fun disconnect()
+
+    /**
+     * Streams the file at [uri] (a platform file reference) to the connected peer. [announce] runs once the transfer
+     * has its id, before any bytes go; this returns once the peer has the whole file, or fails.
+     */
+    suspend fun sendFile(uri: String, announce: suspend (transferId: Long) -> Unit): EmptyResult<DataError.Network>
+
+    /** Waits for the file the peer sends as [transferId] to arrive in full; returns where it was stored locally. */
+    suspend fun receiveFile(transferId: Long): Result<String, DataError.Network>
 }

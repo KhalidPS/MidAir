@@ -105,7 +105,16 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
     version (verified on Android 13: it fails with `MISSING_PERMISSION_ACCESS_FINE_LOCATION` otherwise), so the app
     asks for it and says why.
   - The Nearby link lives in `:core:transfer:nearby` (Android only, Play services) behind `PeerLink`; the app shell
-    binds it. Shelf slides don't use it yet (Phase 5).
+    binds it.
+- **Decisions (Phase 5):**
+  - Shelf slides run over the paired Nearby link (`LinkedSlidePeer`). Which side faces the other phone isn't known
+    yet, so any edge leads to it; the gap defaults to 8 mm (the calibration swipe in Phase 7 will measure both).
+  - The file follows the card in the same phase, so a crossing is never an empty gesture: after the hand-off the
+    sender announces the transfer (`FileOffer`) and streams the bytes as a Nearby FILE payload. The sender's item
+    leaves its shelf only once every byte has arrived; if the transfer fails it comes back, with the error.
+  - The receiver keeps the file in Downloads/TransferingFileByAir (Android 10+, MediaStore, no storage permission;
+    the app's own folder through a FileProvider on 8–9) and lands the card in its shelf when the file is complete.
+    The progress ring, background service, cancel and retry are Phase 6.
 
 ---
 

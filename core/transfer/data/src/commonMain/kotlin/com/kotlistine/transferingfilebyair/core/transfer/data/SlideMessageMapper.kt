@@ -25,6 +25,7 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
     )
     is SlideMessage.DragCancel -> SlideMessageDto.DragCancel(itemId)
     is SlideMessage.DragCommit -> SlideMessageDto.DragCommit(itemId, outwardMmPerS, alongEdgeMmPerS)
+    is SlideMessage.FileOffer -> SlideMessageDto.FileOffer(itemId, transferId)
     is SlideMessage.Ping -> SlideMessageDto.Ping(sentAtMillis)
     is SlideMessage.Pong -> SlideMessageDto.Pong(pingSentAtMillis)
 }
@@ -51,6 +52,7 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
     )
     is SlideMessageDto.DragCancel -> SlideMessage.DragCancel(itemId)
     is SlideMessageDto.DragCommit -> SlideMessage.DragCommit(itemId, outwardMmPerS, alongEdgeMmPerS)
+    is SlideMessageDto.FileOffer -> SlideMessage.FileOffer(itemId, transferId)
     is SlideMessageDto.Ping -> SlideMessage.Ping(sentAtMillis)
     is SlideMessageDto.Pong -> SlideMessage.Pong(pingSentAtMillis)
 }

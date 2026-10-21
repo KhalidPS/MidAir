@@ -29,7 +29,7 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
             tiltDegrees.isFinite() &&
             abs(tiltDegrees) <= 90f
     is SlideMessage.DragCommit -> outwardMmPerS.isSpeed() && alongEdgeMmPerS.isSpeed()
-    is SlideMessage.DragCancel, is SlideMessage.Ping, is SlideMessage.Pong -> true
+    is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong -> true
 }
 
 private fun Float.isSize() = isFinite() && this > 0f && this <= MaxDistanceMm
