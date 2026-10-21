@@ -3,6 +3,10 @@ package com.kotlistine.transferingfilebyair.feature.pairing.presentation
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -54,6 +59,7 @@ import com.kotlistine.transferingfilebyair.core.presentation.ObserveAsEvents
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.components.HoldToConnectButton
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.components.PairingMotion
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.components.rememberPairingMotion
+import com.kotlistine.transferingfilebyair.feature.pairing.presentation.lineup.LineUpRoot
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.permission.rememberNearbyPermissions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -73,6 +79,8 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
         viewModel.onAction(PairingAction.OnPermissionsResult(granted, locationOn = isLocationOn[0]()))
     }
     isLocationOn[0] = permissions::isLocationOn
+    // Right after pairing, and on request, the screens are lined up before going back to the shelf.
+    var isLiningUp by rememberSaveable { mutableStateOf(false) }
     // Leaving happens once: the pairing burst ending and a tap on Done can both ask for it.
     var hasLeft by remember { mutableStateOf(false) }
     fun leave() {
@@ -91,29 +99,40 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
-            // Both phones light up together, then move on to the shelf.
+            // Both phones light up together, then line the screens up.
             is PairingEvent.Paired -> scope.launch {
                 motion.burst()
-                leave()
+                isLiningUp = true
             }
         }
     }
 
-    PairingScreen(
-        state = state,
-        motion = motion,
-        onAction = { action ->
-            when (action) {
-                PairingAction.OnAllowClick -> when (state.error) {
-                    DataError.Network.LOCATION_OFF -> permissions.openLocationSettings()
-                    DataError.Network.PERMISSION_MISSING -> permissions.openSettings()
-                    else -> permissions.request()
-                }
-                PairingAction.OnCloseClick -> leave()
-                else -> viewModel.onAction(action)
-            }
-        },
-    )
+    AnimatedContent(
+        targetState = isLiningUp && state.phase == PairingPhase.CONNECTED,
+        transitionSpec = { fadeIn(tween(320, delayMillis = 90)) togetherWith fadeOut(tween(160)) },
+        label = "pairing step",
+    ) { liningUp ->
+        if (liningUp) {
+            LineUpRoot(onDone = ::leave)
+        } else {
+            PairingScreen(
+                state = state,
+                motion = motion,
+                onAction = { action ->
+                    when (action) {
+                        PairingAction.OnAllowClick -> when (state.error) {
+                            DataError.Network.LOCATION_OFF -> permissions.openLocationSettings()
+                            DataError.Network.PERMISSION_MISSING -> permissions.openSettings()
+                            else -> permissions.request()
+                        }
+                        PairingAction.OnCloseClick -> leave()
+                        PairingAction.OnLineUpClick -> isLiningUp = true
+                        else -> viewModel.onAction(action)
+                    }
+                },
+            )
+        }
+    }
 }
 
 @Composable
@@ -285,6 +304,7 @@ private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modi
             }
             state.phase == PairingPhase.CONNECTED -> {
                 TextButton(onClick = { onAction(PairingAction.OnDisconnectClick) }) { Text("Disconnect") }
+                TextButton(onClick = { onAction(PairingAction.OnLineUpClick) }) { Text("Line up") }
                 PrimaryButton("Done") { onAction(PairingAction.OnCloseClick) }
             }
             else -> TextButton(onClick = { onAction(PairingAction.OnCloseClick) }) { Text("Not now") }

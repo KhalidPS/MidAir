@@ -57,7 +57,7 @@ class PairingViewModel(private val link: PeerLink) : ViewModel() {
             PairingAction.OnDisconnectClick -> link.disconnect()
             // Withdraws the request; the link goes idle and searching starts again.
             PairingAction.OnCancelClick -> link.stopSearching()
-            PairingAction.OnAllowClick, PairingAction.OnCloseClick -> Unit
+            PairingAction.OnAllowClick, PairingAction.OnCloseClick, PairingAction.OnLineUpClick -> Unit
         }
     }
 

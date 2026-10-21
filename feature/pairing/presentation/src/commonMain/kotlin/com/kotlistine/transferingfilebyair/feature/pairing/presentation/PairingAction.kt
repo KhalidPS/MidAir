@@ -21,6 +21,9 @@ sealed interface PairingAction {
     data object OnCancelClick : PairingAction
     data object OnDisconnectClick : PairingAction
 
+    /** Handled by PairingRoot: line the screens up (again). */
+    data object OnLineUpClick : PairingAction
+
     /** Handled by PairingRoot: leave without pairing. */
     data object OnCloseClick : PairingAction
 }

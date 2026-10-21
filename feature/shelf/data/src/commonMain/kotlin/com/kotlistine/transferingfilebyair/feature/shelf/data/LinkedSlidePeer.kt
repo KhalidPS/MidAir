@@ -3,6 +3,7 @@ package com.kotlistine.transferingfilebyair.feature.shelf.data
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
@@ -39,13 +40,15 @@ class LinkedSlidePeer(
     private val peerLink: PeerLink,
     private val repository: ShelfRepository,
     private val store: ReceivedFileStore,
+    /** How the screens sit, once lined up in pairing. */
+    private val geometry: LinkGeometry,
     scope: CoroutineScope,
 ) : SlidePeer {
 
     override val transport: Transport get() = peerLink.transport
 
-    /** Which side faces the other phone isn't known yet (a calibration step comes later): any edge leads to it. */
-    override val link = SlideLink()
+    /** The defaults (any edge leads to the peer, an 8 mm gap) until the screens are lined up. */
+    override val link: SlideLink get() = geometry.link.value
 
     override val isLinked: Flow<Boolean> = peerLink.state.map { it is LinkState.Connected }.distinctUntilChanged()
 

@@ -24,6 +24,7 @@ val shelfDataModule = module {
             peerLink = get(),
             repository = get(),
             store = get(),
+            geometry = get(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }

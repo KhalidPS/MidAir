@@ -58,7 +58,18 @@ internal sealed interface SlideMessageDto {
 
     @Serializable
     @SerialName("pong")
-    data class Pong(val pingSentAtMillis: Long) : SlideMessageDto
+    data class Pong(val pingSentAtMillis: Long, val answeredAtMillis: Long = 0L) : SlideMessageDto
+
+    @Serializable
+    @SerialName("swipe")
+    data class SwipeCrossed(
+        val leaving: Boolean,
+        val edge: ExitEdgeDto,
+        val alongEdgeMm: Float,
+        val atMillis: Long,
+        val acrossMmPerS: Float,
+        val alongEdgeMmPerS: Float,
+    ) : SlideMessageDto
 }
 
 @Serializable

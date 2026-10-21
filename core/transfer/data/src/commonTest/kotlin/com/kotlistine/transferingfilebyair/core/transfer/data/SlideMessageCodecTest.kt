@@ -6,6 +6,7 @@ import assertk.assertions.isInstanceOf
 import assertk.assertions.isLessThan
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.EdgeCrossing
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import kotlin.test.Test
@@ -48,6 +49,17 @@ class SlideMessageCodecTest {
             SlideMessage.FileOffer("7", transferId = -4_611_686_018_427_387_904),
             SlideMessage.Ping(sentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000),
+            SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000, answeredAtMillis = 1_700_000_000_321),
+            SlideMessage.SwipeCrossed(
+                EdgeCrossing(
+                    leaving = true,
+                    edge = ExitEdge.RIGHT,
+                    alongEdgeMm = 52.5f,
+                    atMillis = 1_700_000_000_500,
+                    acrossMmPerS = 240f,
+                    alongEdgeMmPerS = -6f,
+                ),
+            ),
         )
 
         messages.forEach { assertThat(roundTrip(it)).isEqualTo(it) }

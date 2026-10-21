@@ -9,12 +9,8 @@ Note 10 Pro on Android 13 and an Android 11 phone). The full plan and the decisi
 
 | Branch | Head | State |
 |---|---|---|
-| `master` | `8699783` | Phases 0–5 and this checkpoint |
-| `feature/transfer-progress` | `0ab28e6` | Phase 6a, on top of `master`. **Not merged** |
-| `feature/background-transfers` | `7d3f984` | Phase 6b, on top of `feature/transfer-progress`. **Not merged** |
-| `feature/land-in-place` | (latest) | Phase 6c, on top of `feature/background-transfers`. **Not merged** |
-
-Merging `feature/land-in-place` into `master` brings in all of Phase 6 (fast-forward).
+| `master` | `50d75f9` | Phases 0–6 |
+| `feature/calibration` | (latest) | Phase 7a (line-up swipe), on top of `master`. **Not merged** |
 
 ## Done
 
@@ -28,9 +24,10 @@ Merging `feature/land-in-place` into `master` brings in all of Phase 6 (fast-for
 | 5. Real slide between phones | Card mirrored over Nearby, lands on the other phone; the real file is sent and kept in `Downloads/TransferingFileByAir` | `376e7f8`, `4d69d88` |
 | 6a. Transfer progress | Progress ring on the arriving card, tap it to stop the file, Retry on a failed send | `0ab28e6` |
 | 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification, so leaving the app or locking the phone doesn't stop them | `7d3f984` |
-| 6c. Land in place | A let-go card flies straight into its slot at the top of the shelf and waits there with its ring (tap to stop); several can arrive at once; the arrival ripples light across the screen; fixed cards drawn off-place on right-to-left phones | `feature/land-in-place` |
+| 6c. Land in place | A let-go card flies straight into its slot at the top of the shelf and waits there with its ring (tap to stop); several can arrive at once; the arrival ripples light across the screen; fixed cards drawn off-place on right-to-left phones | `50d75f9` |
+| 7a. Line-up swipe | Right after pairing (or "Line up" on the paired screen), one finger swipes from one phone onto the other; each phone learns which edge faces the other, the gap and the height offset, and slides follow it | `feature/calibration` |
 
-**Tests:** 161 unit tests, all passing (`./gradlew testAndroidHostTest`).
+**Tests:** 178 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
 ## Known limitations
 
@@ -39,8 +36,9 @@ Merging `feature/land-in-place` into `master` brings in all of Phase 6 (fast-for
   still runs, but its notification is hidden.
 - **Background start:** the service is started when a transfer begins, which is always while the app is open. If
   Android refuses it anyway, the transfer runs without the extra protection.
-- **Alignment:** the app doesn't know which side the other phone is on (any edge works) and assumes an 8 mm gap,
-  so the card can be slightly off where it crosses.
+- **Alignment:** until the screens are lined up, any edge leads to the other phone and the gap is assumed to be
+  8 mm. The line-up is kept only while the app runs (remembering it comes with auto-reconnect). Its gap depends on
+  comparing the two clocks over Nearby, so it can be a few millimetres off; side and height are measured directly.
 - **Pairing needs:** Bluetooth, Wi-Fi and **Location switched on**, plus precise location permission. Android
   only lets apps find nearby phones while Location is on. The pairing screen now says so and offers a button.
 - **Reconnect:** pairing is forgotten when the app closes; the phones pair again next time.
@@ -59,9 +57,8 @@ Merging `feature/land-in-place` into `master` brings in all of Phase 6 (fast-for
 
 ### Phase 7: calibration and polish
 
-- **Calibration swipe:** one finger swipes across both screens, which gives the exact side, vertical offset and
-  gap, so the card lines up perfectly.
-- Remember the paired phone and reconnect automatically.
+- ~~Calibration swipe~~ (7a, try it on the phones: swipe through the band from one phone onto the other).
+- Remember the paired phone and its line-up, and reconnect automatically.
 - AGSL shader glow (Android 13+), reduced-motion mode, TalkBack "Send to…" action.
 - Baseline Profile and a 60 fps check on a mid-range phone.
 

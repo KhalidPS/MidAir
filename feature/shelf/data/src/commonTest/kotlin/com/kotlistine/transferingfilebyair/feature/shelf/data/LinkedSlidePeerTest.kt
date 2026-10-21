@@ -7,9 +7,11 @@ import com.kotlistine.transferingfilebyair.core.domain.shelf.ShelfItem
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
+import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import com.kotlistine.transferingfilebyair.feature.shelf.data.file.ReceivedFileStore
@@ -31,6 +33,12 @@ class LinkedSlidePeerTest {
 
     private val link = FakeLink()
     private val shelf = InMemoryShelf()
+    private val geometry = object : LinkGeometry {
+        override val link = MutableStateFlow(SlideLink())
+        override fun update(link: SlideLink) {
+            this.link.value = link
+        }
+    }
     private val store = object : ReceivedFileStore {
         override suspend fun keep(location: String, name: String, mimeType: String): Result<String, DataError.Local> =
             Result.Success("content://downloads/$name")
@@ -39,7 +47,7 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `a sent file is announced with its transfer id before its bytes go`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
 
         val result = peer.send(OutgoingFile(itemId = "4", uri = "content://file/4"))
 
@@ -50,7 +58,7 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `a received card's file is matched by its offer, kept, and put on the shelf`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
         link.arrived[5] = "content://nearby/5"
 
@@ -62,7 +70,7 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `progress of the incoming file is passed on`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
         link.arrived[5] = "content://nearby/5"
         val progress = mutableListOf<Float>()
@@ -74,7 +82,7 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `stopping a receive cancels its transfer`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
 
         peer.cancelReceive("9")
@@ -84,7 +92,7 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `stopping before the transfer is known fails it as cancelled once it is`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         peer.cancelReceive("9")
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
         link.arrived[5] = "content://nearby/5"
@@ -96,7 +104,7 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `a file that never arrives fails the receive`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
 
         val result = peer.receive(incoming)
@@ -107,14 +115,14 @@ class LinkedSlidePeerTest {
 
     @Test
     fun `without an offer for the card the receive gives up`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
 
         assertThat(peer.receive(incoming)).isEqualTo(Result.Failure(DataError.Network.DISCONNECTED))
     }
 
     @Test
     fun `the peer counts as linked only while connected`() = runTest(UnconfinedTestDispatcher()) {
-        val peer = LinkedSlidePeer(link, shelf, store, backgroundScope)
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         assertThat(peer.isLinked.first()).isEqualTo(false)
 
         link.state.value = LinkState.Connected(PeerDevice("ep", "Pixel"))

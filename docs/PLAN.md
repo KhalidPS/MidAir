@@ -116,6 +116,17 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
     the app's own folder through a FileProvider on 8–9) and lands the card in its shelf when the file is complete.
     The progress ring, background service, cancel and retry are Phase 6.
 
+- **Decisions (Phase 7a, line-up swipe):**
+  - The line-up is a step of the pairing screen: it follows the pairing burst, and "Line up" on the paired screen
+    opens it again. It is optional ("Skip" keeps the defaults).
+  - The swipe goes through a band in the middle of the screen, 180 dp tall: Android only lets an app keep edge
+    swipes from the back gesture for 200 dp per side, and the arriving phone must see a swipe that starts at its edge.
+  - Each phone notes where and when the swipe crossed its edge (carried on to the edge line at the swipe's speed)
+    and sends it (`SwipeCrossed`). The two clocks are compared on the quickest of ten `Ping`/`Pong` round trips
+    (the shelf answers with its clock's time). From both halves, each phone works out its own `SlideLink`: its edge
+    that faces the other phone, the gap (speed × time across, 2–40 mm) and the height offset (minus the drift while
+    crossing). The shelf follows it through the shared `LinkGeometry`.
+
 ---
 
 ## 4. Technical study: what we need

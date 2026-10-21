@@ -395,7 +395,9 @@ class ShelfViewModel(
 
     private suspend fun onPeerMessage(peer: SlidePeer, message: SlideMessage) {
         when (message) {
-            is SlideMessage.Ping -> post(SlideMessage.Pong(message.sentAtMillis))
+            // Answered here for the whole app (the shelf is always under the other screens), with this clock's time
+            // so the line-up can compare the two phones' clocks.
+            is SlideMessage.Ping -> post(SlideMessage.Pong(message.sentAtMillis, clock.now().toEpochMilliseconds()))
             is SlideMessage.Pong -> {
                 val sample = (clock.now().toEpochMilliseconds() - message.pingSentAtMillis).toFloat()
                 roundTripMillis = if (roundTripMillis == 0f) sample else roundTripMillis * 0.8f + sample * 0.2f
@@ -443,8 +445,8 @@ class ShelfViewModel(
                 incoming = null
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(message.itemId))
             }
-            // Matched to its card by the peer link, which is waiting for the file.
-            is SlideMessage.FileOffer -> Unit
+            // Matched to its card by the peer link, which is waiting for the file; line-up swipes are pairing's.
+            is SlideMessage.FileOffer, is SlideMessage.SwipeCrossed -> Unit
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null

@@ -78,5 +78,9 @@ sealed interface SlideMessage {
     /** Round-trip time probe; answered with [Pong] carrying the same timestamp. */
     data class Ping(val sentAtMillis: Long) : SlideMessage
 
-    data class Pong(val pingSentAtMillis: Long) : SlideMessage
+    /** [answeredAtMillis] is the answering device's clock when it answered (0 if unknown), to compare the clocks. */
+    data class Pong(val pingSentAtMillis: Long, val answeredAtMillis: Long = 0L) : SlideMessage
+
+    /** A line-up swipe crossed the sender's screen edge; with the receiver's own crossing, it lines the screens up. */
+    data class SwipeCrossed(val crossing: EdgeCrossing) : SlideMessage
 }
