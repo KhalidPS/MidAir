@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors AirColors.Background in :core:designsystem. -->
+    <color name="air_background">#FF060608</color>
+</resources>
