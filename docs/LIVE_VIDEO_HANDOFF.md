@@ -61,9 +61,9 @@ handoff to desktop/iOS (Section 9 says how it extends).
 
 | Need | Choice | Notes |
 |---|---|---|
-| Player | **AndroidX Media3 ExoPlayer** (`media3-exoplayer`) | The standard Android player. Exact version is checked when added (`libs.versions.toml` only) |
-| Video surface in Compose | **`media3-ui-compose` `PlayerSurface`** with `SURFACE_TYPE_TEXTURE_VIEW` | A TextureView follows `graphicsLayer` transforms, clipping and rounded corners. A SurfaceView doesn't, so it can't be a sliding card |
-| One player across window → card → drag | Keep **one `ExoPlayer` instance**; swap surfaces only | Swapping the surface doesn't re-prepare, so the sender's own lift never pauses |
+| Player | **AndroidX Media3 ExoPlayer** (`media3-exoplayer` 1.11.1) | The standard Android player. Version in `libs.versions.toml` only |
+| Video surface in Compose | **Our own `VideoSurface`**: a `TextureView` in an `AndroidView` | A TextureView follows `graphicsLayer` transforms, clipping and rounded corners. A SurfaceView doesn't, so it can't be a sliding card. Not `media3-ui-compose`'s `PlayerSurface`: it can't hand the picture between two surfaces (see the next row) |
+| One player across window → card → drag | Keep **one `ExoPlayer` instance**; swap surfaces only | Swapping the surface doesn't re-prepare, so the sender's own lift never pauses. The video goes to the active surface composed last; the new one shows the old one's current frame (`TextureView.getBitmap`) until its own first frame, so a swap never flashes. The view keeps the video's shape and is cropped by its parent, so that picture is never stretched |
 | Streaming before the file has arrived | **Custom Media3 `DataSource`** over our link: `open(DataSpec)` sends a range request, `read()` reads the answer | A Nearby FILE payload can't be read while it is still arriving, so streaming needs its own channel |
 | Range answers over Nearby | **Nearby STREAM payloads** (`Payload.fromStream`), one per open range | BYTES payloads stay for control messages. Seeking closes the old stream and opens a new range |
 | Keeping the file after the handoff | **Media3 `SimpleCache` + `CacheDataSource`**, then **`CacheWriter`** to fetch what wasn't played | One pipeline: what was played is already saved; the rest is filled in, then moved to Downloads and the shelf like a normal received file |
@@ -173,12 +173,45 @@ commit as the code.
 
 | Phase | Deliverable | Done when… |
 |---|---|---|
-| **LH-0. Playing card** | Tapping a video on the shelf plays it in a card (`:core:media`, `ExoVideoEngine`, `VideoSurface`, TextureView). The card can be lifted and dragged, keeping one player | On one phone, a video keeps playing without a hitch while it is lifted, dragged and dropped back |
+| **LH-0. Playing card** (built, to check on a phone) | Tapping a video on the shelf plays it in a card (`:core:media`, `ExoVideoEngine`, `VideoSurface`, TextureView). The card can be lifted and dragged, keeping one player | On one phone, a video keeps playing without a hitch while it is lifted, dragged and dropped back |
 | **LH-1. Protocol + simulator** | New messages and codec, `MediaChannel` + `LoopbackMediaChannel` (with fake latency, bandwidth and clock offset), `PlaybackHandoff` state machine, Twin Simulator with two engines | In the simulator the two halves cut scenes on the same frame, commit never pauses, and drag-back cancels cleanly. State machine and predictor fully unit tested |
 | **LH-2. Streaming over Nearby** | `NearbyMediaChannel` (STREAM payloads), `ChannelDataSource` + `SimpleCache`, `LinkQuality` from `onBandwidthChanged`, codec check, the `PlaybackUnsupported` fallback | On a `HIGH` link, the receiving phone shows its first frame within 300 ms of the offer, for a 1 GB video, including one with its header at the end |
 | **LH-3. Two-phone handoff** | Live slice on both phones, drift control, audio cross-fade, make-before-break, the slow-link path at commit, link loss | Filmed at 240 fps slow motion: ≤ 2 frames offset across the bezel and no frozen frame in 20 runs each way |
 | **LH-4. Keep the file** | `CacheWriter` fills what wasn't played, then the file is finalized into Downloads + the shelf (same repository call as a normal received file), foreground service, cancel | After a handoff, the full file is in the receiver's shelf and byte-identical to the original (hash check) |
 | **LH-5. Same-Wi-Fi fast path** | `NsdManager` advertising, Ktor (CIO) range server on the sender, `DefaultHttpDataSource` on the receiver, token from pairing, preferred when both phones share a network | With both phones on the same Wi-Fi, the video's bytes travel over the LAN and Nearby only carries the control messages |
+
+**Status (2026-10-25):** LH-0 is built. A first two-phone slice of LH-1–LH-3 is built and works on two phones (a
+Redmi Note 10 Pro and a Redmi Note 8): the video keeps playing across the gap, through the drop and the file's arrival.
+- `PlaybackOffer`/`PlaybackClock` (4×/s)
+- `MediaChannel` on Nearby STREAM payloads, used only at link quality HIGH (Wi-Fi)
+- `RemoteDataSource`
+- `PlaybackFollower`: speed nudges, holds when ahead, and jumps ahead by a lead learnt from jumps only
+- the incoming card plays muted, gets sound on the drop, and keeps playing in its slot and in the received item
+
+What the phones showed about Nearby (none of it is documented; all of it came from the Play services log):
+1. **An unread STREAM payload blocks the whole connection.** Nearby keeps about 10 chunks of each incoming stream
+   for the app. A player whose buffer is full stops reading, and then the card's moves, the commit and the file all
+   stall until Wi-Fi Direct breaks ("Broken pipe"). So every stream is drained into a file the moment it arrives.
+2. **Cancelling a STREAM payload while it is still sending stalls the connection too** ("short-circuiting Payload …
+   failed to detach the next chunk"). So nothing is cancelled: the file is read in 1 MB pieces, each with a length,
+   and a piece nobody wants any more is drained and dropped.
+3. **A stream can arrive before the frame sent ahead of it**, because Nearby calls back on several threads. So pieces
+   start draining before the frame naming their request is in.
+4. **Quality MEDIUM is classic Bluetooth, not Wi-Fi.** Live video waits for HIGH.
+5. **Video bytes and the card's moves share one connection with no priorities.** While pieces flow, moves pause for
+   300–440 ms. The full-file transfer after the drop starves the pieces (1.7–3.3 s each instead of 0.2 s).
+
+Measured: Wi-Fi Direct carries about 150–220 Mbit/s. But one piece in flight at a time gives about 25 Mbit/s, and a
+file whose audio is far from its video needed 13 MB before its first frame: about 5 s to start.
+
+**Next, in this order:**
+1. LH-5, moved ahead: the video's bytes go over our own connection on the shared Wi-Fi (an HTTP range server on the
+   sender, read by the player), so they never hold up the card's moves, and many ranges can be read at once.
+   Nearby keeps finding the phones and carrying the slide.
+2. LH-4: one transfer. The receiver keeps what it plays and fills in the rest while the player isn't loading.
+
+Not yet: the Twin Simulator path, the `PlaybackReady`/`PlaybackUnsupported` replies, a codec check, an audio
+cross-fade, and a receiver that lets go of a card whose sender went silent (`docs/reference/freeze.png`).
 
 **Measuring sync:** film both screens at 240 fps and count the frames between the two halves at a scene cut. The
 Twin Simulator also shows each engine's position and the error from the target live on screen.
