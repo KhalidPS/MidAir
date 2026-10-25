@@ -9,6 +9,7 @@ private const val MaxDistanceMm = 1_000f
 /** Far beyond any flick a hand can make. */
 private const val MaxSpeedMmPerS = 100_000f
 private const val MaxNameLength = 1_024
+private const val MaxUrlLength = 1_024
 
 /**
  * Whether a decoded message describes something physically possible. Sizes and positions reach layout and drawing
@@ -34,7 +35,10 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
             crossing.acrossMmPerS.isSpeed() &&
             crossing.acrossMmPerS >= 0f &&
             crossing.alongEdgeMmPerS.isSpeed()
-    is SlideMessage.PlaybackOffer -> sizeBytes > 0 && positionMs >= 0
+    is SlideMessage.PlaybackOffer ->
+        sizeBytes > 0 &&
+            positionMs >= 0 &&
+            httpUrl.let { it == null || (it.startsWith("http://") && it.length <= MaxUrlLength) }
     is SlideMessage.PlaybackClock -> positionMs >= 0
     is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong -> true
 }

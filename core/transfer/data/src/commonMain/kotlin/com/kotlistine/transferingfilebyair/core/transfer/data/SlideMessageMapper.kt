@@ -37,7 +37,7 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
         acrossMmPerS = crossing.acrossMmPerS,
         alongEdgeMmPerS = crossing.alongEdgeMmPerS,
     )
-    is SlideMessage.PlaybackOffer -> SlideMessageDto.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying)
+    is SlideMessage.PlaybackOffer -> SlideMessageDto.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
     is SlideMessage.PlaybackClock -> SlideMessageDto.PlaybackClock(itemId, positionMs, isPlaying)
 }
 
@@ -76,7 +76,7 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
             alongEdgeMmPerS = alongEdgeMmPerS,
         ),
     )
-    is SlideMessageDto.PlaybackOffer -> SlideMessage.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying)
+    is SlideMessageDto.PlaybackOffer -> SlideMessage.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
     is SlideMessageDto.PlaybackClock -> SlideMessage.PlaybackClock(itemId, positionMs, isPlaying)
 }
 

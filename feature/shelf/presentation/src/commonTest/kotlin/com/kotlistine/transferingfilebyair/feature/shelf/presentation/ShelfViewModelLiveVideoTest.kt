@@ -7,6 +7,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
+import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import assertk.assertions.prop
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
@@ -132,6 +133,32 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
+    fun `on a shared Wi-Fi the offer says where the peer can read the video`() = runTest {
+        media.wifiUrl = { id -> "http://192.168.1.20:40123/v/$id?t=ab" }
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+
+        lift("1")
+
+        val offer = peer.transport.sentSlides[1] as SlideMessage.PlaybackOffer
+        assertThat(offer.httpUrl).isEqualTo("http://192.168.1.20:40123/v/1?t=ab")
+        viewModel.onAction(ShelfAction.OnSlideReturned("1"))
+    }
+
+    @Test
+    fun `on a shared Wi-Fi the video is offered before the pairing link is fast`() = runTest {
+        media.isFast = false
+        media.wifiUrl = { id -> "http://192.168.1.20:40123/v/$id?t=ab" }
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+
+        lift("1")
+
+        assertThat(peer.transport.sentSlides[1]).isInstanceOf(SlideMessage.PlaybackOffer::class)
+        viewModel.onAction(ShelfAction.OnSlideReturned("1"))
+    }
+
+    @Test
     fun `a card that isn't the playing video is lifted as before`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnPreviewClick("1"))
@@ -196,6 +223,42 @@ class ShelfViewModelLiveVideoTest {
         (engine.loaded as VideoSource.Remote).open(1_234)
 
         assertThat(media.opened).containsExactly("9" to 1_234L)
+    }
+
+    @Test
+    fun `while the pairing link is fast, the video is read over it even on a shared Wi-Fi`() = runTest {
+        loaded()
+        peer.transport.deliver(peerStart)
+
+        peer.transport.deliver(peerOffer.copy(httpUrl = "http://192.168.1.20:40123/v/9?t=ab"))
+
+        assertThat(engine.loaded).isNotNull().isInstanceOf(VideoSource.Remote::class)
+    }
+
+    @Test
+    fun `while the pairing link is still slow, a video on the shared Wi-Fi is read from there`() = runTest {
+        media.isFast = false
+        loaded()
+        peer.transport.deliver(peerStart)
+
+        peer.transport.deliver(peerOffer.copy(httpUrl = "http://192.168.1.20:40123/v/9?t=ab"))
+
+        assertThat(engine.loaded).isEqualTo(VideoSource.Url("http://192.168.1.20:40123/v/9?t=ab"))
+        assertThat(engine.currentVolume).isEqualTo(0f)
+    }
+
+    @Test
+    fun `when neither way can carry the video, the card comes over with its picture`() = runTest {
+        media.reachable = false
+        media.isFast = false
+        loaded()
+        peer.transport.deliver(peerStart)
+
+        peer.transport.deliver(peerOffer.copy(httpUrl = "http://10.0.0.5:40123/v/9?t=ab"))
+        peer.transport.deliver(SlideMessage.PlaybackClock("9", positionMs = 5_250, isPlaying = true))
+
+        assertThat(engine.loaded).isNull()
+        assertThat(viewModel.state.value.playing).isNull()
     }
 
     @Test

@@ -94,6 +94,8 @@ sealed interface SlideMessage {
         /** Where the sender's video was when this left. */
         val positionMs: Long,
         val isPlaying: Boolean,
+        /** Where it can be read over the Wi-Fi network, if the sender is on one (the receiver checks it can reach it). */
+        val httpUrl: String? = null,
     ) : SlideMessage
 
     /** Where the sender's video is, reported a few times a second while its card is in the air. */

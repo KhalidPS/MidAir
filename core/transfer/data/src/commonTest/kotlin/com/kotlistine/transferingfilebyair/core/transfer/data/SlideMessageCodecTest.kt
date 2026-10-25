@@ -61,6 +61,7 @@ class SlideMessageCodecTest {
                 ),
             ),
             SlideMessage.PlaybackOffer("7", sizeBytes = 24_000_000_000, positionMs = 61_250, isPlaying = true),
+            SlideMessage.PlaybackOffer("7", 24_000, 0, isPlaying = false, httpUrl = "http://192.168.1.20:40123/v/7?t=ab"),
             SlideMessage.PlaybackClock("7", positionMs = 61_500, isPlaying = false),
         )
 
@@ -102,6 +103,7 @@ class SlideMessageCodecTest {
             SlideMessage.PlaybackOffer("7", sizeBytes = 0, positionMs = 0, isPlaying = true),
             SlideMessage.PlaybackOffer("7", sizeBytes = 1_000, positionMs = -5, isPlaying = true),
             SlideMessage.PlaybackClock("7", positionMs = -1, isPlaying = true),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 1_000, positionMs = 0, isPlaying = true, httpUrl = "file:///sdcard/x"),
         )
 
         impossible.forEach { message ->

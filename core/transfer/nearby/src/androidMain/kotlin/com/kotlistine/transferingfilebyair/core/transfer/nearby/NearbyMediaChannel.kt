@@ -42,6 +42,9 @@ private const val OpenTimeoutMillis = 10_000L
  */
 private const val PieceBytes = 1L * 1024 * 1024
 
+/** Pieces on their way at once, past the one being read. More start a video faster but hold up the card's moves. */
+private const val PiecesAhead = 3
+
 private const val CopyBufferBytes = 64 * 1024
 
 private const val Tag = "AirLink"
@@ -69,6 +72,9 @@ internal class NearbyMediaChannel(
 ) : MediaChannel {
 
     private val appContext = context.applicationContext
+
+    /** The way that doesn't go through Nearby, when both phones are on one Wi-Fi network. */
+    private val lan = LanFileServer(context)
 
     /** Where arriving pieces are drained to; emptied of anything a previous run left behind on first use. */
     private val piecesDir by lazy {
@@ -104,12 +110,21 @@ internal class NearbyMediaChannel(
     // Bluetooth is LOW (BLE) or MEDIUM (classic): far too slow for a phone's video. Wi-Fi is HIGH.
     override val isFast: Boolean get() = quality >= BandwidthInfo.Quality.HIGH
 
-    override fun share(fileId: String, uri: String) {
+    override fun share(fileId: String, uri: String): String? {
         shared[fileId] = uri
+        return lan.share(fileId, uri)
     }
 
     override fun unshare(fileId: String) {
         shared.remove(fileId)
+        lan.unshare(fileId)
+    }
+
+    override suspend fun canReach(url: String): Boolean {
+        val startedAt = System.currentTimeMillis()
+        val reachable = withContext(Dispatchers.IO) { answersFromHere(url) }
+        Log.i(Tag, "Wi-Fi path ${if (reachable) "reachable" else "not reachable"} (${System.currentTimeMillis() - startedAt} ms)")
+        return reachable
     }
 
     override suspend fun open(fileId: String, offset: Long): Result<ByteStream, DataError.Network> {
@@ -215,6 +230,7 @@ internal class NearbyMediaChannel(
         sending.values.forEach { it.closeQuietly() }
         sending.clear()
         shared.clear()
+        lan.unshareAll()
     }
 
     private fun deliver(requestId: Long, piece: DrainedPiece) {
@@ -262,10 +278,12 @@ internal class NearbyMediaChannel(
     }
 
     /**
-     * A file read from [start] to its end, a piece at a time. The next piece is asked for once half of the current
-     * one has been read: early enough that the player rarely waits, late enough that a player only glancing at a part
-     * of the file (its header, before jumping to its index at the end) doesn't make it fetch more.
-     * A piece shorter than asked for is the file's last.
+     * A file read from [start] to its end, a piece at a time, with [PiecesAhead] pieces on their way at once: each
+     * piece costs a request's round trip, so one at a time leaves the link mostly idle.
+     *
+     * Pieces ahead are asked for once half of the current one has been read: early enough that the player rarely
+     * waits, late enough that a player only glancing at a part of the file (its header, before jumping to its index
+     * at the end) doesn't make it fetch more. A piece shorter than asked for is the file's last.
      */
     private inner class PiecedStream(
         private val fileId: String,
@@ -273,30 +291,36 @@ internal class NearbyMediaChannel(
         first: DrainedPiece,
     ) : ByteStream {
         private var current = first
+
+        /** Pieces asked for after [current], in file order. */
+        private val ahead = ArrayDeque<Deferred<DrainedPiece?>>()
+
+        /** Where the next piece to ask for starts. */
         private var nextOffset = start + PieceBytes
-        private var next: Deferred<DrainedPiece?>? = null
 
         @Volatile
         private var isClosed = false
 
-        private fun prefetch(): Deferred<DrainedPiece?> {
-            val offset = nextOffset
-            return scope.async { openPiece(fileId, offset) }
+        private fun fillAhead() {
+            while (ahead.size < PiecesAhead) {
+                val offset = nextOffset
+                ahead.addLast(scope.async { openPiece(fileId, offset) })
+                nextOffset += PieceBytes
+            }
         }
 
         override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
             while (true) {
                 if (isClosed) throw IOException("Range closed")
                 val read = current.read(buffer, offset, length)
-                if (next == null && current.position >= PieceBytes / 2) next = prefetch()
+                if (current.position >= PieceBytes / 2) fillAhead()
                 if (read >= 0) return read
                 if (current.size < PieceBytes) return -1
+                if (ahead.isEmpty()) fillAhead()
                 // Interrupted (the player gave up on this range): runBlocking throws, and the read with it.
-                val following = runBlocking { (next ?: prefetch()).await() } ?: throw IOException("Next piece didn't come")
+                val following = runBlocking { ahead.removeFirst().await() } ?: throw IOException("Next piece didn't come")
                 current.close()
                 current = following
-                nextOffset += PieceBytes
-                next = null
             }
         }
 
@@ -304,8 +328,9 @@ internal class NearbyMediaChannel(
             if (isClosed) return
             isClosed = true
             current.close()
-            // A piece still on its way is drained and dropped once it arrives.
-            next?.let { pending -> scope.launch { pending.await()?.close() } }
+            // Pieces still on their way are drained and dropped as they arrive.
+            ahead.forEach { pending -> scope.launch { pending.await()?.close() } }
+            ahead.clear()
         }
     }
 }

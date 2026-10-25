@@ -115,9 +115,15 @@ internal class ExoVideoEngine(private val context: Context) : VideoEngine {
         player.playbackParameters = PlaybackParameters.DEFAULT
         when (source) {
             is VideoSource.Local -> player.setMediaItem(MediaItem.fromUri(source.uri), startAtMs)
+            is VideoSource.Url -> player.setMediaItem(MediaItem.fromUri(source.url), startAtMs)
             is VideoSource.Remote -> player.setMediaSource(remoteMediaSource(source), startAtMs)
         }
-        Log.i(Tag, "Load ${if (source is VideoSource.Remote) "from the other phone" else "local"} at $startAtMs ms")
+        val from = when (source) {
+            is VideoSource.Local -> "this phone"
+            is VideoSource.Url -> "the other phone over Wi-Fi"
+            is VideoSource.Remote -> "the other phone over Nearby"
+        }
+        Log.i(Tag, "Load from $from at $startAtMs ms")
         player.playWhenReady = playWhenReady
         player.prepare()
         _playWhenReady.value = playWhenReady

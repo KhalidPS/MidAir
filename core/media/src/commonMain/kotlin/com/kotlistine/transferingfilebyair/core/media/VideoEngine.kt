@@ -59,6 +59,9 @@ sealed interface VideoSource {
     /** A file on this device: a `content://` URI on Android. */
     data class Local(val uri: String) : VideoSource
 
+    /** A file another device serves over the local network, read in byte ranges (`http://`). */
+    data class Url(val url: String) : VideoSource
+
     /**
      * A file still on another device, read a range at a time as it plays: [open] gives its bytes from an offset to
      * the end. Not a data class: [open] is compared by identity.

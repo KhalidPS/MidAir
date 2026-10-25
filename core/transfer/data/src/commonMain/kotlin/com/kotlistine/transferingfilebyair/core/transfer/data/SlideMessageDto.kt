@@ -78,6 +78,7 @@ internal sealed interface SlideMessageDto {
         val sizeBytes: Long,
         val positionMs: Long,
         val isPlaying: Boolean,
+        @SerialName("url") val httpUrl: String? = null,
     ) : SlideMessageDto
 
     /** Sent a few times a second, so its field names are one letter on the wire. */
