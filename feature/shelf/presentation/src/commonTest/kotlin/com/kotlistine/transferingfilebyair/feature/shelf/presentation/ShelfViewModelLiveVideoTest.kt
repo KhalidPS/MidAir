@@ -379,6 +379,26 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
+    fun `once its file is in, the received video plays on from that file, on the same frame`() = runTest {
+        createViewModel(
+            onReceive = {
+                repository.items.update { listOf(item("received-1", name = "Climb.mp4", mimeType = "video/mp4")) + it }
+                Result.Success("received-1")
+            },
+        )
+        loaded()
+        receiveOffer()
+        engine.positionMs = 12_000
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(engine.loaded).isEqualTo(VideoSource.Local("content://file/received-1"))
+        assertThat(engine.loadedAtMs).isEqualTo(12_000)
+        assertThat(engine.playWhenReady.value).isEqualTo(true)
+        assertThat(engine.currentVolume).isEqualTo(1f)
+    }
+
+    @Test
     fun `a video whose file couldn't be received stops`() = runTest {
         createViewModel(onReceive = { Result.Failure(DataError.Network.DISCONNECTED) })
         loaded()

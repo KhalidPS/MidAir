@@ -30,7 +30,6 @@ import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.thread
 import kotlin.concurrent.withLock
 
 /** How long the other phone has to start sending a piece it was asked for. */
@@ -183,9 +182,9 @@ internal class NearbyMediaChannel(
     fun onStream(payload: Payload) {
         val input = payload.asStream()?.asInputStream() ?: return
         val piece = try {
-            DrainedPiece(input, File(piecesDir, "piece-${payload.id}.part"))
+            DrainedPiece(input, File(piecesDir, "piece-${payload.id}.part"), scope)
         } catch (_: IOException) {
-            discard(input)
+            scope.discard(input)
             return
         }
         val requestId = answers.remove(payload.id)
@@ -342,6 +341,7 @@ internal class NearbyMediaChannel(
 private class DrainedPiece(
     private val input: InputStream,
     private val file: File,
+    scope: CoroutineScope,
 ) {
     private val lock = ReentrantLock()
     private val arrived = lock.newCondition()
@@ -362,7 +362,8 @@ private class DrainedPiece(
     val size: Long get() = lock.withLock { written }
 
     init {
-        thread(name = "AirPieceDrain", isDaemon = true) { drain() }
+        // Blocking reads, on the pool made for them.
+        scope.launch(Dispatchers.IO) { drain() }
     }
 
     private fun drain() {
@@ -442,9 +443,9 @@ private class LimitedInputStream(private val input: InputStream, private var lim
     override fun close() = input.close()
 }
 
-/** Reads [input] to its end and throws it away, on a thread of its own. */
-private fun discard(input: InputStream) {
-    thread(name = "AirPieceDiscard", isDaemon = true) {
+/** Reads [input] to its end and throws it away, in the background. */
+private fun CoroutineScope.discard(input: InputStream) {
+    launch(Dispatchers.IO) {
         try {
             val buffer = ByteArray(CopyBufferBytes)
             while (input.read(buffer) >= 0) Unit

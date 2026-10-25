@@ -105,6 +105,9 @@ class ShelfViewModel(
 
     /** The peer's video this device plays along with, while the peer's card is in the air. */
     private var following: FollowedVideo? = null
+
+    /** A received item whose video is still read from the peer: it moves to its own file once the shelf has it. */
+    private var streamedFromPeer: String? = null
     private var viewportWidthPx = 0
     private var roundTripMillis = 0f
 
@@ -167,6 +170,7 @@ class ShelfViewModel(
                 val now = clock.now()
                 shelfItems = items.map { it.toUi(now, timeZone) }
                 publishItems()
+                playLocalCopy()
             }
             .launchIn(viewModelScope)
     }
@@ -625,8 +629,12 @@ class ShelfViewModel(
                 // The item takes the arriving card's place in the same update, and plays on if its card did.
                 arrivedFrom[result.data] = start.itemId
                 val playing = _state.value.playing
-                if (playing?.itemId == start.itemId) _state.update { it.copy(playing = playing.copy(itemId = result.data)) }
+                if (playing?.itemId == start.itemId) {
+                    _state.update { it.copy(playing = playing.copy(itemId = result.data)) }
+                    streamedFromPeer = result.data
+                }
                 publishItems()
+                playLocalCopy()
             }
             is Result.Failure -> {
                 publishItems()
@@ -723,6 +731,23 @@ class ShelfViewModel(
             // Cut short a hold: it plays on from the frame it waited on.
             if (video.follower.isPlaying) play()
         }
+    }
+
+    /**
+     * Moves a received video still read from the peer onto its own file, on the same frame. The peer stops serving it
+     * once it has sent the file: its item goes, and its access to the file with it.
+     */
+    private fun playLocalCopy() {
+        val id = streamedFromPeer ?: return
+        val engine = videoEngine ?: return
+        if (_state.value.playing?.itemId != id) {
+            // Stopped or replaced meanwhile.
+            streamedFromPeer = null
+            return
+        }
+        val item = shelfItems.firstOrNull { it.id == id } ?: return
+        streamedFromPeer = null
+        engine.load(VideoSource.Local(item.uri), startAtMs = engine.positionMs, playWhenReady = engine.playWhenReady.value)
     }
 
     private fun nowMillis(): Long = clock.now().toEpochMilliseconds()
