@@ -60,6 +60,8 @@ class SlideMessageCodecTest {
                     alongEdgeMmPerS = -6f,
                 ),
             ),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 24_000_000_000, positionMs = 61_250, isPlaying = true),
+            SlideMessage.PlaybackClock("7", positionMs = 61_500, isPlaying = false),
         )
 
         messages.forEach { assertThat(roundTrip(it)).isEqualTo(it) }
@@ -70,6 +72,13 @@ class SlideMessageCodecTest {
         val bytes = (SlideMessageCodec.encode(move) as Result.Success).data
 
         assertThat(bytes.size).isLessThan(80)
+    }
+
+    @Test
+    fun `a playback clock is small enough to send several times a second`() {
+        val bytes = (SlideMessageCodec.encode(SlideMessage.PlaybackClock("7", 3_600_000, true)) as Result.Success).data
+
+        assertThat(bytes.size).isLessThan(40)
     }
 
     @Test
@@ -90,6 +99,9 @@ class SlideMessageCodecTest {
             move.copy(alongEdgeMm = 50_000f),
             move.copy(tiltDegrees = Float.NaN),
             SlideMessage.DragCommit("7", outwardMmPerS = Float.NaN, alongEdgeMmPerS = 0f),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 0, positionMs = 0, isPlaying = true),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 1_000, positionMs = -5, isPlaying = true),
+            SlideMessage.PlaybackClock("7", positionMs = -1, isPlaying = true),
         )
 
         impossible.forEach { message ->

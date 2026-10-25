@@ -70,6 +70,24 @@ internal sealed interface SlideMessageDto {
         val acrossMmPerS: Float,
         val alongEdgeMmPerS: Float,
     ) : SlideMessageDto
+
+    @Serializable
+    @SerialName("play")
+    data class PlaybackOffer(
+        val itemId: String,
+        val sizeBytes: Long,
+        val positionMs: Long,
+        val isPlaying: Boolean,
+    ) : SlideMessageDto
+
+    /** Sent a few times a second, so its field names are one letter on the wire. */
+    @Serializable
+    @SerialName("clock")
+    data class PlaybackClock(
+        @SerialName("i") val itemId: String,
+        @SerialName("p") val positionMs: Long,
+        @SerialName("r") val isPlaying: Boolean,
+    ) : SlideMessageDto
 }
 
 @Serializable

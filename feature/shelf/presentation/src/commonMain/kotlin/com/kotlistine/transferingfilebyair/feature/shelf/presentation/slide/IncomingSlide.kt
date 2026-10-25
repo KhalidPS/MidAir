@@ -44,8 +44,10 @@ import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
+import com.kotlistine.transferingfilebyair.core.media.VideoSurface
 import com.kotlistine.transferingfilebyair.core.presentation.image.decodeToImageBitmapOrNull
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.LocalCardVideo
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -332,11 +334,15 @@ internal fun rememberIncomingSlideState(): IncomingSlideState {
 /**
  * The peer's card on this screen: its picture at the sender's physical size, moved only by its layer. Place it at
  * the overlay's absolute top-left (also in right-to-left layouts): its layer offsets are in overlay pixels.
+ *
+ * When the card is the peer's playing video, this half plays it too, on the same frame (the picture shows until the
+ * first frame arrives).
  */
 @Composable
 internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifier) {
     val card = state.card ?: return
     val picture = state.picture
+    val video = LocalCardVideo.current?.takeIf { it.itemId == card.id }
     Box(
         modifier = modifier
             .layout { measurable, _ ->
@@ -366,11 +372,26 @@ internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifi
             .background(AirColors.SurfaceRaised),
         contentAlignment = Alignment.Center,
     ) {
-        if (picture != null) {
-            Image(bitmap = picture, contentDescription = card.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        if (video != null) {
+            VideoSurface(
+                engine = video.engine,
+                isActive = true,
+                modifier = Modifier.fillMaxSize(),
+                placeholder = { CardPicture(picture, card.name) },
+            )
         } else {
-            CardName(card.name)
+            CardPicture(picture, card.name)
         }
+    }
+}
+
+/** The card as the sender drew it, or its name when there is no picture. */
+@Composable
+private fun CardPicture(picture: ImageBitmap?, name: String) {
+    if (picture != null) {
+        Image(bitmap = picture, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    } else {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CardName(name) }
     }
 }
 

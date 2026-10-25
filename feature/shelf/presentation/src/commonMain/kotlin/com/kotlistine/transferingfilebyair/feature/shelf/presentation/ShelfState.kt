@@ -1,6 +1,7 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation
 
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.PlayingVideoUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 
 data class ShelfState(
@@ -13,4 +14,6 @@ data class ShelfState(
     val arriving: List<ArrivingItemUi> = emptyList(),
     /** Received items by the id of the arriving card they took over from, so the card turns into the item in place. */
     val arrivedFrom: Map<String, String> = emptyMap(),
+    /** The video playing in its card, if any. */
+    val playing: PlayingVideoUi? = null,
 )

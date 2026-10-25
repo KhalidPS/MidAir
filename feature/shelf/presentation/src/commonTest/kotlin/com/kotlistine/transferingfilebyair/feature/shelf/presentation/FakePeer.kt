@@ -4,6 +4,7 @@ import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
@@ -42,6 +43,7 @@ class FakePeer(
     private val onReceive: suspend (IncomingFile) -> Result<String, DataError> = { Result.Success("received-1") },
     /** Progress reported while receiving, before the result. */
     private val progressSteps: List<Float> = emptyList(),
+    override val media: MediaChannel? = null,
 ) : SlidePeer {
     override val transport = FakeTransport()
     val received = mutableListOf<IncomingFile>()

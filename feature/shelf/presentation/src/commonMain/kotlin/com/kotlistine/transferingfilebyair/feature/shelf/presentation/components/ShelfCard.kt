@@ -22,10 +22,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,11 +53,14 @@ import com.kotlistine.transferingfilebyair.core.designsystem.icons.AirIcons
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.core.domain.shelf.FileKind
+import com.kotlistine.transferingfilebyair.core.media.VideoEngine
+import com.kotlistine.transferingfilebyair.core.media.VideoSurface
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 
 @Composable
 internal fun ShelfCard(
     item: ShelfItemUi,
+    onPreviewClick: () -> Unit,
     onOpenClick: () -> Unit,
     onRemoveClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -68,7 +74,7 @@ internal fun ShelfCard(
                 .fillMaxWidth()
                 .aspectRatio(item.aspectRatio)
                 .clip(RoundedCornerShape(AirDimens.CardCorner))
-                .clickable(onClick = onOpenClick)
+                .clickable(onClick = onPreviewClick)
                 .then(previewModifier),
         )
         Spacer(Modifier.height(8.dp))
@@ -133,12 +139,17 @@ private fun ItemMenu(onOpenClick: () -> Unit, onRemoveClick: () -> Unit) {
     }
 }
 
-/** The card's artwork alone: what lifts off the shelf and slides to the other device. */
+/**
+ * The card's artwork alone: what lifts off the shelf and slides to the other device.
+ *
+ * A playing video draws its live picture. Where it is drawn twice (the card and its lifted copy), it shows in the
+ * [isVideoActive] one composed last; see [VideoSurface].
+ */
 @Composable
-internal fun FilePreview(item: ShelfItemUi, modifier: Modifier = Modifier) {
+internal fun FilePreview(item: ShelfItemUi, modifier: Modifier = Modifier, isVideoActive: Boolean = true) {
     when (item.kind) {
         FileKind.IMAGE -> ImagePreview(item, modifier)
-        FileKind.VIDEO -> VideoPreview(item, modifier)
+        FileKind.VIDEO -> VideoPreview(item, isVideoActive, modifier)
         FileKind.PDF, FileKind.TEXT -> PagePreview(item, modifier)
         FileKind.OTHER -> GenericPreview(item, modifier)
     }
@@ -167,13 +178,23 @@ private fun ImagePreview(item: ShelfItemUi, modifier: Modifier) {
 }
 
 @Composable
-private fun VideoPreview(item: ShelfItemUi, modifier: Modifier) {
+private fun VideoPreview(item: ShelfItemUi, isVideoActive: Boolean, modifier: Modifier) {
+    val video = LocalCardVideo.current?.takeIf { it.itemId == item.id }
     Box(
         modifier.background(
             Brush.linearGradient(listOf(AirColors.SurfaceRaised, AirColors.GlowBlue.copy(alpha = 0.22f))),
         ),
     ) {
-        Thumbnail(item, Modifier.fillMaxSize())
+        if (video != null) {
+            VideoSurface(
+                engine = video.engine,
+                isActive = isVideoActive,
+                modifier = Modifier.fillMaxSize(),
+                placeholder = { Thumbnail(item, Modifier.fillMaxSize()) },
+            )
+        } else {
+            Thumbnail(item, Modifier.fillMaxSize())
+        }
         // Keeps the type badge readable over bright frames.
         Box(
             Modifier
@@ -182,18 +203,54 @@ private fun VideoPreview(item: ShelfItemUi, modifier: Modifier) {
                 .fillMaxHeight(0.45f)
                 .background(Brush.verticalGradient(listOf(Color.Transparent, AirColors.Background.copy(alpha = 0.6f)))),
         )
-        Box(
-            Modifier
-                .align(Alignment.Center)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(AirColors.Background.copy(alpha = 0.35f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(AirIcons.Play, contentDescription = null, tint = AirColors.OnSurface, modifier = Modifier.size(22.dp))
+        if (video == null || video.isPaused) {
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(AirColors.Background.copy(alpha = 0.35f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = AirIcons.Play,
+                    contentDescription = null,
+                    tint = AirColors.OnSurface,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
         TypeBadge(item.badge, Modifier.align(Alignment.BottomStart))
+        if (video != null) {
+            PlaybackProgress(
+                engine = video.engine,
+                isRunning = !video.isPaused,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(3.dp),
+            )
+        }
     }
+}
+
+/** A hairline along the card's bottom edge, filling as the video plays. Redrawn every frame while it runs. */
+@Composable
+private fun PlaybackProgress(engine: VideoEngine, isRunning: Boolean, modifier: Modifier) {
+    val frame = remember { mutableLongStateOf(0L) }
+    LaunchedEffect(isRunning) {
+        if (isRunning) while (true) withFrameNanos { frame.longValue = it }
+    }
+    Spacer(
+        modifier.drawBehind {
+            frame.longValue // Read so that every frame redraws.
+            val duration = engine.durationMs
+            if (duration <= 0L) return@drawBehind
+            val played = (engine.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+            drawRect(AirColors.OnSurface.copy(alpha = 0.18f))
+            drawRect(AirColors.OnSurface.copy(alpha = 0.9f), size = Size(size.width * played, size.height))
+        },
+    )
 }
 
 /**

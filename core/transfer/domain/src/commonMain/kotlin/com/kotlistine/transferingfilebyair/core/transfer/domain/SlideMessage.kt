@@ -83,4 +83,19 @@ sealed interface SlideMessage {
 
     /** A line-up swipe crossed the sender's screen edge; with the receiver's own crossing, it lines the screens up. */
     data class SwipeCrossed(val crossing: EdgeCrossing) : SlideMessage
+
+    /**
+     * The lifted card (sent just before) is a video playing on the sender, readable over the media channel as
+     * [itemId]. The receiver starts it at the same frame, muted, so both halves of the card show one video.
+     */
+    data class PlaybackOffer(
+        val itemId: String,
+        val sizeBytes: Long,
+        /** Where the sender's video was when this left. */
+        val positionMs: Long,
+        val isPlaying: Boolean,
+    ) : SlideMessage
+
+    /** Where the sender's video is, reported a few times a second while its card is in the air. */
+    data class PlaybackClock(val itemId: String, val positionMs: Long, val isPlaying: Boolean) : SlideMessage
 }

@@ -44,6 +44,9 @@ interface PeerLink {
     /** Messages to and from the connected peer. Sends fail with [DataError.Network.DISCONNECTED] while unpaired. */
     val transport: Transport
 
+    /** Reading the peer's shared files in ranges, where the link can (null: it can't). */
+    val media: MediaChannel? get() = null
+
     /** Makes this device visible and looks for others, until it connects or [stopSearching] is called. */
     suspend fun startSearching(): EmptyResult<DataError.Network>
 

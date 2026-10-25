@@ -5,6 +5,7 @@ import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
+import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
@@ -51,6 +52,8 @@ class LinkedSlidePeer(
     override val link: SlideLink get() = geometry.link.value
 
     override val isLinked: Flow<Boolean> = peerLink.state.map { it is LinkState.Connected }.distinctUntilChanged()
+
+    override val media: MediaChannel? get() = peerLink.media
 
     /** Transfer ids announced by the peer, by the item id on its shelf. */
     private val offers = MutableStateFlow<Map<String, Long>>(emptyMap())

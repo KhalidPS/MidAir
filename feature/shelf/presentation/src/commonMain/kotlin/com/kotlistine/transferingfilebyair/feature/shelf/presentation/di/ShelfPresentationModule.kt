@@ -14,6 +14,7 @@ val shelfPresentationModule = module {
             peer = get(),
             transfers = getOrNull(named(TransfersScope)),
             keepAlive = getOrNull() ?: TransferKeepAlive.None,
+            videoEngine = getOrNull(),
         )
     }
 }

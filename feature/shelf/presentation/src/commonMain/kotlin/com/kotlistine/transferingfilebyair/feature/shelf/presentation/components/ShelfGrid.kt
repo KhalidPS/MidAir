@@ -105,6 +105,7 @@ internal fun ShelfGrid(
                 item = item,
                 picture = pictures[item.id],
                 onTap = { onAction(ShelfAction.OnIncomingCardTap(item.id)) },
+                isVideoActive = !isFlying,
                 previewModifier = Modifier
                     .onPlaced { slot.value = it }
                     .graphicsLayer { alpha = if (isFlying) 0f else 1f },
@@ -116,7 +117,9 @@ internal fun ShelfGrid(
             )
         }
         itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
-            val arrivedAs = remember(item.id) { arrivedFrom[item.id]?.let { pictures[it] } }
+            // A received video still playing needs no cover: the video itself carries on from its arriving card.
+            val isPlaying = LocalCardVideo.current?.itemId == item.id
+            val arrivedAs = remember(item.id) { if (isPlaying) null else arrivedFrom[item.id]?.let { pictures[it] } }
             val isNew = remember(item.id) { seenIds.add(item.id) && item.id !in arrivedFrom }
             val appear = remember(item.id) { Animatable(if (isNew) 0f else 1f) }
             LaunchedEffect(item.id) {
@@ -139,6 +142,7 @@ internal fun ShelfGrid(
 
             ShelfCard(
                 item = item,
+                onPreviewClick = { onAction(ShelfAction.OnPreviewClick(item.id)) },
                 onOpenClick = { onAction(ShelfAction.OnOpenClick(item.id)) },
                 onRemoveClick = { onAction(ShelfAction.OnRemoveClick(item.id)) },
                 previewModifier = Modifier

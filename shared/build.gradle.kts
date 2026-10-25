@@ -10,6 +10,7 @@ kotlin {
         commonMain.dependencies {
             implementation(projects.core.designsystem)
             implementation(projects.core.presentation)
+            implementation(projects.core.media)
             implementation(projects.core.transfer.data)
             implementation(projects.feature.shelf.data)
             implementation(projects.feature.shelf.presentation)

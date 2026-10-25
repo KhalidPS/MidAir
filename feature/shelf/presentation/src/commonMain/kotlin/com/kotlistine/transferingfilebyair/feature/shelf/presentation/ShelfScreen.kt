@@ -27,6 +27,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +47,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kotlistine.transferingfilebyair.core.designsystem.effects.recede
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
@@ -54,12 +57,15 @@ import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirTheme
 import com.kotlistine.transferingfilebyair.core.domain.shelf.FileKind
+import com.kotlistine.transferingfilebyair.core.media.VideoEngine
 import com.kotlistine.transferingfilebyair.core.presentation.ObserveAsEvents
 import com.kotlistine.transferingfilebyair.core.presentation.file.OpenFileResult
 import com.kotlistine.transferingfilebyair.core.presentation.file.rememberFileOpener
 import com.kotlistine.transferingfilebyair.core.presentation.file.rememberFilePickerLauncher
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.CardVideo
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.EmptyShelf
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.LocalCardVideo
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfBottomBar
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfGrid
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.arrivingKey
@@ -89,6 +95,8 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
     val filePicker = rememberFilePickerLauncher { uris -> viewModel.onAction(ShelfAction.OnFilesPicked(uris)) }
     val fileOpener = rememberFileOpener()
     val incomingSlide = rememberIncomingSlideState()
+
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onAction(ShelfAction.OnScreenHidden) }
 
     fun showMessage(message: String) {
         scope.launch {
@@ -159,6 +167,7 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
         },
         snackbarHostState = snackbarHostState,
         incomingSlide = incomingSlide,
+        videoEngine = viewModel.videoEngine,
     )
 }
 
@@ -173,6 +182,8 @@ fun ShelfScreen(
     modifier: Modifier = Modifier,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     incomingSlide: IncomingSlideState = rememberIncomingSlideState(),
+    /** Draws the picture of [ShelfState.playing]. */
+    videoEngine: VideoEngine? = null,
 ) {
     // Bottom chrome rises into place shortly after the first frame.
     val barEnter = remember { Animatable(0f) }
@@ -228,104 +239,113 @@ fun ShelfScreen(
         else -> ShelfContent.Items
     }
 
+    val playing = state.playing
+    val cardVideo = if (videoEngine != null && playing != null) {
+        CardVideo(videoEngine, playing.itemId, playing.isPaused)
+    } else {
+        null
+    }
+
     // Back to front: the shelf (recedes while a card is lifted or arriving), the edge blooms, the cards in flight,
     // then the snackbar, which stays sharp so "Undo" is readable while the shelf is still clearing.
     // Clipped, so a card past the edge is cut there even when the screen is not the whole window (Twin Simulator).
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clipToBounds()
-            .background(AirColors.Background)
-            .onPlaced(slideState::attachOverlay)
-            .onSizeChanged { size ->
-                incomingSlide.containerSize = size.toSize()
-                onAction(ShelfAction.OnViewportChanged(size.width, size.height))
-            },
-    ) {
+    CompositionLocalProvider(LocalCardVideo provides cardVideo) {
         Box(
-            Modifier
+            modifier = modifier
                 .fillMaxSize()
-                .recede(progress = { max(slideState.focus.value, incomingSlide.focus()) }),
+                .clipToBounds()
+                .background(AirColors.Background)
+                .onPlaced(slideState::attachOverlay)
+                .onSizeChanged { size ->
+                    incomingSlide.containerSize = size.toSize()
+                    onAction(ShelfAction.OnViewportChanged(size.width, size.height))
+                },
         ) {
-            AnimatedContent(
-                targetState = content,
-                transitionSpec = { fadeIn(tween(320, delayMillis = 90)) togetherWith fadeOut(tween(160)) },
-                modifier = Modifier.fillMaxSize(),
-            ) { target ->
-                when (target) {
-                    ShelfContent.Loading -> Box(Modifier.fillMaxSize())
-                    ShelfContent.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        EmptyShelf()
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .recede(progress = { max(slideState.focus.value, incomingSlide.focus()) }),
+            ) {
+                AnimatedContent(
+                    targetState = content,
+                    transitionSpec = { fadeIn(tween(320, delayMillis = 90)) togetherWith fadeOut(tween(160)) },
+                    modifier = Modifier.fillMaxSize(),
+                ) { target ->
+                    when (target) {
+                        ShelfContent.Loading -> Box(Modifier.fillMaxSize())
+                        ShelfContent.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            EmptyShelf()
+                        }
+                        ShelfContent.Items -> ShelfGrid(
+                            items = state.items,
+                            onAction = onAction,
+                            slideState = slideState,
+                            slots = slots,
+                            arriving = state.arriving,
+                            arrivedFrom = state.arrivedFrom,
+                            pictures = incomingSlide.pictures,
+                            flyingId = incomingSlide.flyingId,
+                            gridState = gridState,
+                            contentPadding = PaddingValues(
+                                start = AirDimens.ScreenGutter,
+                                end = AirDimens.ScreenGutter,
+                                top = insets.calculateTopPadding() + 12.dp,
+                                bottom = insets.calculateBottomPadding() + 112.dp,
+                            ),
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
-                    ShelfContent.Items -> ShelfGrid(
-                        items = state.items,
-                        onAction = onAction,
-                        slideState = slideState,
-                        slots = slots,
-                        arriving = state.arriving,
-                        arrivedFrom = state.arrivedFrom,
-                        pictures = incomingSlide.pictures,
-                        flyingId = incomingSlide.flyingId,
-                        gridState = gridState,
-                        contentPadding = PaddingValues(
-                            start = AirDimens.ScreenGutter,
-                            end = AirDimens.ScreenGutter,
-                            top = insets.calculateTopPadding() + 12.dp,
-                            bottom = insets.calculateBottomPadding() + 112.dp,
-                        ),
-                        modifier = Modifier.fillMaxSize(),
-                    )
                 }
+
+                // Content melts under the status bar and the floating bar instead of being cut off.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(insets.calculateTopPadding() + 20.dp)
+                        .background(Brush.verticalGradient(listOf(AirColors.Background, Color.Transparent))),
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(insets.calculateBottomPadding() + 120.dp)
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, AirColors.Background))),
+                )
+
+                ShelfBottomBar(
+                    itemCount = state.items.size,
+                    onDevicesClick = { onAction(ShelfAction.OnDevicesClick) },
+                    onAddClick = { onAction(ShelfAction.OnAddClick) },
+                    onClearClick = { onAction(ShelfAction.OnClearClick) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            val t = barEnter.value
+                            alpha = t.coerceIn(0f, 1f)
+                            translationY = (1f - t) * 56.dp.toPx()
+                        },
+                )
             }
 
-            // Content melts under the status bar and the floating bar instead of being cut off.
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(insets.calculateTopPadding() + 20.dp)
-                    .background(Brush.verticalGradient(listOf(AirColors.Background, Color.Transparent))),
-            )
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(insets.calculateBottomPadding() + 120.dp)
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, AirColors.Background))),
-            )
+            EdgeBloom(bloom = { width -> slideState.bloom(width) })
+            EdgeBloom(bloom = { incomingSlide.bloom() })
+            ArrivalWave(wave = { incomingSlide.wave() })
+            // Absolute, not start-aligned: the cards' offsets are overlay pixels, also in right-to-left layouts.
+            IncomingCard(incomingSlide, Modifier.align(AbsoluteAlignment.TopLeft))
+            LiftedCard(slideState, Modifier.align(AbsoluteAlignment.TopLeft))
 
-            ShelfBottomBar(
-                itemCount = state.items.size,
-                onDevicesClick = { onAction(ShelfAction.OnDevicesClick) },
-                onAddClick = { onAction(ShelfAction.OnAddClick) },
-                onClearClick = { onAction(ShelfAction.OnClearClick) },
+            SnackbarHost(
+                hostState = snackbarHostState,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
-                    .widthIn(max = 420.dp)
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        val t = barEnter.value
-                        alpha = t.coerceIn(0f, 1f)
-                        translationY = (1f - t) * 56.dp.toPx()
-                    },
+                    .padding(bottom = 84.dp),
             )
         }
-
-        EdgeBloom(bloom = { width -> slideState.bloom(width) })
-        EdgeBloom(bloom = { incomingSlide.bloom() })
-        ArrivalWave(wave = { incomingSlide.wave() })
-        // Absolute, not start-aligned: the cards' offsets are overlay pixels, also in right-to-left layouts.
-        IncomingCard(incomingSlide, Modifier.align(AbsoluteAlignment.TopLeft))
-        LiftedCard(slideState, Modifier.align(AbsoluteAlignment.TopLeft))
-
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 84.dp),
-        )
     }
 
     if (state.isClearConfirmationVisible) {

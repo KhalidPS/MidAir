@@ -34,6 +34,8 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
             crossing.acrossMmPerS.isSpeed() &&
             crossing.acrossMmPerS >= 0f &&
             crossing.alongEdgeMmPerS.isSpeed()
+    is SlideMessage.PlaybackOffer -> sizeBytes > 0 && positionMs >= 0
+    is SlideMessage.PlaybackClock -> positionMs >= 0
     is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong -> true
 }
 

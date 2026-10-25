@@ -3,6 +3,7 @@ package com.kotlistine.transferingfilebyair.feature.shelf.domain
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import kotlinx.coroutines.flow.Flow
@@ -16,6 +17,9 @@ interface SlidePeer {
 
     /** Whether a device is paired right now; slides are mirrored only then. */
     val isLinked: Flow<Boolean>
+
+    /** Plays the peer's videos from the frame they are at, while their files are still on the peer (null: it can't). */
+    val media: MediaChannel? get() = null
 
     /** Sends the file behind a handed-over card; returns once the peer has all of it. */
     suspend fun send(file: OutgoingFile): EmptyResult<DataError>

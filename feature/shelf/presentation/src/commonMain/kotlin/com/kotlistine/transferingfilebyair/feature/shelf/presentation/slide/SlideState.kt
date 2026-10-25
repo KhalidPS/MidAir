@@ -100,6 +100,13 @@ class SlideState internal constructor(
     var item: ShelfItemUi? by mutableStateOf(null)
         private set
 
+    /**
+     * The card is in the air: lifted, carried, or on its way back or out. It turns false just before the copy lands
+     * back in its slot, so the slot takes a playing video back while the copy still covers it.
+     */
+    internal var isAloft by mutableStateOf(false)
+        private set
+
     /** The grid slot whose preview is hidden while its copy is in the overlay. */
     var hiddenId: String? by mutableStateOf(null)
         private set
@@ -140,6 +147,7 @@ class SlideState internal constructor(
         if (this.item != null || overlay == null || !overlay.isAttached || !slot.isAttached) return false
         restRect = Rect(overlay.localPositionOf(slot, Offset.Zero), slot.size.toSize())
         this.item = item
+        isAloft = true
         fingerOffset = Offset.Zero
         dragging = true
         armed = false
@@ -270,9 +278,11 @@ class SlideState internal constructor(
                     offset.animateTo(Offset.Zero, Motion.preciseLanding(), Offset(velocity.x, velocity.y))
                 },
             ).joinAll()
-            // Show the slot under the copy before removing the copy.
+            // Show the slot under the copy before removing the copy. A playing video moves back to the slot now, and
+            // shows there (from the frame the copy shows) a frame before the copy goes.
+            isAloft = false
             hiddenId = null
-            awaitFrames(2)
+            awaitFrames(3)
             reset()
         }
     }
@@ -280,6 +290,7 @@ class SlideState internal constructor(
     private suspend fun reset() {
         trackJob?.cancel()
         item = null
+        isAloft = false
         cardLayer = null
         offset.snapTo(Offset.Zero)
         lift.snapTo(0f)

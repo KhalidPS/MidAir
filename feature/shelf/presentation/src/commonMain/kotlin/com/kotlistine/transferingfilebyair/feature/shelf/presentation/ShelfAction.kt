@@ -11,7 +11,15 @@ sealed interface ShelfAction {
     /** Handled by ShelfRoot: opens pairing. */
     data object OnDevicesClick : ShelfAction
     data class OnFilesPicked(val uris: List<String>) : ShelfAction
+
+    /** Opens the file in another app (from the card's menu). */
     data class OnOpenClick(val id: String) : ShelfAction
+
+    /** The card's picture was tapped: a video plays or pauses in its card, any other file opens. */
+    data class OnPreviewClick(val id: String) : ShelfAction
+
+    /** The shelf went out of sight (another screen on top, or the app in the background): a playing video pauses. */
+    data object OnScreenHidden : ShelfAction
     data class OnRemoveClick(val id: String) : ShelfAction
 
     /** The card was slid off the screen through [edge] (null when it left without a slide). */

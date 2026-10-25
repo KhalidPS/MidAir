@@ -8,6 +8,12 @@ internal const val NonceBytes = 16
 internal const val KeyBytes = 32
 internal const val ProofBytes = 32
 
+/** A shared file's id is chosen by the sharing app; anything longer is not one. */
+internal const val MaxFileIdBytes = 256
+
+/** The most one range request may ask for; the asking phone asks for far less at a time. */
+internal const val MaxRangeBytes = 64L * 1024 * 1024
+
 /**
  * A phone this one paired with, after both users checked the code: it may link up again without asking, once it
  * proves it holds [key] (agreed over that checked link).
@@ -30,6 +36,19 @@ internal sealed interface LinkFrame {
 
     /** The user unpaired: forget this phone, and don't link up with it again by yourself. */
     data object Forget : LinkFrame
+
+    /**
+     * Asks for [length] bytes of the shared file [fileId] from byte [offset] (fewer at its end); answered by
+     * [RangeOpened] or [RangeRefused]. Ranges have a length so they always end by themselves: a stream payload
+     * cancelled while it is still sending can stall the whole Nearby connection.
+     */
+    data class RangeRequest(val requestId: Long, val offset: Long, val length: Long, val fileId: String) : LinkFrame
+
+    /** The range asked for as [requestId] is on its way as the stream payload [payloadId]. */
+    data class RangeOpened(val requestId: Long, val payloadId: Long) : LinkFrame
+
+    /** The range can't be sent (the file isn't shared, or can't be read). */
+    data class RangeRefused(val requestId: Long) : LinkFrame
 }
 
 internal fun LinkFrame.encode(): ByteArray = when (this) {
@@ -37,6 +56,10 @@ internal fun LinkFrame.encode(): ByteArray = when (this) {
     is LinkFrame.Proof -> byteArrayOf(FrameMarker, 2) + mac
     is LinkFrame.Trust -> byteArrayOf(FrameMarker, 3) + key
     LinkFrame.Forget -> byteArrayOf(FrameMarker, 4)
+    is LinkFrame.RangeRequest -> byteArrayOf(FrameMarker, 5) + requestId.toBytes() + offset.toBytes() +
+        length.toBytes() + fileId.encodeToByteArray()
+    is LinkFrame.RangeOpened -> byteArrayOf(FrameMarker, 6) + requestId.toBytes() + payloadId.toBytes()
+    is LinkFrame.RangeRefused -> byteArrayOf(FrameMarker, 7) + requestId.toBytes()
 }
 
 /** Whether [bytes] are a link frame (and not a slide message). */
@@ -55,8 +78,36 @@ internal fun decodeLinkFrame(bytes: ByteArray): LinkFrame? {
         2 -> if (body.size == ProofBytes) LinkFrame.Proof(body) else null
         3 -> if (body.size == KeyBytes) LinkFrame.Trust(body) else null
         4 -> if (body.isEmpty()) LinkFrame.Forget else null
+        5 -> {
+            val fileIdBytes = body.size - 3 * Long.SIZE_BYTES
+            if (fileIdBytes !in 1..MaxFileIdBytes) return null
+            val offset = body.longAt(Long.SIZE_BYTES)
+            val length = body.longAt(2 * Long.SIZE_BYTES)
+            if (offset >= 0 && length in 1..MaxRangeBytes) {
+                val fileId = body.copyOfRange(3 * Long.SIZE_BYTES, body.size).decodeToString()
+                LinkFrame.RangeRequest(body.longAt(0), offset, length, fileId)
+            } else {
+                null
+            }
+        }
+        6 -> if (body.size == 2 * Long.SIZE_BYTES) {
+            LinkFrame.RangeOpened(body.longAt(0), body.longAt(Long.SIZE_BYTES))
+        } else {
+            null
+        }
+        7 -> if (body.size == Long.SIZE_BYTES) LinkFrame.RangeRefused(body.longAt(0)) else null
         else -> null
     }
+}
+
+/** Big-endian. */
+private fun Long.toBytes(): ByteArray =
+    ByteArray(Long.SIZE_BYTES) { i -> (this shr (8 * (Long.SIZE_BYTES - 1 - i))).toByte() }
+
+private fun ByteArray.longAt(index: Int): Long {
+    var value = 0L
+    for (i in 0 until Long.SIZE_BYTES) value = (value shl 8) or (this[index + i].toLong() and 0xFF)
+    return value
 }
 
 /**

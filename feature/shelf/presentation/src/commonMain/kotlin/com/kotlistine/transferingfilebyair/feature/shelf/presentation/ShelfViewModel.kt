@@ -2,10 +2,14 @@ package com.kotlistine.transferingfilebyair.feature.shelf.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kotlistine.transferingfilebyair.core.domain.shelf.FileKind
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.domain.util.onFailure
+import com.kotlistine.transferingfilebyair.core.media.VideoEngine
+import com.kotlistine.transferingfilebyair.core.media.VideoEngineEvent
+import com.kotlistine.transferingfilebyair.core.media.VideoSource
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ApproachRangeMm
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
@@ -17,15 +21,20 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardPosi
 import com.kotlistine.transferingfilebyair.core.transfer.domain.predictedAhead
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrection
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.PlayingVideoUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.toUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +56,9 @@ private const val RetryCardWidthMm = 40f
 /** How long the incoming card's on-screen smoothing trails its target; prediction runs this much further ahead. */
 private const val SmoothingLeadSeconds = 0.03f
 
+/** How often a lifted card's video reports where it is, so the peer's half stays on the same frame. */
+private const val PlaybackClockMillis = 250L
+
 class ShelfViewModel(
     private val repository: ShelfRepository,
     private val density: ScreenDensity,
@@ -59,6 +71,8 @@ class ShelfViewModel(
     private val transfers: CoroutineScope? = null,
     /** Keeps the app alive while a file moves (a notification on Android). */
     private val keepAlive: TransferKeepAlive = TransferKeepAlive.None,
+    /** Plays videos in their cards; the screen draws its picture. Without one, a tapped video opens in another app. */
+    val videoEngine: VideoEngine? = null,
     private val clock: Clock = Clock.System,
     private val timeZone: TimeZone = TimeZone.currentSystemDefault(),
 ) : ViewModel() {
@@ -88,6 +102,9 @@ class ShelfViewModel(
 
     private var outgoing: OutgoingSlide? = null
     private var incoming: IncomingSlide? = null
+
+    /** The peer's video this device plays along with, while the peer's card is in the air. */
+    private var following: FollowedVideo? = null
     private var viewportWidthPx = 0
     private var roundTripMillis = 0f
 
@@ -110,6 +127,11 @@ class ShelfViewModel(
 
     init {
         if (peer != null) talkTo(peer)
+        videoEngine?.let(::watch)
+    }
+
+    override fun onCleared() {
+        videoEngine?.release()
     }
 
     fun onAction(action: ShelfAction) {
@@ -117,6 +139,8 @@ class ShelfViewModel(
             ShelfAction.OnAddClick, ShelfAction.OnDevicesClick -> Unit
             is ShelfAction.OnFilesPicked -> addFiles(action.uris)
             is ShelfAction.OnOpenClick -> openItem(action.id)
+            is ShelfAction.OnPreviewClick -> onPreviewClick(action.id)
+            ShelfAction.OnScreenHidden -> videoEngine?.pause()
             is ShelfAction.OnRemoveClick -> removeItem(action.id)
             is ShelfAction.OnItemSent -> sendItem(action.id, action.edge)
             is ShelfAction.OnUndoSend -> undoSend(action.id)
@@ -164,7 +188,20 @@ class ShelfViewModel(
                 arrivedFrom = arrivedFrom.toMap(),
             )
         }
+        // Sent, removed or cleared away while playing.
+        val playing = _state.value.playing
+        if (playing != null && !isOnScreen(playing.itemId)) stopVideo()
     }
+
+    /**
+     * A card with [id] is on this screen: on the shelf, waiting for its file, or coming in from the peer. A received
+     * item counts from the moment it is known, before the shelf's own list catches up with it.
+     */
+    private fun isOnScreen(id: String): Boolean =
+        _state.value.items.any { it.id == id } ||
+            arriving.any { it.id == id } ||
+            incoming?.start?.itemId == id ||
+            (id in arrivedFrom && shelfItems.none { it.id == id })
 
     private fun addFiles(uris: List<String>) {
         viewModelScope.launch {
@@ -181,6 +218,55 @@ class ShelfViewModel(
             eventChannel.send(ShelfEvent.OpenFile(uri = item.uri, mimeType = item.mimeType))
         }
     }
+
+    // region A video playing in its card.
+
+    private fun onPreviewClick(id: String) {
+        val item = _state.value.items.firstOrNull { it.id == id } ?: return
+        val engine = videoEngine
+        if (item.kind != FileKind.VIDEO || engine == null) return openItem(id)
+        val playing = _state.value.playing
+        when {
+            playing?.itemId != id -> {
+                // Another video playing stops: the engine plays one at a time.
+                engine.load(VideoSource.Local(item.uri))
+                _state.update { it.copy(playing = PlayingVideoUi(id, isPaused = !engine.playWhenReady.value)) }
+            }
+            playing.isPaused -> engine.play()
+            else -> engine.pause()
+        }
+    }
+
+    private fun watch(engine: VideoEngine) {
+        // The engine can pause by itself (audio focus lost, headphones unplugged), so the card follows it.
+        engine.playWhenReady
+            .onEach { playWhenReady ->
+                _state.update { it.copy(playing = it.playing?.copy(isPaused = !playWhenReady)) }
+            }
+            .launchIn(viewModelScope)
+        engine.events
+            .onEach { event ->
+                when (event) {
+                    VideoEngineEvent.Ended -> stopVideo()
+                    is VideoEngineEvent.Failed -> {
+                        stopVideo()
+                        eventChannel.send(ShelfEvent.ShowError(event.error))
+                    }
+                }
+            }
+            .launchIn(viewModelScope)
+    }
+
+    /** The card goes back to its still picture, and the decoder is freed. */
+    private fun stopVideo() {
+        following?.hold?.cancel()
+        following = null
+        if (_state.value.playing == null) return
+        videoEngine?.release()
+        _state.update { it.copy(playing = null) }
+    }
+
+    // endregion
 
     private fun removeItem(id: String) {
         viewModelScope.launch {
@@ -300,6 +386,7 @@ class ShelfViewModel(
             thumbnail = action.thumbnail,
         )
         val peer = peer
+        val sharesVideo = shareVideo(peer, item)
         viewModelScope.launch {
             // One turn of the send lock: the retry goes out before anything queued after the start, and the outcome
             // is recorded before a commit can be sent.
@@ -311,7 +398,47 @@ class ShelfViewModel(
                 }
                 // Without a start the peer ignores the rest of the slide, so the card can't be handed over.
                 if (result is Result.Failure) slide.startFailed = true
+                // Right behind the start, with the position read as it goes.
+                if (sharesVideo && !slide.startFailed) playbackReport(item.id, offer = true)?.let { peer.transport.send(it) }
             }
+            if (sharesVideo) reportPlayback(peer, slide)
+        }
+    }
+
+    /**
+     * When the lifted card is the video playing here and the link is fast enough, lets the peer read its file, so the
+     * peer's half of the card plays it too.
+     */
+    private fun shareVideo(peer: SlidePeer, item: ShelfItemUi): Boolean {
+        if (videoEngine == null || _state.value.playing?.itemId != item.id) return false
+        val media = peer.media?.takeIf { it.isFast } ?: return false
+        media.share(item.id, item.uri)
+        return true
+    }
+
+    /** Where the video of [id] is now, as an offer (with the lift) or a clock report; null once it stopped. */
+    private fun playbackReport(id: String, offer: Boolean): SlideMessage? {
+        val engine = videoEngine ?: return null
+        val playing = _state.value.playing?.takeIf { it.itemId == id } ?: return null
+        val item = shelfItems.firstOrNull { it.id == id } ?: return null
+        return if (offer) {
+            SlideMessage.PlaybackOffer(id, item.sizeBytes, engine.positionMs, isPlaying = !playing.isPaused)
+        } else {
+            SlideMessage.PlaybackClock(id, engine.positionMs, isPlaying = !playing.isPaused)
+        }
+    }
+
+    /** Reports where the video is a few times a second, for as long as its card is in the air. */
+    private suspend fun reportPlayback(peer: SlidePeer, slide: OutgoingSlide) {
+        while (true) {
+            delay(PlaybackClockMillis)
+            if (outgoing !== slide) return
+            val sent = sendLock.withLock {
+                val report = playbackReport(slide.id, offer = false) ?: return@withLock false
+                peer.transport.send(report)
+                true
+            }
+            if (!sent) return
         }
     }
 
@@ -349,6 +476,8 @@ class ShelfViewModel(
     private fun stopMirroring(id: String) {
         if (outgoing?.id != id) return
         outgoing = null
+        // Back on this shelf: the peer stops reading its video. (A sent card's video stays readable: the peer plays on.)
+        peer?.media?.unshare(id)
         post(SlideMessage.DragCancel(id))
     }
 
@@ -443,8 +572,12 @@ class ShelfViewModel(
             is SlideMessage.DragCancel -> {
                 if (incoming?.start?.itemId != message.itemId) return
                 incoming = null
+                if (_state.value.playing?.itemId == message.itemId) stopVideo()
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(message.itemId))
             }
+            is SlideMessage.PlaybackOffer -> followPeerVideo(peer, message)
+            is SlideMessage.PlaybackClock ->
+                following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to its card by the peer link, which is waiting for the file; line-up swipes are pairing's.
             is SlideMessage.FileOffer, is SlideMessage.SwipeCrossed -> Unit
             is SlideMessage.DragCommit -> {
@@ -455,6 +588,7 @@ class ShelfViewModel(
                 arriving.removeAll { it.id == start.itemId }
                 arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
                 publishItems()
+                takeOverPeerVideo(start.itemId)
                 eventChannel.send(ShelfEvent.PeerCardArrived(message.itemId))
                 // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen
                 // doesn't stop it.
@@ -481,8 +615,10 @@ class ShelfViewModel(
         arriving.removeAll { it.id == start.itemId }
         when (result) {
             is Result.Success -> {
-                // The item takes the arriving card's place in the same update.
+                // The item takes the arriving card's place in the same update, and plays on if its card did.
                 arrivedFrom[result.data] = start.itemId
+                val playing = _state.value.playing
+                if (playing?.itemId == start.itemId) _state.update { it.copy(playing = playing.copy(itemId = result.data)) }
                 publishItems()
             }
             is Result.Failure -> {
@@ -501,6 +637,70 @@ class ShelfViewModel(
         publishItems()
     }
 
+    /**
+     * The peer's lifted card is its playing video: play it here too, read from the peer as it plays, from the frame
+     * the peer is at, muted until the card is let go here.
+     */
+    private fun followPeerVideo(peer: SlidePeer, offer: SlideMessage.PlaybackOffer) {
+        val engine = videoEngine ?: return
+        val media = peer.media ?: return
+        if (incoming?.start?.itemId != offer.itemId) return
+        val now = nowMillis()
+        val follower = PlaybackFollower()
+        follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = now, oneWayMs = oneWayMillis())
+        following = FollowedVideo(offer.itemId, follower)
+        val source = VideoSource.Remote(offer.itemId, offer.sizeBytes) { offset -> media.open(offer.itemId, offset) }
+        engine.load(source, startAtMs = follower.startAt(now) ?: offer.positionMs, playWhenReady = offer.isPlaying)
+        // The peer's speaker plays it while the card is over there.
+        engine.setVolume(0f)
+        _state.update { it.copy(playing = PlayingVideoUi(offer.itemId, isPaused = !offer.isPlaying)) }
+    }
+
+    /** Keeps this half of the card on the frame the peer's half shows. */
+    private fun onPeerClock(video: FollowedVideo, clock: SlideMessage.PlaybackClock) {
+        val engine = videoEngine ?: return
+        val now = nowMillis()
+        video.follower.report(clock.positionMs, clock.isPlaying, receivedAtMs = now, oneWayMs = oneWayMillis())
+        // Holding a frame until the peer gets there: it plays on by itself when the hold ends.
+        if (video.hold?.isActive == true) return
+        if (clock.isPlaying != engine.playWhenReady.value) {
+            if (clock.isPlaying) engine.play() else engine.pause()
+        }
+        // While it buffers its position stands still, which says nothing about how far off it is.
+        if (clock.isPlaying && !engine.isPlaying) return
+        if (clock.isPlaying) video.follower.onPlaying(now)
+        when (val correction = video.follower.correct(engine.positionMs, now)) {
+            is PlaybackCorrection.Seek -> engine.seekTo(correction.positionMs)
+            is PlaybackCorrection.Speed -> engine.setSpeed(correction.speed)
+            is PlaybackCorrection.Hold -> {
+                engine.setSpeed(1f)
+                engine.pause()
+                video.hold = viewModelScope.launch {
+                    delay(correction.durationMs)
+                    if (following === video) engine.play()
+                }
+            }
+            null -> Unit
+        }
+    }
+
+    /** The peer let its card go here: this phone plays the video on, with sound; the peer's has stopped. */
+    private fun takeOverPeerVideo(id: String) {
+        val video = following?.takeIf { it.itemId == id } ?: return
+        following = null
+        video.hold?.cancel()
+        videoEngine?.apply {
+            setSpeed(1f)
+            setVolume(1f)
+            // Cut short a hold: it plays on from the frame it waited on.
+            if (video.follower.isPlaying) play()
+        }
+    }
+
+    private fun nowMillis(): Long = clock.now().toEpochMilliseconds()
+
+    private fun oneWayMillis(): Long = (roundTripMillis / 2f).toLong()
+
     private fun SlideMessage.DragStart.aspectRatio(): Float =
         if (cardHeightMm > 0f) (cardWidthMm / cardHeightMm).coerceIn(0.5f, 2f) else 1f
 
@@ -517,5 +717,10 @@ class ShelfViewModel(
 
     private class IncomingSlide(val start: SlideMessage.DragStart) {
         var lastSeq = -1
+    }
+
+    private class FollowedVideo(val itemId: String, val follower: PlaybackFollower) {
+        /** Waiting on a frame for the peer to get there. */
+        var hold: Job? = null
     }
 }

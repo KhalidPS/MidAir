@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirTheme
+import com.kotlistine.transferingfilebyair.core.media.VideoSurface
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.CardName
 
@@ -43,6 +44,9 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.Card
  * A card from the paired device in its slot while its file comes in: the sender's picture, dimmed, with a ring
  * showing how much has arrived. A tap stops the transfer. Laid out like [ShelfCard], so the item that replaces it
  * once the file is here takes exactly its place.
+ *
+ * A video that came over playing plays on here, read from the peer, with a small ring in the corner instead.
+ * [isVideoActive] is false while the card is still flying in: the flying card shows the video until it lands.
  */
 @Composable
 internal fun ArrivingCard(
@@ -51,8 +55,10 @@ internal fun ArrivingCard(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
     previewModifier: Modifier = Modifier,
+    isVideoActive: Boolean = true,
 ) {
     val progress = animateFloatAsState(item.progress, tween(180, easing = FastOutSlowInEasing))
+    val video = LocalCardVideo.current?.takeIf { it.itemId == item.id }
     Column(modifier) {
         Box(
             modifier = Modifier
@@ -64,14 +70,19 @@ internal fun ArrivingCard(
                 .background(AirColors.SurfaceRaised)
                 .drawWithContent {
                     drawContent()
-                    drawProgressRing(progress.value)
+                    if (video != null) drawCornerRing(progress.value) else drawProgressRing(progress.value)
                 },
             contentAlignment = Alignment.Center,
         ) {
-            if (picture != null) {
-                Image(bitmap = picture, contentDescription = item.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            if (video != null) {
+                VideoSurface(
+                    engine = video.engine,
+                    isActive = isVideoActive,
+                    modifier = Modifier.fillMaxSize(),
+                    placeholder = { ArrivingPicture(picture, item.name) },
+                )
             } else {
-                CardName(item.name)
+                ArrivingPicture(picture, item.name)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -91,6 +102,34 @@ internal fun ArrivingCard(
             )
         }
     }
+}
+
+@Composable
+private fun ArrivingPicture(picture: ImageBitmap?, name: String) {
+    if (picture != null) {
+        Image(bitmap = picture, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    } else {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CardName(name) }
+    }
+}
+
+/** Over a playing video: a small ring in the top corner, so the video stays undimmed. */
+private fun DrawScope.drawCornerRing(progress: Float) {
+    val radius = 9.dp.toPx()
+    val stroke = 2.5.dp.toPx()
+    val inset = 10.dp.toPx() + radius
+    val center = Offset(size.width - inset, inset)
+    drawCircle(AirColors.Background.copy(alpha = 0.45f), radius = radius + stroke * 1.5f, center = center)
+    drawCircle(AirColors.OnSurface.copy(alpha = 0.3f), radius = radius, center = center, style = Stroke(stroke))
+    drawArc(
+        color = AirColors.OnSurface,
+        startAngle = -90f,
+        sweepAngle = 360f * progress,
+        useCenter = false,
+        topLeft = Offset(center.x - radius, center.y - radius),
+        size = Size(radius * 2, radius * 2),
+        style = Stroke(width = stroke, cap = StrokeCap.Round),
+    )
 }
 
 /** A dimmed card with a ring filling clockwise from the top: how much of the file has arrived. */
