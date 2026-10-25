@@ -52,7 +52,7 @@ class PlaybackFollowerTest {
     fun `a video starts well ahead, since reading it from the peer takes a while`() {
         follower.report(positionMs = 1_000, isPlaying = true, receivedAtMs = 0, oneWayMs = 0)
 
-        assertThat(follower.startAt(nowMs = 100)).isEqualTo(2_600)
+        assertThat(follower.startAt(nowMs = 100)).isEqualTo(3_100)
     }
 
     @Test
@@ -88,24 +88,26 @@ class PlaybackFollowerTest {
     fun `speed changes stay within limits nobody notices`() {
         follower.report(positionMs = 1_000, isPlaying = true, receivedAtMs = 0, oneWayMs = 0)
 
-        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 490)).isEqualTo(PlaybackCorrection.Speed(1.245f))
-        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 500)).isEqualTo(PlaybackCorrection.Speed(1.25f))
+        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 990)).isEqualTo(PlaybackCorrection.Speed(1.495f))
+        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 1_000)).isEqualTo(PlaybackCorrection.Speed(1.5f))
+        assertThat(follower.correct(ownPositionMs = 1_290, nowMs = 0)).isEqualTo(PlaybackCorrection.Speed(0.855f))
+        assertThat(follower.correct(ownPositionMs = 1_300, nowMs = 0)).isEqualTo(PlaybackCorrection.Speed(0.85f))
     }
 
     @Test
     fun `far behind it jumps ahead of the peer, never just to it`() {
         follower.report(positionMs = 1_000, isPlaying = true, receivedAtMs = 0, oneWayMs = 0)
 
-        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 1_000)).isEqualTo(PlaybackCorrection.Seek(3_500))
+        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 1_500)).isEqualTo(PlaybackCorrection.Seek(3_500))
     }
 
     @Test
     fun `how far ahead it aims is learnt from how long jumps take`() {
         follower.report(positionMs = 1_000, isPlaying = true, receivedAtMs = 0, oneWayMs = 0)
-        follower.correct(ownPositionMs = 1_000, nowMs = 1_000)
+        follower.correct(ownPositionMs = 1_000, nowMs = 1_500)
 
         // That jump took 400 ms to play again: next time it aims 650 ms ahead.
-        follower.onPlaying(nowMs = 1_400)
+        follower.onPlaying(nowMs = 1_900)
 
         assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 3_000)).isEqualTo(PlaybackCorrection.Seek(4_650))
     }
@@ -113,9 +115,9 @@ class PlaybackFollowerTest {
     @Test
     fun `a slow jump never makes it aim more than a couple of seconds ahead`() {
         follower.report(positionMs = 1_000, isPlaying = true, receivedAtMs = 0, oneWayMs = 0)
-        follower.correct(ownPositionMs = 1_000, nowMs = 1_000)
+        follower.correct(ownPositionMs = 1_000, nowMs = 1_500)
 
-        follower.onPlaying(nowMs = 5_000)
+        follower.onPlaying(nowMs = 5_500)
 
         assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 6_000)).isEqualTo(PlaybackCorrection.Seek(9_000))
     }
@@ -127,17 +129,17 @@ class PlaybackFollowerTest {
 
         follower.onPlaying(nowMs = 5_000)
 
-        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 6_000)).isEqualTo(PlaybackCorrection.Seek(8_500))
+        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 6_000)).isEqualTo(PlaybackCorrection.Seek(8_000))
     }
 
     @Test
     fun `a quick jump aims less far next time, but never too close`() {
         follower.report(positionMs = 1_000, isPlaying = true, receivedAtMs = 0, oneWayMs = 0)
-        follower.correct(ownPositionMs = 1_000, nowMs = 1_000)
+        follower.correct(ownPositionMs = 1_000, nowMs = 1_500)
 
-        follower.onPlaying(nowMs = 1_050)
+        follower.onPlaying(nowMs = 1_550)
 
-        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 2_000)).isEqualTo(PlaybackCorrection.Seek(3_300))
+        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 2_500)).isEqualTo(PlaybackCorrection.Seek(3_800))
     }
 
     @Test
@@ -146,7 +148,7 @@ class PlaybackFollowerTest {
 
         follower.onPlaying(nowMs = 5_000)
 
-        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 1_000)).isEqualTo(PlaybackCorrection.Seek(3_500))
+        assertThat(follower.correct(ownPositionMs = 1_000, nowMs = 1_500)).isEqualTo(PlaybackCorrection.Seek(3_500))
     }
 
     @Test

@@ -7,21 +7,30 @@ import kotlin.math.roundToLong
 private const val ToleranceMs = 25L
 
 /** A little ahead is slowed down; further ahead, it holds its frame until the peer gets there. */
-private const val SlowDownWithinMs = 120L
-
-/** A little behind is sped up (it is muted while following); further behind, it jumps ahead. */
-private const val SpeedUpWithinMs = 500L
-
-/** At the speed limits, a gap closes this fast: 500 ms behind is made up in 2 s at 1.25×. */
-private const val CatchUpWindowMs = 2_000f
-private const val MinSpeed = 0.9f
-private const val MaxSpeed = 1.25f
+private const val SlowDownWithinMs = 300L
 
 /**
- * How far ahead a start (or a jump) aims before anything is known. Then it is learnt from how long jumps really take,
- * and whatever is left over is held: never more than a couple of seconds, which would show as a frozen frame.
+ * Behind, it speeds up; further behind, it jumps ahead. A jump costs a frozen frame (it overshoots, then waits), so
+ * speed does as much as it can: the video is muted while following, so a faster pace has no pitch to give it away.
  */
-private const val InitialLeadMs = 1_500L
+private const val SpeedUpWithinMs = 1_000L
+
+/** At the speed limits, a gap closes this fast: 1 s behind is made up in 2 s at 1.5×. */
+private const val CatchUpWindowMs = 2_000f
+private const val MinSpeed = 0.85f
+private const val MaxSpeed = 1.5f
+
+/**
+ * How far ahead a first load aims. It takes far longer than a jump (the file is opened, its index found): about 1.8 s
+ * on a Redmi Note 8 over Wi-Fi Direct. Arriving early only shows its first frame a little longer.
+ */
+private const val StartLeadMs = 2_000L
+
+/**
+ * How far ahead a jump aims before anything is known. Then it is learnt from how long jumps really take, and whatever
+ * is left over is held: never more than a couple of seconds, which would show as a frozen frame.
+ */
+private const val InitialLeadMs = 1_000L
 private const val MinLeadMs = 300L
 private const val MaxLeadMs = 2_000L
 
@@ -96,7 +105,7 @@ class PlaybackFollower {
     fun startAt(nowMs: Long): Long? {
         val target = targetAt(nowMs) ?: return null
         if (!isPlaying) return target
-        return target + leadMs
+        return target + StartLeadMs
     }
 
     /** This device's video is moving, seen at [nowMs]: if a start or jump was loading, it learns how long that took. */

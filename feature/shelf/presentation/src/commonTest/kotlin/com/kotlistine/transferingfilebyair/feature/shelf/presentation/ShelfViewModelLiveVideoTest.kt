@@ -210,7 +210,7 @@ class ShelfViewModelLiveVideoTest {
         assertThat(source.id).isEqualTo("9")
         assertThat(source.sizeBytes).isEqualTo(24_000_000)
         // Ahead of the reported frame, by the time it takes to start.
-        assertThat(engine.loadedAtMs).isEqualTo(6_500)
+        assertThat(engine.loadedAtMs).isEqualTo(7_000)
         assertThat(engine.currentVolume).isEqualTo(0f)
         assertThat(viewModel.state.value.playing).isEqualTo(PlayingVideoUi("9", isPaused = false))
     }
