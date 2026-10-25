@@ -1,117 +1,110 @@
-# Checkpoint: 2026-10-21 (for 2026-10-22)
+# Checkpoint: 2026-10-25 (for the next session)
 
-**Where we stand:** Phases 0–7 are done and merged into `master`. A file card lifted on one Android phone slides off
-the edge, continues onto the phone next to it, lands in its slot on that phone's shelf and fills its ring while the
-real file arrives. The phones line up with one swipe, remember each other and link up again by themselves. Tested on
-two physical phones: a Redmi Note 10 Pro (Android 13) and an Android 11 phone set to Arabic (right-to-left). The full
-plan and the decisions behind it are in [`PLAN.md`](PLAN.md).
+**Where we stand:** we're on branch `feature/live-video-handoff` (not merged). A video **playing** on one phone keeps
+playing as its card slides onto the phone next to it: both halves of the card show the same moving picture while it
+crosses, the sound moves on the drop, and the video plays on in the received card. Tested on a Redmi Note 10 Pro
+(sender) and a Redmi Note 8 (receiver).
 
-## Start here tomorrow: the Baseline Profile run
+- **How it all works, from zero, and how to debug it:** [`LIVE_VIDEO_GUIDE.md`](LIVE_VIDEO_GUIDE.md). Read this first.
+- **The plan and its phases (LH-0 to LH-5):** [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
+- **The app's overall plan:** [`PLAN.md`](PLAN.md).
 
-Everything is set up (`:baselineprofile` module); it only needs a phone. Use the Redmi (Android 13).
+## Start here next time: LH-4, one transfer
 
-1. Plug the phone in, unlock it, keep the screen on (Developer options → Stay awake helps), and check
-   `adb devices` lists it.
-2. Open the app once and add about a dozen files to the shelf (photos and a video), so there is something to scroll.
-3. Generate the profile:
-   ```bash
-   export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
-   ./gradlew :app:generateBaselineProfile
-   ```
-   It writes `app/src/release/generated/baselineProfiles/baseline-prof.txt` (and `startup-prof.txt`). Commit them
-   on a `chore/` branch.
-4. Measure:
-   ```bash
-   ./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest
-   ```
-   Results are in `baselineprofile/build/outputs/connected_android_test_additional_output/`. Compare
-   `startupWithoutProfile` and `startupWithProfile` (`timeToInitialDisplayMs`), and check `shelfScroll`:
-   `frameDurationCpuMs` P90 under 16.7 ms means 60 fps.
-5. If the shelf janks, profile the slide next (the blur and the glow are the likely costs).
+**The problem.** After the drop, the receiver gets the video twice at once over the same Nearby link: the 1 MB
+pieces the player needs, and the full file as a separate `FILE` transfer. They compete, pieces slow from about 0.2 s
+to 2–3 s each, and the video can stall until the file has arrived. Then the player reloads from the local copy.
 
-The benchmark builds install a release build signed with the debug key; they replace the debug app on the phone, so
-run `./gradlew :app:installDebug` afterwards.
+**The plan.** The receiver builds the file from the pieces:
+1. Keep the pieces the player has read, instead of deleting them (`DrainedPiece` / `PiecedStream` in
+   `core/transfer/nearby/.../NearbyMediaChannel.kt`).
+2. When the player has enough buffered, fetch the missing pieces in the background; the player's requests always
+   go first.
+3. When every piece is in, put the file together, check it against the original (size, then a hash), and add it to
+   the shelf as any received file (`LinkedSlidePeer.receive` → `ReceivedFileStore.keep` → `repository.addFile`).
+4. No second `FILE` transfer, and no reload of the player (which also removes the fragile reload described in the
+   guide, Section 14).
+
+Open questions to settle first:
+- Which side decides it's a "live" transfer, so the sender skips its `FILE` send? (Probably: the receiver answers
+  the `DragCommit` with "I'll fetch it myself" when it is following the video.)
+- What if the link drops mid-way: resume from the pieces kept, or fall back to the `FILE` transfer?
+- Where the pieces live meanwhile (`cacheDir` is fine for a phone video; a 1 GB file needs a free-space check).
+
+## Then
+
+1. **Safety net:** the receiver withdraws an incoming card when the sender goes silent mid-slide, instead of
+   freezing (`docs/reference/freeze.png`). Careful not to drop a card that is still on its way.
+2. **Codec check:** if the receiver can't decode the video, it shows the still card instead of an error.
+3. **Sound cross-fade** on the drop instead of a hard switch.
+4. Film both phones at 240 fps to measure the sync (frames between the halves at a scene cut).
 
 ## Branches
 
 | Branch | Head | State |
 |---|---|---|
-| `master` | `acc2f23` (+ this checkpoint) | Phases 0–7, all merged |
+| `master` | `77af4df` | Phases 0–7, all merged |
+| `feature/live-video-handoff` | this checkpoint | Live video handoff, LH-0 to LH-3 and the LH-5 fallback. Not merged; don't merge without asking |
 
-Older feature branches are fully contained in `master` and can be deleted.
+## Done on this branch
 
-## Done
+| Commit | What |
+|---|---|
+| `0bd1533` | The plan (`LIVE_VIDEO_HANDOFF.md`) |
+| `e01d5e8` | Playing card, `:core:media` (ExoPlayer, `VideoSurface`), offer and clock messages, reading the video from the other phone over Nearby, the follower that keeps both halves in step |
+| `89c7a2c` | What the phones showed about Nearby (in the plan) |
+| `ae56d42` | 3 pieces ahead (first frame 1.8 s instead of ~5 s), home Wi-Fi fallback while Nearby is still on Bluetooth (`LanFileServer`), follower learns its jump lead from jumps only |
+| `ec2a196` | Fix: the video failed ~15 s after the file arrived (the sender had released its read access); the receiver now plays from its own copy. Piece draining on `Dispatchers.IO` |
+| `bca1818` | Sync retune: start 2 s ahead, speed up to 1.5× within 1 s, slow down to 0.85× within 300 ms ahead, first jump 1 s ahead. The user found it a little better on the phones |
+| (the commit with this file) | `LIVE_VIDEO_GUIDE.md` and this checkpoint |
 
-| Phase | What works | Commits |
-|---|---|---|
-| 0. Foundation | KMP + Compose Multiplatform modules, convention plugins, Koin, dark theme, navigation | `90978e2`, `a60c178` |
-| 1. Shelf | Add files (SAF), persistent shelf (Room), live previews (photos, video frames, PDF pages, text), grid | `22acace` |
-| 2. Slide on one phone | Long-press lift, blur behind, drag with tilt, edge glow, send off the edge or spring back, Undo | `0995645` |
-| 3. Twin Simulator | Slide protocol (CBOR, mm geometry, latency prediction), receiver animation and landing, dev-only simulator | `33717d5` |
-| 4. Pairing | Edge-glow screen, hold Connect, 4-digit code confirmed on both phones, bloom on pairing, Nearby link | `4a03bbe` |
-| 5. Real slide between phones | Card mirrored over Nearby, lands on the other phone; the real file is sent and kept in `Downloads/TransferingFileByAir` | `376e7f8`, `4d69d88` |
-| 6a. Transfer progress | Progress ring on the arriving card, tap it to stop the file, Retry on a failed send | `0ab28e6` |
-| 6b. Background transfers | Transfers run in an app-wide scope under a `dataSync` foreground service with a notification | `7d3f984` |
-| 6c. Land in place | A let-go card flies straight into its shelf slot and waits there with its ring; several can arrive at once; light ripples across the screen on arrival; fixed cards drawn off-place on right-to-left phones | `50d75f9` |
-| 7a. Line-up swipe | After pairing (or "Line up" on the paired screen), one finger swipes from one phone onto the other; each learns which edge faces the other, the gap and the height offset | `c765b7b` |
-| 7b. Auto-reconnect | Paired phones remember each other and the line-up, and link up again by themselves while the app is open, after proving they hold the key agreed at pairing; "Unpair" makes both forget | `c64ccf8` |
-| 7c. Flowing glow, reduced motion | Android 13+: the pairing glow is an AGSL shader whose colours flow along the edge; with "Remove animations" on, the glow and the line-up band stand still | `4212e94` |
-| 7d. Baseline Profile setup | Profile generator (open the app, scroll the shelf) and benchmarks (cold start with and without the profile, shelf frame times); the app installs the profile itself | `acc2f23` |
+**Tests:** about 260 unit tests, all passing (`./gradlew testAndroidHostTest`).
 
-**Tests:** 185 unit tests, all passing (`./gradlew testAndroidHostTest`).
+**Review debt:** the live video work was not put through `/verify` (to save usage); each commit was built and
+unit-tested only.
 
-**Tried on the phones and confirmed by the user:** slides between the phones, landing in place (6c), the line-up
-swipe (7a), auto-reconnect (7b). **Not tried yet:** the flowing glow on the Redmi (7c; if it doesn't flow, look for
-a `FlowingGlow` warning in logcat), reduced motion, the Baseline Profile run.
+## Last measurements (Redmi Note 8 receiving, before the retune)
 
-## Still to check on the phones
+| Moment | Time |
+|---|---|
+| Video load → first frame | 1.8 s |
+| Settling into step while in the air | ~2.5 s (one jump, then a 1.25 s freeze; the retune targets this) |
+| Pieces after the drop | 2–3 s each (LH-4 targets this) |
 
-- A 1 GB video, leaving the app and locking the phone mid-way; it should still arrive (Phase 6b).
-- Retry a failed send from the snackbar (Phase 6a).
-- "Remove animations" on (Settings → Accessibility): the pairing glow stays still (Phase 7c).
+The user's overall impression: the delay went from ~14 s to ~5–7 s, then "a little better" after the retune.
 
-## Known limitations
-
-- **Alignment:** until the screens are lined up, any edge leads to the other phone and the gap is assumed to be
-  8 mm. The line-up's gap depends on comparing the two clocks over Nearby, so it can be a few millimetres off; side
-  and height are measured directly.
-- **Reconnect:** only while the app is open on both phones, and only if the phone's name hasn't changed (it is how
-  the remembered phone is spotted before it proves itself). Each phone remembers one other phone.
-- **Pairing needs:** Bluetooth, Wi-Fi and **Location switched on**, plus precise location permission. Android only
-  lets apps find nearby phones while Location is on; the pairing screen says so and offers a button.
-- **Notification permission:** asked together with the Nearby permissions on Android 13+. Without it a transfer
-  still runs, but its notification is hidden.
-- **Ordering:** if a newer incoming file finishes before an older one, their two cards swap places (the shelf is
-  ordered by when files arrived in full).
-- **Release signing:** no release key yet; release builds (and the profile and benchmark builds) use the debug key.
-- **Review debt:** Phases 5–7 were not put through the multi-agent review (to save usage). A targeted review of the
-  transfer and reconnect code would be the one worth doing.
-- **Hardware:** Nearby doesn't work reliably on emulators, so anything about the link needs two real phones.
-
-## After that
-
-### Phase 8: desktop receiver (KMP)
-
-A `jvm()` target, a LAN transport (Ktor sockets + mDNS) next to Nearby, and a Compose Desktop receiver: the video's
-phone → laptop setup. Nearby is Android-only, so the phone needs the LAN transport too, and both must be on the same
-Wi-Fi. Start by reading PLAN.md section 4.1 and the Phase 8 row.
-
-### Later
-
-- TalkBack "Send to…" action (not needed now).
-- The Android-only copy of the app (packages instead of modules, Koin): ask only for the folder location.
-
-## How to run it
+## How to test on two phones
 
 ```bash
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
-./gradlew :app:installDebug          # with each phone plugged in
+./gradlew :app:assembleDebug testAndroidHostTest
+ADB="$LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe"
+"$ADB" devices                                   # Note 10 Pro: b659121b, Note 8: 1411917c
+"$ADB" -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk
+"$ADB" -s <serial> logcat -c                     # before a run
+"$ADB" -s <serial> logcat -d -v time -s AirVideo AirLink AirLan ExoPlayerImplInternal > build/device-logs/runN.txt
 ```
+
+- Both phones need this build (install on each). Both are on the home Wi-Fi.
+- Wait for `Link quality 3` in the log before lifting the card (the link starts on Bluetooth).
+- Check `adb devices` first: `adb -s <serial>` waits forever for a phone that isn't plugged in.
+- What each log line means, and a checklist for reading a run: the guide, Section 12.
+- `share_sample2.mp4` (the reference video, 24 MB) is untracked on purpose: keep it out of git.
+
+## Still open from before this branch
+
+- The Baseline Profile run (`./gradlew :app:generateBaselineProfile`, then
+  `:baselineprofile:connectedBenchmarkReleaseAndroidTest`; details in git history of this file, commit `77af4df`).
+- On the phones: a 1 GB file with the phone locked mid-way (6b), Retry from the snackbar (6a), "Remove animations"
+  (7c).
+- Phase 8, the desktop receiver: see `PLAN.md`.
+
+## How to run the app
 
 On both phones: turn on Bluetooth, Wi-Fi and Location. Open the app, tap the phone icon at the bottom left, and
 allow the permissions. Hold the phones side by side, hold **Connect** on one, confirm the same code on both, then
-swipe one finger across both screens to line them up. Back on the shelf, long-press a file and drag it off the edge
-towards the other phone. From then on, opening the app on both phones links them up again by itself.
+swipe one finger across both screens to line them up. Back on the shelf, tap a video to play it, long-press it and
+drag it off the edge towards the other phone.
 
-Developer tool: the Twin Simulator (two fake phones on one screen) has no launcher icon. Open it with
+Developer tool: the Twin Simulator has no launcher icon. Open it with
 `adb shell am start -n com.kotlistine.transferingfilebyair/.SimulatorActivity`.

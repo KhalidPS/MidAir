@@ -2,7 +2,8 @@
 
 A video that is **playing** on one phone is lifted as a card, slid off the edge, and keeps playing on the phone
 next to it. It never pauses or freezes, and no frame repeats or jumps. Branch: `feature/live-video-handoff` (off
-`master`). This document is the whole plan; `docs/PLAN.md` on the working branch points here.
+`master`). This document is the whole plan; `docs/PLAN.md` on the working branch points here. **How it works
+today, step by step, and how to debug it on two phones: `docs/LIVE_VIDEO_GUIDE.md`.**
 
 - **Reference app:** drooop (https://drooop.app/, by InsaneArts), iPhone ↔ Mac. It isn't released yet (as of
   2026-10), so there is no code or technical documentation to look at.
