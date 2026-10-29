@@ -39,6 +39,7 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
     )
     is SlideMessage.PlaybackOffer -> SlideMessageDto.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
     is SlideMessage.PlaybackClock -> SlideMessageDto.PlaybackClock(itemId, positionMs, isPlaying)
+    is SlideMessage.FileRoute -> SlideMessageDto.FileRoute(itemId, route.toDto())
 }
 
 internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
@@ -78,6 +79,7 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
     )
     is SlideMessageDto.PlaybackOffer -> SlideMessage.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
     is SlideMessageDto.PlaybackClock -> SlideMessage.PlaybackClock(itemId, positionMs, isPlaying)
+    is SlideMessageDto.FileRoute -> SlideMessage.FileRoute(itemId, route.toDomain())
 }
 
 private fun ExitEdge.toDto(): ExitEdgeDto = when (this) {
@@ -88,4 +90,18 @@ private fun ExitEdge.toDto(): ExitEdgeDto = when (this) {
 private fun ExitEdgeDto.toDomain(): ExitEdge = when (this) {
     ExitEdgeDto.LEFT -> ExitEdge.LEFT
     ExitEdgeDto.RIGHT -> ExitEdge.RIGHT
+}
+
+private fun SlideMessage.FileRoute.Route.toDto(): FileRouteDto = when (this) {
+    SlideMessage.FileRoute.Route.SEND -> FileRouteDto.SEND
+    SlideMessage.FileRoute.Route.FETCHING -> FileRouteDto.FETCHING
+    SlideMessage.FileRoute.Route.FETCHED -> FileRouteDto.FETCHED
+    SlideMessage.FileRoute.Route.CANCELLED -> FileRouteDto.CANCELLED
+}
+
+private fun FileRouteDto.toDomain(): SlideMessage.FileRoute.Route = when (this) {
+    FileRouteDto.SEND -> SlideMessage.FileRoute.Route.SEND
+    FileRouteDto.FETCHING -> SlideMessage.FileRoute.Route.FETCHING
+    FileRouteDto.FETCHED -> SlideMessage.FileRoute.Route.FETCHED
+    FileRouteDto.CANCELLED -> SlideMessage.FileRoute.Route.CANCELLED
 }

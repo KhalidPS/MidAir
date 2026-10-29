@@ -19,6 +19,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.keeping
 import com.kotlistine.transferingfilebyair.core.transfer.domain.arrival
 import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardPosition
 import com.kotlistine.transferingfilebyair.core.transfer.domain.predictedAhead
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.Delivery
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrection
@@ -294,13 +295,16 @@ class ShelfViewModel(
                 eventChannel.send(ShelfEvent.ShowSent(id = id, name = item.name))
                 return@launch
             }
-            keepAlive.keeping("Sending “${item.name}”") { deliverFile(item) }
+            keepAlive.keeping("Sending “${item.name}”") { deliverFile(item, peerMayFetch = slide?.offeredVideo == true) }
         }
     }
 
-    /** The file follows the card; the item leaves this shelf for good only once the peer has all of it. */
-    private suspend fun deliverFile(item: ShelfItemUi) {
-        val delivered = peer?.send(OutgoingFile(itemId = item.id, uri = item.uri))
+    /**
+     * The file follows the card; the item leaves this shelf for good only once the peer has all of it. When the card
+     * carried its video, the peer may take the file from what it already read ([peerMayFetch]).
+     */
+    private suspend fun deliverFile(item: ShelfItemUi, peerMayFetch: Boolean = false) {
+        val delivered = peer?.send(OutgoingFile(itemId = item.id, uri = item.uri, peerMayFetch = peerMayFetch))
         if (delivered is Result.Failure) {
             undoSend(item.id)
             eventChannel.send(ShelfEvent.ShowSendFailed(id = item.id, name = item.name, error = delivered.error))
@@ -404,7 +408,11 @@ class ShelfViewModel(
                 if (result is Result.Failure) slide.startFailed = true
                 // Right behind the start, with the position read as it goes.
                 if (sharesVideo && !slide.startFailed) {
-                    playbackReport(item.id, offer = true, httpUrl = slide.videoUrl)?.let { peer.transport.send(it) }
+                    playbackReport(item.id, offer = true, httpUrl = slide.videoUrl)?.let { offer ->
+                        // Sent or not, the peer may have it: it then answers how the file goes, and is waited for.
+                        slide.offeredVideo = true
+                        peer.transport.send(offer)
+                    }
                 }
             }
             if (sharesVideo) reportPlayback(peer, slide)
@@ -584,13 +592,18 @@ class ShelfViewModel(
                 if (incoming?.start?.itemId != message.itemId) return
                 incoming = null
                 if (following?.itemId == message.itemId || _state.value.playing?.itemId == message.itemId) stopVideo()
+                // What was read of its video is no longer wanted.
+                peer.media?.forget(message.itemId)
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(message.itemId))
             }
-            is SlideMessage.PlaybackOffer -> followPeerVideo(peer, message)
+            is SlideMessage.PlaybackOffer -> {
+                incoming?.takeIf { it.start.itemId == message.itemId }?.videoOffered = true
+                followPeerVideo(peer, message)
+            }
             is SlideMessage.PlaybackClock ->
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
-            // Matched to its card by the peer link, which is waiting for the file; line-up swipes are pairing's.
-            is SlideMessage.FileOffer, is SlideMessage.SwipeCrossed -> Unit
+            // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
+            is SlideMessage.FileOffer, is SlideMessage.FileRoute, is SlideMessage.SwipeCrossed -> Unit
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null
@@ -599,21 +612,36 @@ class ShelfViewModel(
                 arriving.removeAll { it.id == start.itemId }
                 arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
                 publishItems()
+                val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
+                val delivery = when {
+                    video?.viaLink == true -> Delivery.FETCH
+                    slide.videoOffered -> Delivery.ASK_TO_SEND
+                    else -> Delivery.SENT
+                }
                 takeOverPeerVideo(start.itemId)
                 eventChannel.send(ShelfEvent.PeerCardArrived(message.itemId))
                 // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen
                 // doesn't stop it.
                 transferScope.launch {
-                    keepAlive.keeping("Receiving “${slide.start.name}”") { receive(peer, slide.start) }
+                    keepAlive.keeping("Receiving “${slide.start.name}”") {
+                        // Read over the shared Wi-Fi, the video must move to its own file once that is here.
+                        receive(peer, slide.start, delivery, movesToOwnFile = video != null && !video.viaLink)
+                    }
                 }
             }
         }
     }
 
-    private suspend fun receive(peer: SlidePeer, start: SlideMessage.DragStart) {
+    private suspend fun receive(
+        peer: SlidePeer,
+        start: SlideMessage.DragStart,
+        delivery: Delivery = Delivery.SENT,
+        movesToOwnFile: Boolean = false,
+    ) {
         receivingNames += start.name
         var lastPercent = -1
-        val result = peer.receive(IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes)) { fraction ->
+        val file = IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes, delivery)
+        val result = peer.receive(file) { fraction ->
             // Whole percents are plenty for a ring, and keep the state light on big files.
             val percent = (fraction * 100).toInt()
             if (percent != lastPercent) {
@@ -631,7 +659,8 @@ class ShelfViewModel(
                 val playing = _state.value.playing
                 if (playing?.itemId == start.itemId) {
                     _state.update { it.copy(playing = playing.copy(itemId = result.data)) }
-                    streamedFromPeer = result.data
+                    // Read over the pairing link, it goes on from the kept file by itself (see MediaChannel.settle).
+                    if (movesToOwnFile) streamedFromPeer = result.data
                 }
                 publishItems()
                 playLocalCopy()
@@ -660,6 +689,8 @@ class ShelfViewModel(
         val engine = videoEngine ?: return
         val media = peer.media ?: return
         if (incoming?.start?.itemId != offer.itemId) return
+        // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
+        media.forget(offer.itemId)
         val follower = PlaybackFollower()
         follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = nowMillis(), oneWayMs = oneWayMillis())
         val video = FollowedVideo(offer.itemId, follower)
@@ -671,7 +702,10 @@ class ShelfViewModel(
             val url = if (media.isFast) null else offer.httpUrl?.takeIf { media.canReach(it) }
             if (following !== video) return@launch
             val source = when {
-                media.isFast -> VideoSource.Remote(offer.itemId, offer.sizeBytes) { media.open(offer.itemId, it) }
+                media.isFast -> {
+                    video.viaLink = true
+                    VideoSource.Remote(offer.itemId, offer.sizeBytes) { media.open(offer.itemId, it) }
+                }
                 url != null -> VideoSource.Url(url)
                 else -> {
                     // Neither way can carry it: the card comes over with its picture, as any file.
@@ -734,8 +768,8 @@ class ShelfViewModel(
     }
 
     /**
-     * Moves a received video still read from the peer onto its own file, on the same frame. The peer stops serving it
-     * once it has sent the file: its item goes, and its access to the file with it.
+     * Moves a received video still read from the peer over the shared Wi-Fi onto its own file, on the same frame. The
+     * peer stops serving it once it has sent the file: its item goes, and its access to the file with it.
      */
     private fun playLocalCopy() {
         val id = streamedFromPeer ?: return
@@ -769,15 +803,27 @@ class ShelfViewModel(
 
         /** Where the peer reads this card's video over the shared Wi-Fi, when it is one. */
         var videoUrl: String? = null
+
+        /** Its video was offered to the peer, which then says how the file goes after the commit. */
+        var offeredVideo = false
     }
 
     private class IncomingSlide(val start: SlideMessage.DragStart) {
         var lastSeq = -1
+
+        /** The peer offered its video with this card: it waits to hear how the file goes. */
+        var videoOffered = false
     }
 
     private class FollowedVideo(val itemId: String, val follower: PlaybackFollower) {
         /** Loaded into the engine: until then (finding out which way to read it) nothing is steered. */
         var isLoaded = false
+
+        /**
+         * Read in pieces over the pairing link (not over the shared Wi-Fi): those pieces are kept, so the file comes
+         * from them, and the player goes on from the kept copy without reloading.
+         */
+        var viaLink = false
 
         /** Waiting on a frame for the peer to get there. */
         var hold: Job? = null

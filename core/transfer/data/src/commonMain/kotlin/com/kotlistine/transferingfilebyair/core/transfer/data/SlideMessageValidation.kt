@@ -40,7 +40,9 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
             positionMs >= 0 &&
             httpUrl.let { it == null || (it.startsWith("http://") && it.length <= MaxUrlLength) }
     is SlideMessage.PlaybackClock -> positionMs >= 0
-    is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong -> true
+    is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong,
+    is SlideMessage.FileRoute,
+    -> true
 }
 
 private fun Float.isSize() = isFinite() && this > 0f && this <= MaxDistanceMm

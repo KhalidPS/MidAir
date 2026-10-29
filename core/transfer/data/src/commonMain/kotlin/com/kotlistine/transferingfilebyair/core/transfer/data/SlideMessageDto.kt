@@ -89,7 +89,14 @@ internal sealed interface SlideMessageDto {
         @SerialName("p") val positionMs: Long,
         @SerialName("r") val isPlaying: Boolean,
     ) : SlideMessageDto
+
+    @Serializable
+    @SerialName("route")
+    data class FileRoute(val itemId: String, val route: FileRouteDto) : SlideMessageDto
 }
 
 @Serializable
 internal enum class ExitEdgeDto { LEFT, RIGHT }
+
+@Serializable
+internal enum class FileRouteDto { SEND, FETCHING, FETCHED, CANCELLED }

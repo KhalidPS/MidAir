@@ -16,6 +16,8 @@ class RangeFrameTest {
             LinkFrame.RangeRequest(requestId = Long.MAX_VALUE, offset = 0, length = 1, fileId = "ünïcode"),
             LinkFrame.RangeOpened(requestId = 7, payloadId = -4_611_686_018_427_387_904),
             LinkFrame.RangeRefused(requestId = 1),
+            LinkFrame.DigestRequest(requestId = 8, fileId = "item-42"),
+            LinkFrame.Digest(requestId = 8, sha256 = ByteArray(DigestBytes) { it.toByte() }),
         )
 
         frames.forEach { assertThat(decodeLinkFrame(it.encode())).isEqualTo(it) }
@@ -40,6 +42,17 @@ class RangeFrameTest {
     fun `a range request with an absurdly long file id is dropped`() {
         val long = request.copy(fileId = "x".repeat(MaxFileIdBytes + 1)).encode()
 
+        assertThat(decodeLinkFrame(long)).isNull()
+    }
+
+    @Test
+    fun `a digest request without a file, and a digest of the wrong length, are dropped`() {
+        val noFile = LinkFrame.DigestRequest(requestId = 8, fileId = "x").encode().dropLast(1).toByteArray()
+        val short = LinkFrame.Digest(requestId = 8, sha256 = ByteArray(DigestBytes - 1)).encode()
+        val long = LinkFrame.Digest(requestId = 8, sha256 = ByteArray(DigestBytes + 1)).encode()
+
+        assertThat(decodeLinkFrame(noFile)).isNull()
+        assertThat(decodeLinkFrame(short)).isNull()
         assertThat(decodeLinkFrame(long)).isNull()
     }
 

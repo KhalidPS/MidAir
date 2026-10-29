@@ -30,6 +30,30 @@ interface MediaChannel {
     /** Whether the peer's address [url] (from its [share]) answers from here: both phones are on the same Wi-Fi. */
     suspend fun canReach(url: String): Boolean
 
-    /** Opens the peer's file [fileId] from byte [offset] to its end, over the pairing link. Close it to stop early. */
+    /**
+     * Opens the peer's file [fileId] from byte [offset] to its end, over the pairing link. Close it to stop early.
+     * What it reads is kept, for [fetch]. Once the file is on this phone ([fetch] or [settle]), it reads from there.
+     */
     suspend fun open(fileId: String, offset: Long): Result<ByteStream, DataError.Network>
+
+    /**
+     * Takes in all of the peer's file [fileId] ([sizeBytes] long) over the pairing link: what [open] already read,
+     * and the rest, asked for only while nothing [open]ed is waiting for bytes. Checks it is the peer's file byte for
+     * byte, and returns where it is (a platform file reference, to keep with [settle] or drop with [forget]).
+     * Reports how much is here (0..1) to [onProgress].
+     */
+    suspend fun fetch(
+        fileId: String,
+        sizeBytes: Long,
+        onProgress: (Float) -> Unit = {},
+    ): Result<String, DataError> = Result.Failure(DataError.Network.UNKNOWN)
+
+    /**
+     * The peer's file [fileId] is on this phone for good, at [uri] (a platform file reference): [open] reads it from
+     * there from now on, also for a stream already open, and what was fetched or kept of it is let go.
+     */
+    fun settle(fileId: String, uri: String) = Unit
+
+    /** Lets go of everything kept of the peer's file [fileId]: it is no longer wanted, or is about to be read anew. */
+    fun forget(fileId: String) = Unit
 }

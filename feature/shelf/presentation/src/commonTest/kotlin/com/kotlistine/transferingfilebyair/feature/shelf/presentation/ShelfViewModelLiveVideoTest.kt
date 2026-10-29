@@ -13,10 +13,13 @@ import assertk.assertions.prop
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.media.VideoSource
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.Delivery
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.PlayingVideoUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -93,6 +96,42 @@ class ShelfViewModelLiveVideoTest {
         assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
         viewModel.onAction(ShelfAction.OnSlideReturned("1"))
     }
+
+    @Test
+    fun `a card that carried its video lets the peer say how its file goes`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+        lift("1")
+        viewModel.onAction(ShelfAction.OnSlideMoved(pastRightEdge("1")))
+
+        viewModel.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+
+        assertThat(peer.sentFiles.single().peerMayFetch).isEqualTo(true)
+    }
+
+    @Test
+    fun `a card that didn't carry a video has its file sent as usual`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+        lift("2")
+        viewModel.onAction(ShelfAction.OnSlideMoved(pastRightEdge("2")))
+
+        viewModel.onAction(ShelfAction.OnItemSent("2", ExitEdge.RIGHT))
+
+        assertThat(peer.sentFiles.single().peerMayFetch).isEqualTo(false)
+    }
+
+    /** Card [id] half past the right edge of a 1000 px screen, the side the peer is on. */
+    private fun pastRightEdge(id: String) = SlideFrame(
+        id = id,
+        cardLeftPx = 850f,
+        cardTopPx = 250f,
+        cardRightPx = 1_150f,
+        screenWidthPx = 1_000f,
+        velocityXPxPerS = 900f,
+        velocityYPxPerS = 0f,
+        tiltDegrees = 0f,
+    )
 
     @Test
     fun `a paused video is offered paused`() = runTest {
@@ -379,7 +418,7 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
-    fun `once its file is in, the received video plays on from that file, on the same frame`() = runTest {
+    fun `a video read over the pairing link plays on without a reload once its file is in`() = runTest {
         createViewModel(
             onReceive = {
                 repository.items.update { listOf(item("received-1", name = "Climb.mp4", mimeType = "video/mp4")) + it }
@@ -388,6 +427,68 @@ class ShelfViewModelLiveVideoTest {
         )
         loaded()
         receiveOffer()
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(engine.loaded).isNotNull().isInstanceOf(VideoSource.Remote::class)
+        assertThat(viewModel.state.value.playing).isEqualTo(PlayingVideoUi("received-1", isPaused = false))
+    }
+
+    @Test
+    fun `the file of a video read over the pairing link is taken from what was read`() = runTest {
+        loaded()
+        receiveOffer()
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(peer.received.single().delivery).isEqualTo(Delivery.FETCH)
+    }
+
+    @Test
+    fun `a card whose offered video isn't played here asks for its file to be sent`() = runTest {
+        media.isFast = false
+        media.reachable = false
+        loaded()
+        receiveOffer()
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(peer.received.single().delivery).isEqualTo(Delivery.ASK_TO_SEND)
+    }
+
+    @Test
+    fun `a card without a video has its file sent as usual`() = runTest {
+        loaded()
+        peer.transport.deliver(peerStart)
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(peer.received.single().delivery).isEqualTo(Delivery.SENT)
+    }
+
+    @Test
+    fun `a card the peer takes back lets go of what was read of its video`() = runTest {
+        loaded()
+        receiveOffer()
+
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        // Once as the offer came in (anything older with that id), once as it was withdrawn.
+        assertThat(media.forgotten).containsExactly("9", "9")
+    }
+
+    @Test
+    fun `once its file is in, a video read over the shared Wi-Fi plays on from that file, on the same frame`() = runTest {
+        createViewModel(
+            onReceive = {
+                repository.items.update { listOf(item("received-1", name = "Climb.mp4", mimeType = "video/mp4")) + it }
+                Result.Success("received-1")
+            },
+        )
+        media.isFast = false
+        loaded()
+        peer.transport.deliver(peerStart)
+        peer.transport.deliver(peerOffer.copy(httpUrl = "http://192.168.1.20:40123/v/9?t=ab"))
         engine.positionMs = 12_000
 
         peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))

@@ -33,4 +33,11 @@ class FakeMediaChannel(
         opened += fileId to offset
         return Result.Failure(DataError.Network.DISCONNECTED)
     }
+
+    /** Every file let go of, in order. */
+    val forgotten = mutableListOf<String>()
+
+    override fun forget(fileId: String) {
+        forgotten += fileId
+    }
 }

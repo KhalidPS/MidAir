@@ -63,7 +63,7 @@ class SlideMessageCodecTest {
             SlideMessage.PlaybackOffer("7", sizeBytes = 24_000_000_000, positionMs = 61_250, isPlaying = true),
             SlideMessage.PlaybackOffer("7", 24_000, 0, isPlaying = false, httpUrl = "http://192.168.1.20:40123/v/7?t=ab"),
             SlideMessage.PlaybackClock("7", positionMs = 61_500, isPlaying = false),
-        )
+        ) + SlideMessage.FileRoute.Route.entries.map { SlideMessage.FileRoute("7", it) }
 
         messages.forEach { assertThat(roundTrip(it)).isEqualTo(it) }
     }

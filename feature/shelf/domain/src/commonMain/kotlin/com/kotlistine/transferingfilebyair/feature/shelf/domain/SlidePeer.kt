@@ -35,7 +35,15 @@ interface SlidePeer {
 }
 
 /** A file this device is handing over: the shelf item and the reference to its bytes. */
-data class OutgoingFile(val itemId: String, val uri: String)
+data class OutgoingFile(
+    val itemId: String,
+    val uri: String,
+    /**
+     * Its card carried its playing video to the peer, which may be reading the file already: the peer says whether
+     * it takes the file from what it reads, or wants it sent.
+     */
+    val peerMayFetch: Boolean = false,
+)
 
 /** A file the peer is handing over, as described when its card was lifted. */
 data class IncomingFile(
@@ -44,4 +52,20 @@ data class IncomingFile(
     val name: String,
     val mimeType: String,
     val sizeBytes: Long,
+    val delivery: Delivery = Delivery.SENT,
 )
+
+/** How a handed-over file gets here. */
+enum class Delivery {
+    /** The peer sends it right after its card, as any file. */
+    SENT,
+
+    /** The peer offered its card's video and waits to hear how the file should go: it is asked to send it. */
+    ASK_TO_SEND,
+
+    /**
+     * This device plays the card's video from the peer's file over the link, so most of the file is here already: it
+     * takes the rest the same way, instead of a second transfer competing with the video. Sent if that fails.
+     */
+    FETCH,
+}

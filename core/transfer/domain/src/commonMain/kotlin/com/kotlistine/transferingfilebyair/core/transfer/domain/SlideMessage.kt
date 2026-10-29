@@ -100,4 +100,25 @@ sealed interface SlideMessage {
 
     /** Where the sender's video is, reported a few times a second while its card is in the air. */
     data class PlaybackClock(val itemId: String, val positionMs: Long, val isPlaying: Boolean) : SlideMessage
+
+    /**
+     * The receiver's answer about the file behind a card whose video it was offered ([PlaybackOffer]): whether the
+     * sender should send it, or the receiver is taking it from the video's pieces it reads anyway, and how that went.
+     * The sender waits for it after the commit instead of sending the file at once.
+     */
+    data class FileRoute(val itemId: String, val route: Route) : SlideMessage {
+        enum class Route {
+            /** Send the file as usual (also after a fetch that failed while the link stayed up). */
+            SEND,
+
+            /** The receiver is fetching it; [FETCHED], [SEND] or [CANCELLED] follows. */
+            FETCHING,
+
+            /** The receiver has all of it, checked against the sender's, and on its shelf: the send is done. */
+            FETCHED,
+
+            /** The receiver's user stopped it. */
+            CANCELLED,
+        }
+    }
 }

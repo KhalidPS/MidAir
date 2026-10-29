@@ -8,6 +8,9 @@ internal const val NonceBytes = 16
 internal const val KeyBytes = 32
 internal const val ProofBytes = 32
 
+/** A SHA-256 digest. */
+internal const val DigestBytes = 32
+
 /** A shared file's id is chosen by the sharing app; anything longer is not one. */
 internal const val MaxFileIdBytes = 256
 
@@ -47,8 +50,22 @@ internal sealed interface LinkFrame {
     /** The range asked for as [requestId] is on its way as the stream payload [payloadId]. */
     data class RangeOpened(val requestId: Long, val payloadId: Long) : LinkFrame
 
-    /** The range can't be sent (the file isn't shared, or can't be read). */
+    /** The range (or digest) can't be sent (the file isn't shared, or can't be read). */
     data class RangeRefused(val requestId: Long) : LinkFrame
+
+    /**
+     * Asks for the SHA-256 of the whole shared file [fileId], to check a copy put together from its ranges; answered
+     * by [Digest] or [RangeRefused].
+     */
+    data class DigestRequest(val requestId: Long, val fileId: String) : LinkFrame
+
+    /** The SHA-256 asked for as [requestId]. */
+    class Digest(val requestId: Long, val sha256: ByteArray) : LinkFrame {
+        override fun equals(other: Any?): Boolean =
+            other is Digest && requestId == other.requestId && sha256.contentEquals(other.sha256)
+
+        override fun hashCode(): Int = 31 * requestId.hashCode() + sha256.contentHashCode()
+    }
 }
 
 internal fun LinkFrame.encode(): ByteArray = when (this) {
@@ -60,6 +77,8 @@ internal fun LinkFrame.encode(): ByteArray = when (this) {
         length.toBytes() + fileId.encodeToByteArray()
     is LinkFrame.RangeOpened -> byteArrayOf(FrameMarker, 6) + requestId.toBytes() + payloadId.toBytes()
     is LinkFrame.RangeRefused -> byteArrayOf(FrameMarker, 7) + requestId.toBytes()
+    is LinkFrame.DigestRequest -> byteArrayOf(FrameMarker, 8) + requestId.toBytes() + fileId.encodeToByteArray()
+    is LinkFrame.Digest -> byteArrayOf(FrameMarker, 9) + requestId.toBytes() + sha256
 }
 
 /** Whether [bytes] are a link frame (and not a slide message). */
@@ -96,6 +115,16 @@ internal fun decodeLinkFrame(bytes: ByteArray): LinkFrame? {
             null
         }
         7 -> if (body.size == Long.SIZE_BYTES) LinkFrame.RangeRefused(body.longAt(0)) else null
+        8 -> if (body.size - Long.SIZE_BYTES in 1..MaxFileIdBytes) {
+            LinkFrame.DigestRequest(body.longAt(0), body.copyOfRange(Long.SIZE_BYTES, body.size).decodeToString())
+        } else {
+            null
+        }
+        9 -> if (body.size == Long.SIZE_BYTES + DigestBytes) {
+            LinkFrame.Digest(body.longAt(0), body.copyOfRange(Long.SIZE_BYTES, body.size))
+        } else {
+            null
+        }
         else -> null
     }
 }

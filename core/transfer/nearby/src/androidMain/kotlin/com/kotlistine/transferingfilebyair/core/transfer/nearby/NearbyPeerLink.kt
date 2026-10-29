@@ -295,7 +295,9 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             }
             LinkFrame.Forget -> memory.forget()
             // The media channel's; routed there before this.
-            is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused -> Unit
+            is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused,
+            is LinkFrame.DigestRequest, is LinkFrame.Digest,
+            -> Unit
         }
     }
 
@@ -514,7 +516,9 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             if (bytes != null && isLinkFrame(bytes)) {
                 when (val frame = decodeLinkFrame(bytes)) {
                     null -> Unit
-                    is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused ->
+                    is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused,
+                    is LinkFrame.DigestRequest, is LinkFrame.Digest,
+                    ->
                         if (isLinked) media.onFrame(frame)
                     else -> onFrame(endpointId, frame)
                 }
