@@ -1,35 +1,32 @@
-# Checkpoint: 2026-10-25 (for the next session)
+# Checkpoint: 2026-10-29 (for the next session)
 
-**Where we stand:** we're on branch `feature/live-video-handoff` (not merged). A video **playing** on one phone keeps
-playing as its card slides onto the phone next to it: both halves of the card show the same moving picture while it
-crosses, the sound moves on the drop, and the video plays on in the received card. Tested on a Redmi Note 10 Pro
-(sender) and a Redmi Note 8 (receiver).
+**Where we stand:** branch `feature/live-video-one-transfer` (stacked on `feature/live-video-handoff`, neither
+merged). LH-4 "one transfer" is **built and unit-tested, not yet tried on the phones**. After the drop, the receiver
+no longer gets the video twice: it completes the file from the pieces it already read to play it, asks only for the
+rest while the player isn't waiting, checks the SHA-256 against the sender's, and plays on from its own copy without
+reloading the player.
 
-- **How it all works, from zero, and how to debug it:** [`LIVE_VIDEO_GUIDE.md`](LIVE_VIDEO_GUIDE.md). Read this first.
+- **What LH-4 changed, why, and what to measure:** [`reports/2026-10-29-live-video-one-transfer-report.md`](reports/2026-10-29-live-video-one-transfer-report.md).
+- **How it all works, from zero, and how to debug it:** [`LIVE_VIDEO_GUIDE.md`](LIVE_VIDEO_GUIDE.md) (updated: 5.10–5.12, 6.7, 11–14).
 - **The plan and its phases (LH-0 to LH-5):** [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
 - **The app's overall plan:** [`PLAN.md`](PLAN.md).
 
-## Start here next time: LH-4, one transfer
+## Start here next time: try LH-4 on the two phones
 
-**The problem.** After the drop, the receiver gets the video twice at once over the same Nearby link: the 1 MB
-pieces the player needs, and the full file as a separate `FILE` transfer. They compete, pieces slow from about 0.2 s
-to 2–3 s each, and the video can stall until the file has arrived. Then the player reloads from the local copy.
+Install the build on both phones (steps below), slide a playing video across, and check the receiver's log for:
 
-**The plan.** The receiver builds the file from the pieces:
-1. Keep the pieces the player has read, instead of deleting them (`DrainedPiece` / `PiecedStream` in
-   `core/transfer/nearby/.../NearbyMediaChannel.kt`).
-2. When the player has enough buffered, fetch the missing pieces in the background; the player's requests always
-   go first.
-3. When every piece is in, put the file together, check it against the original (size, then a hash), and add it to
-   the shelf as any received file (`LinkedSlidePeer.receive` → `ReceivedFileStore.keep` → `repository.addFile`).
-4. No second `FILE` transfer, and no reload of the player (which also removes the fragile reload described in the
-   guide, Section 14).
+1. `Fetched <id> (S bytes, K already here) in N ms`: the file came from the pieces. Note N, and K/S.
+2. `<id> is on this phone for good` then `<id> goes on from this phone's copy`, and **no** new `Load …` line.
+3. `Piece … opened in` times after the drop: they should stay near 0.1–0.5 s (they were 1.7–3.3 s).
+4. On the sender: the item leaves its shelf only after the receiver's `FETCHED`.
+5. Then the failure paths: drag back mid-slide; tap the arriving card to stop it; turn Wi-Fi off on one phone mid-fetch.
 
-Open questions to settle first:
-- Which side decides it's a "live" transfer, so the sender skips its `FILE` send? (Probably: the receiver answers
-  the `DragCommit` with "I'll fetch it myself" when it is following the video.)
-- What if the link drops mid-way: resume from the pieces kept, or fall back to the `FILE` transfer?
-- Where the pieces live meanwhile (`cacheDir` is fine for a phone video; a 1 GB file needs a free-space check).
+Decisions taken in LH-4 (change them if the phones disagree):
+- **The receiver decides.** It answers the drop with `FileRoute`: `FETCHING` → `FETCHED`, or `SEND`. A sender that
+  hears nothing within 5 s sends the file as before (so an older build still works, 5 s slower).
+- **A link that drops mid-fetch fails the transfer** (no resume), as a `FILE` transfer does today. A fetch that fails
+  for any other reason (no room, hash mismatch) falls back to the `FILE` transfer.
+- **Pieces live in `cacheDir/live-ranges`**; a fetch first checks free space (2 × the missing part + 64 MB).
 
 ## Then
 
@@ -44,7 +41,8 @@ Open questions to settle first:
 | Branch | Head | State |
 |---|---|---|
 | `master` | `77af4df` | Phases 0–7, all merged |
-| `feature/live-video-handoff` | this checkpoint | Live video handoff, LH-0 to LH-3 and the LH-5 fallback. Not merged; don't merge without asking |
+| `feature/live-video-handoff` | `08c70f9` | Live video handoff, LH-0 to LH-3 and the LH-5 fallback. Not merged; don't merge without asking |
+| `feature/live-video-one-transfer` | this checkpoint | LH-4, one transfer (stacked on the branch above). Not merged |
 
 ## Done on this branch
 
@@ -56,12 +54,13 @@ Open questions to settle first:
 | `ae56d42` | 3 pieces ahead (first frame 1.8 s instead of ~5 s), home Wi-Fi fallback while Nearby is still on Bluetooth (`LanFileServer`), follower learns its jump lead from jumps only |
 | `ec2a196` | Fix: the video failed ~15 s after the file arrived (the sender had released its read access); the receiver now plays from its own copy. Piece draining on `Dispatchers.IO` |
 | `bca1818` | Sync retune: start 2 s ahead, speed up to 1.5× within 1 s, slow down to 0.85× within 300 ms ahead, first jump 1 s ahead. The user found it a little better on the phones |
-| (the commit with this file) | `LIVE_VIDEO_GUIDE.md` and this checkpoint |
+| `08c70f9` | `LIVE_VIDEO_GUIDE.md` and the previous checkpoint |
+| (on `feature/live-video-one-transfer`) | LH-4: kept pieces, background fetch with SHA-256 check, `FileRoute` handshake, no reload |
 
-**Tests:** about 260 unit tests, all passing (`./gradlew testAndroidHostTest`).
+**Tests:** 285 unit tests, all passing (`./gradlew testAndroidHostTest`), debug APK builds.
 
-**Review debt:** the live video work was not put through `/verify` (to save usage); each commit was built and
-unit-tested only.
+**Review debt:** the live video work, LH-4 included, was not put through `/verify` (to save usage); each commit was
+built and unit-tested only.
 
 ## Last measurements (Redmi Note 8 receiving, before the retune)
 
@@ -69,7 +68,7 @@ unit-tested only.
 |---|---|
 | Video load → first frame | 1.8 s |
 | Settling into step while in the air | ~2.5 s (one jump, then a 1.25 s freeze; the retune targets this) |
-| Pieces after the drop | 2–3 s each (LH-4 targets this) |
+| Pieces after the drop | 2–3 s each (LH-4 targets this; not measured since) |
 
 The user's overall impression: the delay went from ~14 s to ~5–7 s, then "a little better" after the retune.
 

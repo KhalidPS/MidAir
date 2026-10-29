@@ -6,7 +6,8 @@ playback sync. Every step names the file and function that does it, so you can r
 
 - **Plan and phases:** `docs/LIVE_VIDEO_HANDOFF.md` (what we set out to build, and in what order).
 - **This guide:** how it works today, why it is built this way, and how to debug it.
-- **State described:** branch `feature/live-video-handoff`, 2026-10-25 (commit `ec2a196` plus the sync retune).
+- **State described:** branch `feature/live-video-one-transfer` (LH-4, "one transfer"), 2026-10-29, on top of
+  `feature/live-video-handoff`. What LH-4 changed and why: `docs/reports/2026-10-29-live-video-one-transfer-report.md`.
 
 ---
 
@@ -39,7 +40,9 @@ playback sync. Every step names the file and function that does it, so you can r
    the same moving picture**, as if it were one card lying across both phones.
 5. The user lets go past the edge (the **drop**, or **commit**). The card lands on phone B's shelf, the sound moves to
    phone B, and the video keeps playing there.
-6. In the background, the full file is copied to phone B. When it has arrived, phone B's video plays from that copy.
+6. In the background, phone B completes the file from the parts it already read to play the video, and asks for
+   only the rest. Once it is all there (checked against phone A's), the video plays on from that copy, without a
+   restart.
 
 The hard part is step 4: phone B does not have the file yet, but it must already show the right frame.
 
@@ -226,8 +229,9 @@ This section follows one video from the tap on phone A to the end on phone B. Ea
  5.9 let go past the edge
      DragCommit ──────────────────────────────────────────────▶  5.10 sound on, card lands
      its own video stops                                               the video keeps playing
-     FileOffer + FILE payload ────────────────────────────────▶  5.11 the full file arrives
-                                                                       the player moves to the local copy
+     ◀──────────────────────────────── FileRoute(FETCHING) ─────  5.11 "I'll take the file from the pieces"
+ serves the missing pieces and the SHA-256 ◀─▶ requests            fills the gaps, checks the hash,
+     ◀──────────────────────────────── FileRoute(FETCHED) ──────       keeps the file; the player reads it
  5.12 item removed from the shelf
 ```
 
@@ -369,44 +373,60 @@ On `DragCommit` (`onPeerMessage`):
 1. The card gets a slot at the top of the shelf (`arriving`, an `ArrivingItemUi`).
 2. `takeOverPeerVideo(id)`: stops following (`following = null`), cancels any hold, sets **speed 1 and volume 1**,
    and makes sure it is playing. **The sound is now on phone B.**
-3. Starts `receive(peer, start)` in the background, to get the full file.
+3. Decides how the file comes over (`Delivery`, in `:feature:shelf:domain`): **`FETCH`** if it plays the video from
+   pieces over Nearby, **`ASK_TO_SEND`** if the video was offered but isn't read that way (home Wi-Fi, or not loaded
+   yet), **`SENT`** for any other card.
+4. Starts `receive(peer, start, delivery, …)` in the background, to get the full file.
 
 `ArrivingCard` draws the same playing video (it is still the same item id), with a small progress ring in the corner
 showing how much of the file has arrived.
 
-### 5.11 The full file arrives; the player moves to it (phone B)
+### 5.11 The file comes from the pieces already read (phone B), LH-4
 
-Phone A: `LinkedSlidePeer.send` → `NearbyPeerLink.sendFile` sends a `FileOffer(itemId, transferId)` message (so phone B
-knows which incoming file is which card), then the file as a Nearby `FILE` payload.
+Before LH-4, phone A sent the whole file again as a Nearby `FILE` payload right after the drop. That second
+transfer competed with the pieces the player still needed: pieces slowed from ~0.2 s to 2–3 s, the video stalled,
+and phone B had to reload its player onto the received copy. Now, for a card whose video phone B reads over Nearby:
 
-Phone B: `LinkedSlidePeer.receive` waits for that `FileOffer`, then for the file, stores it
-(`AndroidReceivedFileStore`), adds it to the shelf's database, and returns the new item's id.
+1. **Who decides:** phone B. When phone A sent a `PlaybackOffer` with the card, it doesn't send the file at once:
+   `LinkedSlidePeer.send` waits (up to `RouteWait`, 5 s) for phone B's `SlideMessage.FileRoute`.
+2. **Phone B answers `FETCHING`** (`LinkedSlidePeer.fetch`) and calls `MediaChannel.fetch`:
+   - every piece the player read arrived whole and was **kept** (`NearbyMediaChannel.keepPiece`), so a good part of the
+     file is here already;
+   - the missing parts (`missingSpans` in `FileSpans.kt`) are asked for 3 at a time, each round **only once no piece
+     the player waits for is on its way** (`playerPieces`; at most `PlayerFirstMillis`, 2 s, of waiting);
+   - meanwhile phone A hashes its file (`LinkFrame.DigestRequest` → `LinkFrame.Digest`, SHA-256);
+   - the pieces are copied into one file (`assemblyPlan`, `assemble`), hashed on the way, and compared.
+3. **Kept like any received file:** `ReceivedFileStore.keep` copies it to Downloads, then `MediaChannel.settle(id, uri)`
+   tells the channel the file lives there now, then `repository.addFile` puts it on the shelf.
+4. **Phone B answers `FETCHED`.** Only now does phone A's send count as done (5.12).
+5. **The player never reloads.** After `settle`, `NearbyMediaChannel.open` and the open `PiecedStream` read from the
+   kept file (`goOnFromHere`, at the next piece boundary). The same `ExoPlayer`, the same `VideoSource.Remote`.
 
-Back in `ShelfViewModel.receive`, on success:
-1. `arrivedFrom[newId] = cardId`, and if the playing item was the card, `state.playing` moves to the **new id** (the
-   video keeps playing; it is the same player).
-2. `streamedFromPeer = newId`: this video is still being read from phone A.
-3. `playLocalCopy()`: as soon as the new item is in the shelf's list (`shelfItems`), it reloads the player from the
-   local file, **at the same position**:
+`ShelfViewModel.receive` then remaps `state.playing` to the new item id, as before.
 
-   ```kotlin
-   engine.load(VideoSource.Local(item.uri), startAtMs = engine.positionMs, playWhenReady = engine.playWhenReady.value)
-   ```
+**If something goes wrong:**
 
-   It is also called from `observeItems()`, in case the item reaches the list a moment later.
+| What | Phone B | Phone A |
+|---|---|---|
+| The fetch fails, the link is still up (no room, hash mismatch, pieces refused) | Lets go of what it kept (`forget`), answers `SEND`, and takes the file the usual way | Sends the `FILE` as before |
+| The link drops | The receive fails (`DISCONNECTED`), the card is withdrawn | The send fails, the card comes back with Undo |
+| Phone B's user taps the arriving card | `CANCELLED` | The send fails as cancelled, the card comes back |
+| Phone B never answers (an older build) | n/a | After 5 s, sends the `FILE` as before |
 
-**Why this step exists:** see 5.12.
+**Video read over the home Wi-Fi (`VideoSource.Url`):** phone B answers `SEND`, the file comes as a `FILE` payload,
+and `playLocalCopy()` reloads the player onto the received copy at the same position, as before LH-4. That path
+reads over HTTP from phone A's `LanFileServer`, which stops serving once phone A lets go of the file.
 
 ### 5.12 The sender lets go of the file (phone A)
 
-When the file has been delivered, `ShelfViewModel.finishSend` removes the item from phone A's shelf
-(`RoomShelfRepository.removeItem`). That also gives back the app's permission to read the original file
-(`releasePersistableUriPermission`). From then on, phone A **cannot open the file any more**, so every piece request
-gets `RangeRefused`.
+When the file has been delivered (phone B's `FETCHED`, or the end of the `FILE` transfer),
+`ShelfViewModel.finishSend` removes the item from phone A's shelf (`RoomShelfRepository.removeItem`). That also gives
+back the app's permission to read the original file (`releasePersistableUriPermission`). From then on, phone A
+**cannot open the file any more**, so every piece request gets `RangeRefused`.
 
-Before 5.11's `playLocalCopy` existed, phone B was still reading from phone A at this point. Every request was refused,
-ExoPlayer retried for about 15 s, then failed with `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED`. Now phone B no longer
-needs phone A by then.
+Phone B no longer needs phone A by then: with `FETCH` it sent `FETCHED` only after `settle`, so it already reads its
+own copy; on the Wi-Fi path `playLocalCopy` moved the player. (Before `ec2a196`, phone B still read from phone A at
+this point, and ExoPlayer failed after ~15 s with `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED`.)
 
 ### 5.13 If the card is dragged back instead
 
@@ -505,7 +525,8 @@ arrives** (`DrainedPiece`), so Nearby never waits for the player.
 - `read(...)` (called by the player's loader thread) waits on a `Condition` until there are bytes past its
   `position`, then reads them from the file with a `RandomAccessFile`. At the end it returns -1. If the drain failed,
   it throws.
-- `close()` marks it unwanted. Bytes still arriving are read and thrown away (never cancelled!), and the file is
+- `close()` marks it unwanted by the reader. Bytes still arriving are still written (never cancelled!). If the
+  piece arrives whole and its request is known (`claim`), its file is **kept** for LH-4 (6.7); otherwise it is
   deleted when the drain ends.
 - A `ReentrantLock` protects `written` / `isEnded` / `failure`, because the drain and the reader are two threads.
 
@@ -553,7 +574,35 @@ default; Android has no setting for "local addresses only").
 slow (one load took 25 s): the phone has one Wi-Fi radio, which keeps switching between the two networks, and every
 byte crosses the router twice.
 
-### 6.7 Who calls `onFrame`, `onStream`, `onTransferUpdate`
+### 6.7 Keeping pieces and fetching the rest (LH-4)
+
+State in `NearbyMediaChannel`:
+
+| Field | What it holds |
+|---|---|
+| `origins` | Request id → which file and offset a piece is for, until it arrives (then `DrainedPiece.claim`) |
+| `kept` | File id → the pieces of it that arrived whole (`KeptPiece`: a byte span and its temp file) |
+| `local` | File id → where that file is on this phone now (the fetched copy, then the Downloads copy after `settle`) |
+| `digests` | Request id → the SHA-256 awaited from the other phone |
+| `playerPieces` | How many pieces asked for by players haven't fully arrived: a fetch holds back while it's above 0 |
+
+`fetch(fileId, size)`:
+1. Checks there is room: twice the missing part plus `SpareBytes` (the fetched file, then its Downloads copy).
+2. Asks for the digest (`askDigest`) in parallel.
+3. `fillIn`: loops `missingSpans` → up to `FetchPiecesAhead` requests → waits for them to drain. A round that adds
+   nothing counts as fruitless; after `FetchRetries` of those it gives up.
+4. `assemble`: copies each byte once from the kept pieces into `cacheDir/live-ranges/fetched-N`, hashing as it goes.
+5. Compares with the digest. On a match: `local[fileId]` = that file, and the pieces are deleted.
+
+`settle(fileId, uri)` points `local` at the kept Downloads copy and deletes the fetched copy (a player that has it
+open keeps reading: Linux keeps an open file readable after deleting it). `forget(fileId)` drops everything kept of a
+file: on a drag-back, when a new offer arrives with the same id (ids come back once an item is gone), and when a fetch
+fails. Pieces left over from a crash are wiped at the next start (`piecesDir`).
+
+The pure arithmetic (`missingSpans`, `coveredBytes`, `assemblyPlan`) lives in `FileSpans.kt` in `commonMain` and is
+unit tested.
+
+### 6.8 Who calls `onFrame`, `onStream`, `onTransferUpdate`
 
 `NearbyPeerLink.payloads` (the `PayloadCallback`) receives every payload:
 
@@ -779,6 +828,12 @@ None of this is in Nearby's documentation. All of it came from running on a Redm
 | `MinLeadMs` / `MaxLeadMs` | 300 / 2000 ms | `PlaybackFollower.kt` | Limits of the learnt jump lead | |
 | `DiscontinuityMs` | 300 ms | `PlaybackFollower.kt` | A report this far off resets the estimate | |
 | `WindowMs` | 1500 ms | `PlaybackFollower.kt` | Reports older than this are ignored | |
+| `FetchPiecesAhead` | 3 | `NearbyMediaChannel.kt` | Background pieces in flight during a fetch | Faster fetch, more competition with the player / Slower |
+| `PlayerFirstMillis` | 2 s | `NearbyMediaChannel.kt` | Longest a fetch round waits for the player's pieces | Player first for longer / Fetch progresses on slow links |
+| `FetchRetries` | 3 | `NearbyMediaChannel.kt` | Fruitless rounds before a fetch gives up (then the file is sent) | |
+| `DigestTimeoutMillis` | 60 s | `NearbyMediaChannel.kt` | Wait for the other phone's SHA-256 | |
+| `SpareBytes` | 64 MB | `NearbyMediaChannel.kt` | Free space left after a fetch | |
+| `RouteWait` | 5 s | `LinkedSlidePeer.kt` | How long the sender waits for the receiver's `FileRoute` before sending the file | |
 
 ---
 
@@ -831,6 +886,12 @@ connected; check `adb devices` first.
 | `Card messages paused N ms, then DragMove` | The card's message stream stalled (something else held the link) |
 | `Sending X took N ms` | One message took long to send |
 | `Wi-Fi path reachable / not reachable (N ms)` | Result of the home-Wi-Fi check |
+| `Fetched <id> (S bytes, K already here) in N ms` | LH-4: the file was completed from pieces and its hash matched. K = bytes the player had already read |
+| `Fetching <id>: gave up with B bytes missing` | The fetch failed; the file is sent the usual way |
+| `Fetched <id> doesn't match the other phone's (digest …)` | Hash mismatch or no digest; the file is sent the usual way |
+| `<id> is on this phone for good: read from here` | `settle`: new reads come from the kept copy |
+| `<id> goes on from this phone's copy at <offset>` | An open player stream switched to the local copy |
+| `Digest of <id> refused: …` (sender's log) | The sender couldn't hash the file |
 
 **`AirLan`** (`LanFileServer`): `Serving on port N`, `Couldn't start serving`, and why the other phone's address
 doesn't answer.
@@ -845,9 +906,10 @@ doesn't answer.
 2. **Time to first frame:** `Load …` → first `State ready`. About 1.8 s today on a Note 8.
 3. **Sync while in the air:** after `ready`, count `Seek` and `Pause`/`Play` pairs. Ideally only `Speed` lines.
 4. **Card smoothness:** `Card messages paused` lines while pieces flow.
-5. **After the drop:** `Piece … opened in` times grow while the full file transfers.
-6. **File arrival:** a new `Load from this phone at N ms`, where N is where it was playing: the switch to the local
-   copy.
+5. **After the drop:** `Piece … opened in` times should stay short (LH-4: no `FILE` transfer competes). Then
+   `Fetched … in N ms`.
+6. **File arrival:** `… is on this phone for good`, then `… goes on from this phone's copy`. There should be **no**
+   new `Load …` line (that would be the old reload; it still happens on the home-Wi-Fi path).
 7. **Errors:** `Failed:` lines, and `refused` / `no answer` before them.
 
 ---
@@ -859,10 +921,12 @@ All run with `./gradlew testAndroidHostTest`.
 | Test file | What it checks |
 |---|---|
 | `feature/shelf/domain/.../PlaybackFollowerTest.kt` | Position estimate (delays, least-delayed report, pauses, stalls), the bands (speed, hold, seek), speed limits, start and jump leads, learning the lead |
-| `feature/shelf/presentation/.../ShelfViewModelLiveVideoTest.kt` | Offer on lift (playing / paused / not offered when no path), clock reports, choosing Nearby vs Wi-Fi vs nothing, muted start ahead, applying corrections, holds, pause, takeover with sound, cancel, remap to the received item, **moving to the local copy once the file is in**, failure |
+| `feature/shelf/presentation/.../ShelfViewModelLiveVideoTest.kt` | Offer on lift (playing / paused / not offered when no path), clock reports, choosing Nearby vs Wi-Fi vs nothing, muted start ahead, applying corrections, holds, pause, takeover with sound, cancel, remap to the received item, the `Delivery` chosen at the drop, no reload after a fetch, moving to the local copy on the Wi-Fi path, failure |
 | `feature/shelf/presentation/.../ShelfViewModelVideoTest.kt` | Playing a video in its card on one phone |
 | `core/transfer/data/.../SlideMessageCodecTest.kt` | `PlaybackOffer` / `PlaybackClock` round trips and validation |
-| `core/transfer/nearby/.../RangeFrameTest.kt` | Encoding and decoding range frames, rejecting malformed ones |
+| `core/transfer/nearby/.../RangeFrameTest.kt` | Encoding and decoding range and digest frames, rejecting malformed ones |
+| `core/transfer/nearby/.../FileSpansTest.kt` | Missing parts, covered bytes and the assembly plan from kept pieces |
+| `feature/shelf/data/.../LinkedSlidePeerTest.kt` | The `FileRoute` handshake on both sides: fetched, sent, fallback, cancelled, link lost, no answer |
 | `core/transfer/nearby/.../HttpRangeTest.kt` | Parsing `Range` headers |
 | `core/media/.../PlaybackErrorTest.kt` | ExoPlayer error codes → `DataError` |
 
@@ -877,13 +941,12 @@ Not covered by unit tests (needs two phones): `NearbyMediaChannel`, `LanFileServ
 ## 14. Known limits and what's next
 
 **Limits today:**
-- **After the drop, two transfers compete:** the full file (`FILE` payload) and the video pieces share the link,
-  so pieces slow to 2–3 s each and the video may stall until the file arrives.
+- **LH-4 is built but not yet tried on the phones.** Its numbers are estimates until a two-phone run.
+- **The whole file still crosses the link once after the drop**, minus what was played. A long video means a long
+  fetch; it no longer slows the player, but it does keep the link busy.
 - **Card moves pause** (300–440 ms) while pieces flow: one Nearby connection, no priorities.
-- **The switch to the local copy** reloads the player at the same position. The card shows its thumbnail for a
-  moment until the first frame of the reload (the reload starts a new engine generation, see Section 8). It works
-  because the received item's card is composed after the reload; reloading under an already-composed surface
-  would leave that surface without the video.
+- **On the home-Wi-Fi path only,** the switch to the local copy still reloads the player at the same position (the
+  card shows its thumbnail for a moment).
 - **No "sender went silent" safety net:** if phone A disappears mid-slide, phone B's incoming card can stay frozen
   on screen (`docs/reference/freeze.png`).
 - **No codec check:** a video phone B can't decode fails with an error instead of falling back to the still card.
@@ -891,9 +954,7 @@ Not covered by unit tests (needs two phones): `NearbyMediaChannel`, `LanFileServ
 - **Sync is measured by eye and logs only**, not yet filmed at 240 fps.
 
 **Next (see `docs/LIVE_VIDEO_HANDOFF.md`):**
-1. **LH-4, one transfer:** keep the pieces phone B already played, and fetch the rest of the file through the same
-   piece channel when the player is idle, instead of a second full `FILE` transfer. That removes the competition
-   after the drop, and the switch to the local copy.
+1. Try LH-4 on the two phones and measure it (the report lists what to look for).
 2. The safety net for a silent sender.
 3. `PlaybackReady` / `PlaybackUnsupported` replies and a codec check.
 
