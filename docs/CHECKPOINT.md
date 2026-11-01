@@ -14,6 +14,10 @@ playback delay from the measured p95, density correction from the line-up swipe 
 
 ## Start here next time: the one test run on the phones (then C5, tune)
 
+**First (2026-11-01):** the user tried this build and felt it was better, but took no notes. Before any other work,
+remind them to do the run below and note, for each slide: is B's half as even as A's, any lag or overshoot, does the card
+keep its speed at the let-go, are both halves the same size.
+
 1. Install the build on **both** phones, `logcat -c` on both.
 2. **Line up again** (swipe one finger across both screens): the density correction (C3) is measured by the line-up,
    and a line-up from before this build has none. Look for `Lined up: ... peer mm x S` (S near 1; exactly 1 means it
