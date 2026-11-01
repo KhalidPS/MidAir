@@ -11,13 +11,23 @@ reloading the player.
 - **The plan and its phases (LH-0 to LH-5):** [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
 - **The app's overall plan:** [`PLAN.md`](PLAN.md).
 
-## Start here next time: smoother card half (Part A)
+## Start here next time: run C0 (measure) on the two phones
 
 LH-4 worked on the phones (2026-10-29). The user then noticed that **any** card (a photo, a non-playing video)
 crossing from A's edge to B doesn't yet feel like one object across two screens. The plan is
-[`get-smoother-card-half-plan.md`](get-smoother-card-half-plan.md): Part A (card motion, every card type) first,
-starting with **C0, measure**, on a new branch `feature/smooth-card-half`. Part B (the video half) after. Confirm
-the decisions at the end of the plan with the user first.
+[`get-smoother-card-half-plan.md`](get-smoother-card-half-plan.md). The user confirmed (2026-11-01): Part A first
+(image cards included), `atMillis` on `DragMove`, C1's playback delay from the measured p95, density correction from
+the line-up swipe with a ruler screen as fallback.
+
+**C0 is built** on `feature/smooth-card-half` (the measuring only; nothing moves differently yet). To run it:
+1. Install on both phones, `logcat -c`, wait for `Link quality 3`.
+2. Slide a photo across 5 times, slowly and steadily; then 5 times right after linking (still on Bluetooth).
+3. `"$ADB" -s <B> logcat -d -v time -s AirSlide AirLink > build/device-logs/card-baseline.txt` (and the same on A).
+4. On each phone, open the ruler (`adb shell am start -n com.kotlistine.transferingfilebyair/.RulerActivity`) and
+   measure both 50 mm lines.
+5. Optional: film both phones at 240 fps during a steady slide.
+
+Then pick C1's playback delay from the `late p95` values and start C1.
 
 ## Done: LH-4 on the two phones (kept for reference)
 
@@ -50,7 +60,8 @@ Decisions taken in LH-4 (change them if the phones disagree):
 |---|---|---|
 | `master` | `77af4df` | Phases 0–7, all merged |
 | `feature/live-video-handoff` | `08c70f9` | Live video handoff, LH-0 to LH-3 and the LH-5 fallback. Not merged; don't merge without asking |
-| `feature/live-video-one-transfer` | this checkpoint | LH-4, one transfer (stacked on the branch above). Not merged |
+| `feature/live-video-one-transfer` | `aa8b944` | LH-4, one transfer (stacked on the branch above). Not merged |
+| `feature/smooth-card-half` | this checkpoint | Smoother card half, C0 (stacked on the branch above). Not merged |
 
 ## Done on this branch
 

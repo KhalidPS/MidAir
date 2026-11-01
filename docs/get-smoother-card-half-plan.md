@@ -52,6 +52,18 @@ phones. The plan hides the last one with prediction.
 - Film both phones at 240 fps during a steady slide: count frames where B's half stands still or jumps.
 - Save as `build/device-logs/card-baseline.txt` and the video next to it.
 
+**Built (2026-11-01), waiting for a run on the phones:**
+- `DragMove.atMillis`: the sender's clock when the card was there (wire key `a`, 0 from older builds).
+- `AirSlide` log lines, from `NearbyPeerLink` and `SlideMoveTimings`:
+  - on both phones, at the lift: `<id> lifted here|on the peer, link quality Q (3 is Wi-Fi)`;
+  - on B, at the landing or withdrawal: `<id> landed|withdrawn, link quality Q. Moves: N (K out of order), arrival
+    gaps …, sent gaps …, late …, delay …` (each as `p50 / p95 / max ms`).
+  - **arrival gaps** is time between arrivals on B; **sent gaps** is how evenly A sent them; **late** is how much
+    later than the slide's quickest move each one came (independent of the clocks: this is the C1 playback delay to
+    pick); **delay** is the one-way trip, from the clock comparison of the last `Ping`/`Pong`s.
+- Ruler: `adb shell am start -n com.kotlistine.transferingfilebyair/.RulerActivity` draws a 50 mm line across and
+  one down from the reported `xdpi/ydpi`. Measure both on each phone.
+
 ### C1. Play moves back evenly: timestamps, interpolation, prediction (2–3 days)
 
 The technique online games use to show another player moving smoothly.
