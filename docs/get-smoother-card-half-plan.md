@@ -2,11 +2,12 @@
 
 **Goal:** any card (a photo, a PDF, a paused or playing video) sliding from phone A's edge onto phone B should feel
 like **one object across two screens**, as smooth as dragging it on a single phone. Nothing should give away that
-the two halves are drawn by two different devices. Nothing here is built yet.
+the two halves are drawn by two different devices. **Part A (C0 to C4) is built (2026-11-01), not yet tried on the
+phones; Part B is not started.**
 
 - **Part A, one card across two screens:** every card type. Done first: it is what the user feels on every slide.
 - **Part B, the video half:** what is left for a playing video (its picture, not its motion). After Part A.
-- **Branch (when started):** `feature/smooth-card-half`, off `feature/live-video-one-transfer`.
+- **Branch:** `feature/smooth-card-half`, off `feature/live-video-one-transfer`.
 - **Builds on:** the slide protocol (`DragMove` in millimetres, `docs/PLAN.md`), the line-up (clock comparison and
   screen geometry), the live video handoff (`docs/LIVE_VIDEO_GUIDE.md`) and LH-4
   (`docs/reports/2026-10-29-live-video-one-transfer-report.md`).
@@ -83,6 +84,18 @@ The technique online games use to show another player moving smoothly.
   `IncomingSlideState.follow()` only reads it per frame (inside the existing `withFrameNanos` loop, no recomposition).
 - Protocol: `atMillis` with a default for older builds (they then fall back to arrival time, as today).
 
+**Built:** `slide/MovePlayback.kt` (tests: `MovePlaybackTest`), used by `IncomingSlideState.follow()`.
+- The sender stamps each move with when its **frame was drawn** (`SlideFrame.frameTimeNanos` on its own clock), not
+  when the message went out, so the stamps are as even as the frames.
+- No clock comparison is needed: "now" on the sender's clock comes from the slide's quickest move (the smallest
+  received minus sent). The `Ping`/`Pong` round trip only gives the one-way trip to predict away.
+- The delay is the p95 of how late moves come (against the quickest) **plus the time between two moves** (so there is
+  a move on each side of the time shown), 12 to 150 ms, over the last 120 moves. It grows by itself on Bluetooth.
+- The prediction is capped at 200 ms. A gap slows the card over 150 ms. Every change of path (a gap ending, a quicker
+  move, a new delay) is taken up by a correction fading over 80 ms.
+- The view model no longer predicts; it sends where the card was, its speed in this screen's pixels, `atMillis` and
+  the one-way trip.
+
 ### C2. A fast link before the card moves (1 day)
 
 - Show the link's state on the shelf (a subtle mark while it is still on Bluetooth).
@@ -90,6 +103,12 @@ The technique online games use to show another player moving smoothly.
   measured unevenness, so the card stays even, just a little more behind.
 - Check whether the Wi-Fi upgrade can be asked for earlier (Nearby's connection options) and how long it takes on
   the two phones.
+
+**Built:** a dot on the devices icon (amber on Bluetooth, cyan on Wi-Fi; `ShelfState.isLinkSlow` from the new
+`MediaChannel.isFastUpdates`); every other move on Bluetooth (`mirrorMove`; the first move and the last always go);
+the delay grows by itself (C1). **Not changed:** Nearby's `ConnectionType` stays the default (BALANCED).
+`DISRUPTIVE` would upgrade more eagerly but may take the phone off its Wi-Fi network, which the live video's home
+Wi-Fi path needs. The time to upgrade shows in the log (`Link quality 3` after the link comes up).
 
 ### C3. Same millimetres on both phones (1–2 days)
 
@@ -101,12 +120,28 @@ The technique online games use to show another player moving smoothly.
   noisy.
 - Tests: the correction from two crossings; a card's size in px on B with and without it.
 
+**Built:** `SlideLink.peerMmScale` (my crossing speed divided by the peer's), computed in `lineUp` and applied to
+everything the peer measured (its crossing too, so the gap and offset are in this phone's millimetres), stored in
+`PeerMemory`, and applied by the receiver (`incomingCardPosition`, card size, speeds). Used only when both crossings
+are over 40 mm/s and within 10 % of each other; otherwise 1. Logged as `Lined up: ... peer mm x S`. The ruler screen
+in settings is **not built**: only if the swipe estimate turns out too noisy (compare with `RulerActivity`).
+
 ### C4. One motion through the let-go (1–2 days)
 
 - At the let-go, both phones run **the same fling** in millimetres: the same starting velocity (sent in `DragCommit`
   already), the same decay or spring, the same duration. A's exit and B's arrival become one curve cut at the edge.
 - B's landing into its shelf slot starts from that motion (velocity carried into the spring), not from rest.
 - Tests: A's exit and B's arrival positions agree at the edge for the same commit.
+
+**Built, differently from the bullets above:** rather than both phones running the same fling, the streamed moves
+already carry A's exit, so A's exit was made steady and B carries what it shows into its landing.
+- A (`SlideState.flyOut`): the sent card leaves at a steady speed (its release speed, at least 1 400 dp/s; sideways
+  drift dies out over 80 ms) until it is fully off screen (10 % of its width + 16 dp), then the commit goes. Before,
+  a spring carried it to a stop just past the edge, so B saw it slow down and stop before landing.
+- B (`IncomingSlideState.onArrived`): the landing gets a `momentum` offset that starts at the speed the card was
+  **drawn** moving (or the commit's speed when it never was) and springs back to 0 by the slot, so the card goes on
+  at the same speed across the edge and curves into its slot.
+- No unit test for the curve itself (it is Compose animation); the speeds handed over are tested in the view model.
 
 ### C5. Measure again and tune (half a day)
 

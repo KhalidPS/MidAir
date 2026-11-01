@@ -1,33 +1,36 @@
-# Checkpoint: 2026-10-29 (for the next session)
+# Checkpoint: 2026-11-01 (for the next session)
 
-**Where we stand:** branch `feature/live-video-one-transfer` (stacked on `feature/live-video-handoff`, neither
-merged). LH-4 "one transfer" is **built and unit-tested, not yet tried on the phones**. After the drop, the receiver
-no longer gets the video twice: it completes the file from the pieces it already read to play it, asks only for the
-rest while the player isn't waiting, checks the SHA-256 against the sender's, and plays on from its own copy without
-reloading the player.
+**Where we stand:** branch `feature/smooth-card-half` (stacked on `feature/live-video-one-transfer`, which is stacked
+on `feature/live-video-handoff`; none merged). Part A of the smoother card half, **C0 to C4, is built and
+unit-tested, not yet tried on the phones**. The user asked to build every phase first and test once (2026-11-01).
 
-- **What LH-4 changed, why, and what to measure:** [`reports/2026-10-29-live-video-one-transfer-report.md`](reports/2026-10-29-live-video-one-transfer-report.md).
-- **How it all works, from zero, and how to debug it:** [`LIVE_VIDEO_GUIDE.md`](LIVE_VIDEO_GUIDE.md) (updated: 5.10–5.12, 6.7, 11–14).
-- **The plan and its phases (LH-0 to LH-5):** [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
+- **The plan, and what each phase does in the code:** [`get-smoother-card-half-plan.md`](get-smoother-card-half-plan.md)
+  (each phase has a "Built" note).
+- **Live video (LH-0 to LH-5):** [`LIVE_VIDEO_GUIDE.md`](LIVE_VIDEO_GUIDE.md), [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
 - **The app's overall plan:** [`PLAN.md`](PLAN.md).
 
-## Start here next time: run C0 (measure) on the two phones
+Decisions the user confirmed (2026-11-01): Part A first (image cards included), `atMillis` on `DragMove`, C1's
+playback delay from the measured p95, density correction from the line-up swipe with a ruler screen as fallback.
 
-LH-4 worked on the phones (2026-10-29). The user then noticed that **any** card (a photo, a non-playing video)
-crossing from A's edge to B doesn't yet feel like one object across two screens. The plan is
-[`get-smoother-card-half-plan.md`](get-smoother-card-half-plan.md). The user confirmed (2026-11-01): Part A first
-(image cards included), `atMillis` on `DragMove`, C1's playback delay from the measured p95, density correction from
-the line-up swipe with a ruler screen as fallback.
+## Start here next time: the one test run on the phones (then C5, tune)
 
-**C0 is built** on `feature/smooth-card-half` (the measuring only; nothing moves differently yet). To run it:
-1. Install on both phones, `logcat -c`, wait for `Link quality 3`.
-2. Slide a photo across 5 times, slowly and steadily; then 5 times right after linking (still on Bluetooth).
-3. `"$ADB" -s <B> logcat -d -v time -s AirSlide AirLink > build/device-logs/card-baseline.txt` (and the same on A).
-4. On each phone, open the ruler (`adb shell am start -n com.kotlistine.transferingfilebyair/.RulerActivity`) and
-   measure both 50 mm lines.
-5. Optional: film both phones at 240 fps during a steady slide.
+1. Install the build on **both** phones, `logcat -c` on both.
+2. **Line up again** (swipe one finger across both screens): the density correction (C3) is measured by the line-up,
+   and a line-up from before this build has none. Look for `Lined up: ... peer mm x S` (S near 1; exactly 1 means it
+   wasn't used).
+3. Right after linking (the dot on the devices icon is **amber**: still Bluetooth), slide a photo across 3 times.
+4. When the dot turns **cyan** (`Link quality 3`), slide a photo 5 times slowly and steadily, 3 times fast, and drag 2
+   back mid-way. Then a paused video and a playing one.
+5. Save both logs: `"$ADB" -s <serial> logcat -d -v time -s AirSlide AirLink AirVideo > build/device-logs/card-run1-<A|B>.txt`.
+6. Ruler on each phone (`adb shell am start -n com.kotlistine.transferingfilebyair/.RulerActivity`): measure both
+   50 mm lines.
 
-Then pick C1's playback delay from the `late p95` values and start C1.
+What to feel: B's half moving at the same even pace as A's while the finger moves steadily; no change of pace at the
+let-go (the card keeps its speed across the edge and curves into its slot); both halves the same size. What to read:
+the receiver's `AirSlide` lines (`late p95` is the unevenness the playback hides; `delay` is the trip).
+
+What is **not** built: the ruler screen in settings (only if the swipe estimate turns out too noisy), and Part B (the
+video half: warm player, faster first frame, fresh picture).
 
 ## Done: LH-4 on the two phones (kept for reference)
 
@@ -61,7 +64,7 @@ Decisions taken in LH-4 (change them if the phones disagree):
 | `master` | `77af4df` | Phases 0–7, all merged |
 | `feature/live-video-handoff` | `08c70f9` | Live video handoff, LH-0 to LH-3 and the LH-5 fallback. Not merged; don't merge without asking |
 | `feature/live-video-one-transfer` | `aa8b944` | LH-4, one transfer (stacked on the branch above). Not merged |
-| `feature/smooth-card-half` | this checkpoint | Smoother card half, C0 (stacked on the branch above). Not merged |
+| `feature/smooth-card-half` | this checkpoint | Smoother card half, C0 to C4 (stacked on the branch above). Not merged |
 
 ## Done on this branch
 
@@ -76,7 +79,7 @@ Decisions taken in LH-4 (change them if the phones disagree):
 | `08c70f9` | `LIVE_VIDEO_GUIDE.md` and the previous checkpoint |
 | (on `feature/live-video-one-transfer`) | LH-4: kept pieces, background fetch with SHA-256 check, `FileRoute` handshake, no reload |
 
-**Tests:** 285 unit tests, all passing (`./gradlew testAndroidHostTest`), debug APK builds.
+**Tests:** 312 unit tests, all passing (`./gradlew testAndroidHostTest`), debug APK builds.
 
 **Review debt:** the live video work, LH-4 included, was not put through `/verify` (to save usage); each commit was
 built and unit-tested only.
