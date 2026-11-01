@@ -2,6 +2,7 @@ package com.kotlistine.transferingfilebyair.core.transfer.nearby
 
 import android.content.Context
 import android.util.Base64
+import android.util.Log
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
@@ -20,6 +21,7 @@ private const val PeerKeyKey = "peer_key"
 private const val GapKey = "gap_mm"
 private const val OffsetKey = "offset_mm"
 private const val SideKey = "peer_side"
+private const val ScaleKey = "peer_mm_scale"
 
 /**
  * What this phone remembers between sessions, in its private storage: its own id, the phone it paired with (and the
@@ -43,11 +45,13 @@ internal class PeerMemory(context: Context) : LinkGeometry {
     /** Kept, and remembered with the paired phone (only while there is one). */
     override fun update(link: SlideLink) {
         current.value = link
+        Log.i("AirSlide", "Lined up: gap ${link.gapMm} mm, offset ${link.verticalOffsetMm} mm, peer mm x ${link.peerMmScale}")
         if (peer == null) return
         prefs.edit()
             .putFloat(GapKey, link.gapMm)
             .putFloat(OffsetKey, link.verticalOffsetMm)
             .putString(SideKey, link.peerSide?.name)
+            .putFloat(ScaleKey, link.peerMmScale)
             .apply()
     }
 
@@ -66,7 +70,7 @@ internal class PeerMemory(context: Context) : LinkGeometry {
     fun forget() {
         peer = null
         prefs.edit().remove(PeerIdKey).remove(PeerNameKey).remove(PeerKeyKey).remove(GapKey).remove(OffsetKey)
-            .remove(SideKey).apply()
+            .remove(SideKey).remove(ScaleKey).apply()
         current.value = SlideLink()
     }
 
@@ -83,6 +87,7 @@ internal class PeerMemory(context: Context) : LinkGeometry {
         gapMm = prefs.getFloat(GapKey, SlideLink.DefaultGapMm),
         verticalOffsetMm = prefs.getFloat(OffsetKey, 0f),
         peerSide = prefs.getString(SideKey, null)?.let { side -> ExitEdge.entries.firstOrNull { it.name == side } },
+        peerMmScale = prefs.getFloat(ScaleKey, 1f),
     )
 }
 

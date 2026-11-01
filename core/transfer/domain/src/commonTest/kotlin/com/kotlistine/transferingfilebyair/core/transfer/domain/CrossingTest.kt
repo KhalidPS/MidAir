@@ -101,4 +101,25 @@ class CrossingTest {
         assertThat(density.xMmToPx(25.4f)).isEqualTo(420f)
         assertThat(density.yMmToPx(25.4f)).isEqualTo(400f)
     }
+
+    @Test
+    fun `the peer's millimetres are turned into the receiver's`() {
+        // The peer's millimetres are 10 % longer than the receiver's: its 20 mm are 22 here, its 50 mm card is 55.
+        val scaled = SlideLink(gapMm = 8f, peerMmScale = 1.1f)
+
+        val position = incomingCardPosition(move(penetrationMm = 20f), cardWidthMm = 50f, receiverWidthMm = 70f, scaled)
+
+        assertThat(position.leftMm).isCloseTo(22f - 8f - 55f, 0.001f)
+        assertThat(position.topMm).isCloseTo(33f, 0.001f)
+    }
+
+    @Test
+    fun `the card's speed on the receiver points the way it travels there`() {
+        val fromRight = incomingCardVelocity(move(outwardMmPerS = 100f, alongEdgeMmPerS = -20f), link)
+        val fromLeft = incomingCardVelocity(move(exitEdge = ExitEdge.LEFT, outwardMmPerS = 100f), link)
+
+        assertThat(fromRight).isEqualTo(CardPositionMm(leftMm = 100f, topMm = -20f))
+        assertThat(fromLeft.leftMm).isEqualTo(-100f)
+    }
+
 }

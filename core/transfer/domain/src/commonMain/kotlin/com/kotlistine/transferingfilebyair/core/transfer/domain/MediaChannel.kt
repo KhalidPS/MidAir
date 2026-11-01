@@ -3,6 +3,8 @@ package com.kotlistine.transferingfilebyair.core.transfer.domain
 import com.kotlistine.transferingfilebyair.core.domain.util.ByteStream
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 /**
  * Reads files on the paired device while they are still only there: how a video plays on this phone from the frame
@@ -18,6 +20,9 @@ interface MediaChannel {
      * hotspot or a shared network), not on Bluetooth, which carries the link until it has been upgraded.
      */
     val isFast: Boolean
+
+    /** [isFast] as it changes (the link starts on Bluetooth and moves to Wi-Fi a few seconds later). */
+    val isFastUpdates: Flow<Boolean> get() = flowOf(isFast)
 
     /**
      * Lets the peer read the file at [uri] (a platform file reference) as [fileId], until [unshare]. Returns the

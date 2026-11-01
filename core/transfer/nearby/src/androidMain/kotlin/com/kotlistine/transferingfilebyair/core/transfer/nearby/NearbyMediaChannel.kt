@@ -21,6 +21,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -154,6 +156,9 @@ internal class NearbyMediaChannel(
 
     // Bluetooth is LOW (BLE) or MEDIUM (classic): far too slow for a phone's video. Wi-Fi is HIGH.
     override val isFast: Boolean get() = quality >= BandwidthInfo.Quality.HIGH
+
+    private val fastUpdates = MutableStateFlow(false)
+    override val isFastUpdates: StateFlow<Boolean> = fastUpdates.asStateFlow()
 
     override fun share(fileId: String, uri: String): String? {
         shared[fileId] = uri
@@ -378,6 +383,7 @@ internal class NearbyMediaChannel(
 
     fun onBandwidthChanged(info: BandwidthInfo) {
         quality = info.quality
+        fastUpdates.value = isFast
         Log.i(Tag, "Link quality ${info.quality} (3 is Wi-Fi): live video ${if (isFast) "on" else "off"}")
     }
 
@@ -447,6 +453,7 @@ internal class NearbyMediaChannel(
     /** The link is gone: every open piece fails, and nothing stays shared. */
     fun onLinkDropped() {
         quality = BandwidthInfo.Quality.UNKNOWN
+        fastUpdates.value = false
         requests.values.forEach { it.complete(null) }
         answers.clear()
         early.values.forEach { it.close() }

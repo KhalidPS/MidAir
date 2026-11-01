@@ -13,6 +13,15 @@ private const val MaxOffsetMm = 150f
 /** A finger crossing from one screen to the next takes well under this, even through a wide gap. */
 private const val MaxCrossingMillis = 1_500L
 
+/**
+ * The two crossings of one swipe measure the same finger speed, each in its own phone's millimetres; their ratio says
+ * how far the phones' densities disagree. Beyond this much it is more likely the finger sped up or slowed down.
+ */
+private const val MaxDensityMismatch = 0.1f
+
+/** Slower crossings measure their speed too roughly to compare densities. */
+private const val MinCalibrationMmPerS = 40f
+
 /** Clock comparisons can be a little off; a crossing this much "before" its exit still counts (as the smallest gap). */
 private const val ClockSlackMillis = 60L
 
@@ -58,7 +67,14 @@ fun peerClockAheadMillis(samples: List<ClockSample>): Long? {
 fun lineUp(mine: EdgeCrossing, theirs: EdgeCrossing, peerClockAheadMillis: Long?): SlideLink? {
     // Side by side, the finger leaves one screen and enters the other through the facing (opposite) edge.
     if (mine.leaving == theirs.leaving || mine.edge == theirs.edge) return null
-    val theirsHere = theirs.copy(atMillis = theirs.atMillis - (peerClockAheadMillis ?: 0L))
+    val scale = peerMmScale(mine, theirs)
+    // The peer's crossing on this phone's clock and in its millimetres.
+    val theirsHere = theirs.copy(
+        atMillis = theirs.atMillis - (peerClockAheadMillis ?: 0L),
+        alongEdgeMm = theirs.alongEdgeMm * scale,
+        acrossMmPerS = theirs.acrossMmPerS * scale,
+        alongEdgeMmPerS = theirs.alongEdgeMmPerS * scale,
+    )
     val (from, to) = if (mine.leaving) mine to theirsHere else theirsHere to mine
     val crossingMillis = if (peerClockAheadMillis != null) to.atMillis - from.atMillis else 0L
     if (crossingMillis < -ClockSlackMillis || crossingMillis > MaxCrossingMillis) return null
@@ -76,7 +92,18 @@ fun lineUp(mine: EdgeCrossing, theirs: EdgeCrossing, peerClockAheadMillis: Long?
     if (abs(arrivingMinusLeaving) > MaxOffsetMm) return null
     // The offset turns the peer's heights into this screen's: + for the arriving screen, − for the leaving one.
     val offset = if (mine.leaving) -arrivingMinusLeaving else arrivingMinusLeaving
-    return SlideLink(gapMm = gap, verticalOffsetMm = offset, peerSide = mine.edge)
+    return SlideLink(gapMm = gap, verticalOffsetMm = offset, peerSide = mine.edge, peerMmScale = scale)
+}
+
+/**
+ * How many of this phone's millimetres one of the peer's is, from one swipe's crossing speeds: the finger crosses
+ * both edges at about the same speed, so if both phones reported their density right, both would measure the same.
+ * 1 when the crossings are too slow to tell or disagree by more than a density error could.
+ */
+internal fun peerMmScale(mine: EdgeCrossing, theirs: EdgeCrossing): Float {
+    if (mine.acrossMmPerS < MinCalibrationMmPerS || theirs.acrossMmPerS < MinCalibrationMmPerS) return 1f
+    val scale = mine.acrossMmPerS / theirs.acrossMmPerS
+    return if (abs(scale - 1f) <= MaxDensityMismatch) scale else 1f
 }
 
 /**
