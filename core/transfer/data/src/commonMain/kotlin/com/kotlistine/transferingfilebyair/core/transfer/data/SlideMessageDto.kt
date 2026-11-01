@@ -38,6 +38,7 @@ internal sealed interface SlideMessageDto {
         @SerialName("vp") val outwardMmPerS: Float,
         @SerialName("vy") val alongEdgeMmPerS: Float,
         @SerialName("t") val tiltDegrees: Float,
+        @SerialName("a") val atMillis: Long = 0L,
     ) : SlideMessageDto
 
     @Serializable

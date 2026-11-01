@@ -488,6 +488,7 @@ class ShelfViewModel(
                 outwardMmPerS = slide.outwardMmPerS,
                 alongEdgeMmPerS = slide.alongEdgeMmPerS,
                 tiltDegrees = frame.tiltDegrees,
+                atMillis = nowMillis(),
             ),
         )
     }

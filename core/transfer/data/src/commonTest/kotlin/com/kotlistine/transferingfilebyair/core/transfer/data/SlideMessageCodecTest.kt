@@ -31,6 +31,7 @@ class SlideMessageCodecTest {
         outwardMmPerS = 180f,
         alongEdgeMmPerS = -12f,
         tiltDegrees = 4.5f,
+        atMillis = 1_793_000_000_123,
     )
 
     private fun roundTrip(message: SlideMessage): SlideMessage {
@@ -76,6 +77,16 @@ class SlideMessageCodecTest {
     }
 
     @Test
+    fun `a move from an older build, without a timestamp, reads as untimed`() {
+        // An older build has no timestamp field, which is what an unknown (default) one encodes to.
+        val untimed = (SlideMessageCodec.encode(move.copy(atMillis = 0L)) as Result.Success).data
+        val timed = (SlideMessageCodec.encode(move) as Result.Success).data
+
+        assertThat(untimed.size).isLessThan(timed.size)
+        assertThat(SlideMessageCodec.decode(untimed)).isEqualTo(Result.Success(move.copy(atMillis = 0L)))
+    }
+
+    @Test
     fun `a playback clock is small enough to send several times a second`() {
         val bytes = (SlideMessageCodec.encode(SlideMessage.PlaybackClock("7", 3_600_000, true)) as Result.Success).data
 
@@ -99,6 +110,7 @@ class SlideMessageCodecTest {
             move.copy(penetrationMm = Float.POSITIVE_INFINITY),
             move.copy(alongEdgeMm = 50_000f),
             move.copy(tiltDegrees = Float.NaN),
+            move.copy(atMillis = -1),
             SlideMessage.DragCommit("7", outwardMmPerS = Float.NaN, alongEdgeMmPerS = 0f),
             SlideMessage.PlaybackOffer("7", sizeBytes = 0, positionMs = 0, isPlaying = true),
             SlideMessage.PlaybackOffer("7", sizeBytes = 1_000, positionMs = -5, isPlaying = true),

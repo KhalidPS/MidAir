@@ -23,6 +23,7 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
         outwardMmPerS = outwardMmPerS,
         alongEdgeMmPerS = alongEdgeMmPerS,
         tiltDegrees = tiltDegrees,
+        atMillis = atMillis,
     )
     is SlideMessage.DragCancel -> SlideMessageDto.DragCancel(itemId)
     is SlideMessage.DragCommit -> SlideMessageDto.DragCommit(itemId, outwardMmPerS, alongEdgeMmPerS)
@@ -61,6 +62,7 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
         outwardMmPerS = outwardMmPerS,
         alongEdgeMmPerS = alongEdgeMmPerS,
         tiltDegrees = tiltDegrees,
+        atMillis = atMillis,
     )
     is SlideMessageDto.DragCancel -> SlideMessage.DragCancel(itemId)
     is SlideMessageDto.DragCommit -> SlideMessage.DragCommit(itemId, outwardMmPerS, alongEdgeMmPerS)

@@ -57,6 +57,11 @@ sealed interface SlideMessage {
         /** Speed along the edge, downward positive. */
         val alongEdgeMmPerS: Float,
         val tiltDegrees: Float,
+        /**
+         * When the card was here, by the sender's clock (epoch milliseconds), so the peer can tell how unevenly moves
+         * arrive and play them back at an even pace. 0 when unknown (sent by an older build).
+         */
+        val atMillis: Long = 0L,
     ) : SlideMessage
 
     /** The card was let go short of the edge and sprang back: the peer withdraws whatever it showed. */

@@ -24,11 +24,13 @@ import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.data.SlideMessageCodec
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ClockSample
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
+import com.kotlistine.transferingfilebyair.core.transfer.domain.peerClockAheadMillis
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -52,6 +54,12 @@ private const val ServiceId = "com.kotlistine.transferingfilebyair.slide"
 
 /** A message taking longer than this to go out is logged. */
 private const val SlowSendMillis = 300L
+
+/** How a card's moves reach this phone, one summary per slide (see [SlideMoveTimings]). */
+private const val SlideTag = "AirSlide"
+
+/** Clock comparisons kept for the moves' one-way delay: the quickest of these is used. */
+private const val MaxClockSamples = 8
 
 /** How long a link that came up by itself has to prove it is the remembered phone. */
 private const val ProofTimeoutMillis = 8_000L
@@ -119,6 +127,9 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             val bytes = when (val encoded = SlideMessageCodec.encode(message)) {
                 is Result.Failure -> return encoded
                 is Result.Success -> encoded.data
+            }
+            if (message is SlideMessage.DragStart) {
+                Log.i(SlideTag, "${message.itemId} lifted here, link quality ${media.quality} (3 is Wi-Fi)")
             }
             val startedAt = System.currentTimeMillis()
             val sent = nearbyCall { client.sendPayload(endpoint, Payload.fromBytes(bytes)).await() }
@@ -241,6 +252,8 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         handshake?.timeout?.cancel()
         handshake = null
         abandonTransfers()
+        moveTimings.stop()
+        clockSamples.clear()
         media.onLinkDropped()
         _state.value = LinkState.Idle
         if (wantsReconnect) scope.launch { reconnect() }
@@ -361,6 +374,38 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             -> now
             else -> null
         }
+    }
+
+    private val moveTimings = SlideMoveTimings()
+
+    /** Round trips with the peer's answer time (from any `Ping`), to put its timestamps on this phone's clock. */
+    private val clockSamples = ArrayDeque<ClockSample>()
+
+    /** Logs, per slide of the peer's card, how evenly and how late its moves came in. */
+    private fun measure(message: SlideMessage) {
+        val now = System.currentTimeMillis()
+        when (message) {
+            is SlideMessage.Pong -> if (message.answeredAtMillis > 0L) {
+                clockSamples.addLast(ClockSample(message.pingSentAtMillis, message.answeredAtMillis, now))
+                if (clockSamples.size > MaxClockSamples) clockSamples.removeFirst()
+            }
+            is SlideMessage.DragStart -> {
+                moveTimings.start(message.itemId)
+                Log.i(SlideTag, "${message.itemId} lifted on the peer, link quality ${media.quality} (3 is Wi-Fi)")
+            }
+            is SlideMessage.DragMove ->
+                if (moveTimings.itemId == message.itemId) moveTimings.add(message.seq, now, message.atMillis)
+            is SlideMessage.DragCommit -> endSlide(message.itemId, "landed")
+            is SlideMessage.DragCancel -> endSlide(message.itemId, "withdrawn")
+            else -> Unit
+        }
+    }
+
+    private fun endSlide(itemId: String, how: String) {
+        if (moveTimings.itemId != itemId) return
+        val summary = moveTimings.summary(peerClockAheadMillis(clockSamples))
+        moveTimings.stop()
+        Log.i(SlideTag, "$itemId $how, link quality ${media.quality}. ${summary?.describe() ?: "No moves"}")
     }
 
     override fun cancelTransfer(transferId: Long) {
@@ -534,6 +579,7 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                     if (bytes == null) return
                     val message = (SlideMessageCodec.decode(bytes) as? Result.Success)?.data ?: return
                     noteGap(message)
+                    measure(message)
                     received.tryEmit(message)
                 }
                 // Its bytes are still arriving; it is usable once its transfer reports success.

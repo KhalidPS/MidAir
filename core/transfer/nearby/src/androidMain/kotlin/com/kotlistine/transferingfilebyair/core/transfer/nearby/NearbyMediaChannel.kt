@@ -111,8 +111,10 @@ internal class NearbyMediaChannel(
         }
     }
 
+    /** The link's bandwidth as Nearby reports it (`BandwidthInfo.Quality`; 3 is Wi-Fi). */
     @Volatile
-    private var quality = BandwidthInfo.Quality.UNKNOWN
+    var quality = BandwidthInfo.Quality.UNKNOWN
+        private set
 
     /** Files this phone lets the other read: file id → uri. */
     private val shared = ConcurrentHashMap<String, String>()
