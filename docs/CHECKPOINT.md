@@ -4,6 +4,7 @@
 on `feature/live-video-handoff`; none merged). Part A of the smoother card half, **C0 to C4, is built and
 unit-tested, not yet tried on the phones**. The user asked to build every phase first and test once (2026-11-01).
 
+- **Report (what was built, why, risks, tests, what to check):** [`reports/2026-11-01-smooth-card-half-report.md`](reports/2026-11-01-smooth-card-half-report.md).
 - **The plan, and what each phase does in the code:** [`get-smoother-card-half-plan.md`](get-smoother-card-half-plan.md)
   (each phase has a "Built" note).
 - **Live video (LH-0 to LH-5):** [`LIVE_VIDEO_GUIDE.md`](LIVE_VIDEO_GUIDE.md), [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
