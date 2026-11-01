@@ -11,7 +11,15 @@ reloading the player.
 - **The plan and its phases (LH-0 to LH-5):** [`LIVE_VIDEO_HANDOFF.md`](LIVE_VIDEO_HANDOFF.md).
 - **The app's overall plan:** [`PLAN.md`](PLAN.md).
 
-## Start here next time: try LH-4 on the two phones
+## Start here next time: smoother card half (Part A)
+
+LH-4 worked on the phones (2026-10-29). The user then noticed that **any** card (a photo, a non-playing video)
+crossing from A's edge to B doesn't yet feel like one object across two screens. The plan is
+[`get-smoother-card-half-plan.md`](get-smoother-card-half-plan.md): Part A (card motion, every card type) first,
+starting with **C0, measure**, on a new branch `feature/smooth-card-half`. Part B (the video half) after. Confirm
+the decisions at the end of the plan with the user first.
+
+## Done: LH-4 on the two phones (kept for reference)
 
 Install the build on both phones (steps below), slide a playing video across, and check the receiver's log for:
 
