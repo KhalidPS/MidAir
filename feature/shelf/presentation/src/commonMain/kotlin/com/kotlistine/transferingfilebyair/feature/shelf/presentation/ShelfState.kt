@@ -10,6 +10,8 @@ data class ShelfState(
     val isClearConfirmationVisible: Boolean = false,
     /** A device is linked: lifted cards are mirrored to it, and cards can arrive from it. */
     val isPaired: Boolean = false,
+    /** Paired, but the link still runs on Bluetooth (it moves to Wi-Fi by itself): slides are less smooth meanwhile. */
+    val isLinkSlow: Boolean = false,
     /** Cards from the paired device whose files are still coming in, newest first; shown above the shelf's items. */
     val arriving: List<ArrivingItemUi> = emptyList(),
     /** Received items by the id of the arriving card they took over from, so the card turns into the item in place. */

@@ -142,12 +142,17 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
                 id = event.id,
                 leftPx = event.leftPx,
                 topPx = event.topPx,
+                velocityXPxPerS = event.velocityXPxPerS,
+                velocityYPxPerS = event.velocityYPxPerS,
                 tiltDegrees = event.tiltDegrees,
                 arrival = event.arrival,
                 entryEdge = event.entryEdge,
+                sentAtMillis = event.sentAtMillis,
+                leadMillis = event.leadMillis,
             )
             is ShelfEvent.PeerCardWithdrawn -> incomingSlide.onWithdrawn(event.id)
-            is ShelfEvent.PeerCardArrived -> incomingSlide.onArrived(event.id)
+            is ShelfEvent.PeerCardArrived ->
+                incomingSlide.onArrived(event.id, Offset(event.velocityXPxPerS, event.velocityYPxPerS))
             is ShelfEvent.ShowSendFailed -> scope.launch {
                 snackbarHostState.currentSnackbarData?.dismiss()
                 val result = snackbarHostState.showSnackbar(event.toMessage(), RetryLabel, duration = SnackbarDuration.Long)
@@ -314,6 +319,8 @@ fun ShelfScreen(
 
                 ShelfBottomBar(
                     itemCount = state.items.size,
+                    isPaired = state.isPaired,
+                    isLinkSlow = state.isLinkSlow,
                     onDevicesClick = { onAction(ShelfAction.OnDevicesClick) },
                     onAddClick = { onAction(ShelfAction.OnAddClick) },
                     onClearClick = { onAction(ShelfAction.OnClearClick) },

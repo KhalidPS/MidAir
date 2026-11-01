@@ -1,6 +1,7 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation.components
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.kotlistine.transferingfilebyair.core.designsystem.icons.AirIcons
@@ -39,6 +41,8 @@ import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 @Composable
 internal fun ShelfBottomBar(
     itemCount: Int,
+    isPaired: Boolean,
+    isLinkSlow: Boolean,
     onDevicesClick: () -> Unit,
     onAddClick: () -> Unit,
     onClearClick: () -> Unit,
@@ -55,12 +59,19 @@ internal fun ShelfBottomBar(
     ) {
         // Opens pairing with the device next to this one.
         IconButton(onClick = onDevicesClick, modifier = Modifier.size(44.dp)) {
-            Icon(
-                imageVector = AirIcons.Devices,
-                contentDescription = "Pair with a device nearby",
-                tint = AirColors.OnSurfaceMuted,
-                modifier = Modifier.size(22.dp),
-            )
+            Box {
+                Icon(
+                    imageVector = AirIcons.Devices,
+                    contentDescription = when {
+                        isLinkSlow -> "Paired, still on Bluetooth"
+                        isPaired -> "Paired"
+                        else -> "Pair with a device nearby"
+                    },
+                    tint = if (isPaired) AirColors.OnSurface else AirColors.OnSurfaceMuted,
+                    modifier = Modifier.size(22.dp),
+                )
+                LinkMark(isPaired = isPaired, isSlow = isLinkSlow, modifier = Modifier.align(Alignment.TopEnd))
+            }
         }
         AddButton(onClick = onAddClick)
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -74,6 +85,26 @@ internal fun ShelfBottomBar(
         }
         BarMenu(canClear = itemCount > 0, onClearClick = onClearClick)
     }
+}
+
+/**
+ * A small dot on the devices icon while paired: amber while the link is still on Bluetooth (slides are less smooth
+ * then), cyan once it is on Wi-Fi. It fades between the two.
+ */
+@Composable
+private fun LinkMark(isPaired: Boolean, isSlow: Boolean, modifier: Modifier = Modifier) {
+    val color by animateColorAsState(if (isSlow) AirColors.GlowOrange else AirColors.GlowCyan, label = "linkMark")
+    val shown by animateFloatAsState(if (isPaired) 1f else 0f, Motion.pop(), label = "linkMarkShown")
+    Box(
+        modifier = modifier
+            .size(7.dp)
+            .graphicsLayer {
+                alpha = shown.coerceIn(0f, 1f)
+                scaleX = shown
+                scaleY = shown
+            }
+            .drawBehind { drawCircle(color) },
+    )
 }
 
 @Composable

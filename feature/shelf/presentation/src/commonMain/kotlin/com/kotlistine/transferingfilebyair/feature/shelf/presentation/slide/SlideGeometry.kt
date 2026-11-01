@@ -24,6 +24,8 @@ data class SlideFrame(
     val velocityXPxPerS: Float,
     val velocityYPxPerS: Float,
     val tiltDegrees: Float,
+    /** When this frame was drawn, on the frame clock; 0 when unknown. */
+    val frameTimeNanos: Long = 0L,
 ) {
     /** The edge the card is closer to (by its centre). */
     val nearestEdge: ExitEdge

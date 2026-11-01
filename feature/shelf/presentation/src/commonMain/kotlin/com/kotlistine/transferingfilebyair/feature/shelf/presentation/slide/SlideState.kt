@@ -3,7 +3,6 @@ package com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -49,6 +48,12 @@ private const val TiltDegreesPerThousandDps = 4f
 private const val VelocitySmoothingSeconds = 0.06f
 private const val FlarePeak = 0.45f
 private val MinExitSpeed = 1400.dp
+
+/** A sent card's sideways drift dies out like this, so it leaves along the edge's normal. */
+private const val ExitDriftSeconds = 0.08f
+
+/** How far past the edge a sent card goes before it counts as gone (its shadow and tilted corners too). */
+private val ExitClearance = 16.dp
 
 /**
  * The card picture sent to the peer must fit in one message (32 KB) with room for the rest of it. Busy pictures are
@@ -245,24 +250,40 @@ class SlideState internal constructor(
                     focus.animateTo(0f, tween(500, easing = FastOutSlowInEasing))
                 },
             )
-            // The card keeps its momentum out through the edge. The target is well past the edge, so a critically
-            // damped spring carries the release velocity without ever settling (or bouncing) in view.
-            val start = offset.value
-            val card = cardRect(start, LiftedScale)
-            val clearance = card.width * 0.3f + with(density) { 32.dp.toPx() }
-            val direction = if (edge == ExitEdge.RIGHT) 1f else -1f
-            val distance = if (edge == ExitEdge.RIGHT) width - card.left + clearance else card.right + clearance
-            val speed = max(velocity.x * direction, with(density) { MinExitSpeed.toPx() })
-            offset.animateTo(
-                targetValue = start + Offset(direction * distance, velocity.y * 0.08f),
-                animationSpec = spring(dampingRatio = 1f, stiffness = 420f),
-                initialVelocity = Offset(direction * speed, velocity.y),
-            )
-            // Off screen: the grid closes the gap behind the clearing blur.
+            flyOut(edge, velocity, width)
+            // Off screen: the peer takes the card over at the speed it left here, and the grid closes the gap behind
+            // the clearing blur.
             trackJob?.cancel()
             listener.onSent(item.id, edge)
             light.joinAll()
             reset()
+        }
+    }
+
+    /**
+     * The card keeps its momentum out through [edge] at a steady speed (at least [MinExitSpeed]) until it is fully
+     * off screen. Steady, so the peer, which sees every frame of it, carries on at the same speed: one motion across
+     * the two screens, not an exit and a separate arrival.
+     */
+    private suspend fun flyOut(edge: ExitEdge, velocity: Velocity, width: Float) {
+        val start = offset.value
+        val card = cardRect(start, LiftedScale)
+        val clearance = card.width * 0.1f + with(density) { ExitClearance.toPx() }
+        val direction = if (edge == ExitEdge.RIGHT) 1f else -1f
+        val distance = if (edge == ExitEdge.RIGHT) width - card.left + clearance else card.right + clearance
+        val speed = max(velocity.x * direction, with(density) { MinExitSpeed.toPx() })
+        var travelled = 0f
+        var drift = 0f
+        var driftSpeed = velocity.y
+        var lastNanos = withFrameNanos { it }
+        while (travelled < distance) {
+            val now = withFrameNanos { it }
+            val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
+            lastNanos = now
+            travelled = (travelled + speed * dt).coerceAtMost(distance)
+            drift += driftSpeed * dt
+            driftSpeed *= exp(-dt / ExitDriftSeconds)
+            offset.snapTo(start + Offset(direction * travelled, drift))
         }
     }
 
@@ -334,7 +355,7 @@ class SlideState internal constructor(
             if (report) {
                 val card = currentCard()
                 listener.onMoved(
-                    SlideFrame(id, card.left, card.top, card.right, width, velocity.x, velocity.y, tilt.value),
+                    SlideFrame(id, card.left, card.top, card.right, width, velocity.x, velocity.y, tilt.value, now),
                 )
             }
         }

@@ -18,7 +18,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAliv
 import com.kotlistine.transferingfilebyair.core.transfer.domain.keeping
 import com.kotlistine.transferingfilebyair.core.transfer.domain.arrival
 import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardPosition
-import com.kotlistine.transferingfilebyair.core.transfer.domain.predictedAhead
+import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardVelocity
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.Delivery
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
@@ -38,6 +38,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -53,9 +55,6 @@ import kotlin.time.Clock
 
 /** A card sent again after a failure has no slide to measure; the peer draws it this wide. */
 private const val RetryCardWidthMm = 40f
-
-/** How long the incoming card's on-screen smoothing trails its target; prediction runs this much further ahead. */
-private const val SmoothingLeadSeconds = 0.03f
 
 /** How often a lifted card's video reports where it is, so the peer's half stays on the same frame. */
 private const val PlaybackClockMillis = 250L
@@ -473,6 +472,10 @@ class ShelfViewModel(
         val near = penetrationMm >= -ApproachRangeMm
         // One more move goes out after the card leaves the range, so the peer sees it go.
         if (!near && !slide.isStreaming) return
+        // On Bluetooth every message costs more: every other frame is enough for the peer to play the card back
+        // evenly (it fills in between). The first move and the one after leaving the range always go.
+        slide.frames++
+        if (near && slide.isStreaming && peer.media?.isFast == false && slide.frames % 2 == 0) return
         slide.isStreaming = near
         slide.seq++
         slide.edge = edge
@@ -488,7 +491,7 @@ class ShelfViewModel(
                 outwardMmPerS = slide.outwardMmPerS,
                 alongEdgeMmPerS = slide.alongEdgeMmPerS,
                 tiltDegrees = frame.tiltDegrees,
-                atMillis = nowMillis(),
+                atMillis = slide.stamp(frame),
             ),
         )
     }
@@ -534,8 +537,8 @@ class ShelfViewModel(
     // region Receiving side: show the peer's card arriving, then keep it in its slot while its file comes in.
 
     private fun talkTo(peer: SlidePeer) {
-        peer.isLinked
-            .onEach { linked -> _state.update { it.copy(isPaired = linked) } }
+        combine(peer.isLinked, peer.media?.isFastUpdates ?: flowOf(true)) { linked, fast -> linked to fast }
+            .onEach { (linked, fast) -> _state.update { it.copy(isPaired = linked, isLinkSlow = linked && !fast) } }
             .launchIn(viewModelScope)
         peer.transport.incoming
             .onEach { onPeerMessage(peer, it) }
@@ -560,8 +563,8 @@ class ShelfViewModel(
                         IncomingCardUi(
                             id = message.itemId,
                             name = message.name,
-                            widthPx = density.xMmToPx(message.cardWidthMm),
-                            heightPx = density.yMmToPx(message.cardHeightMm),
+                            widthPx = density.xMmToPx(peer.link.fromPeer(message.cardWidthMm)),
+                            heightPx = density.yMmToPx(peer.link.fromPeer(message.cardHeightMm)),
                             thumbnail = message.thumbnail,
                         ),
                     ),
@@ -570,22 +573,29 @@ class ShelfViewModel(
             is SlideMessage.DragMove -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId && message.seq > it.lastSeq } ?: return
                 slide.lastSeq = message.seq
-                // Draw where the card is by now, not where it was when the message left the peer.
-                val lead = roundTripMillis / 2f / 1000f + SmoothingLeadSeconds
+                slide.exitEdge = message.exitEdge
+                // Where the card was when the move left the peer; the screen plays the moves back evenly and draws
+                // the card where it is by now.
+                val link = peer.link
                 val position = incomingCardPosition(
-                    move = message.predictedAhead(lead),
+                    move = message,
                     cardWidthMm = slide.start.cardWidthMm,
                     receiverWidthMm = density.xPxToMm(viewportWidthPx.toFloat()),
-                    link = peer.link,
+                    link = link,
                 )
+                val velocity = incomingCardVelocity(message, link)
                 eventChannel.send(
                     ShelfEvent.PeerCardMoved(
                         id = message.itemId,
                         leftPx = density.xMmToPx(position.leftMm),
                         topPx = density.yMmToPx(position.topMm),
+                        velocityXPxPerS = density.xMmToPx(velocity.leftMm),
+                        velocityYPxPerS = density.yMmToPx(velocity.topMm),
                         tiltDegrees = message.tiltDegrees,
-                        arrival = message.arrival(peer.link),
+                        arrival = message.arrival(link),
                         entryEdge = message.exitEdge.opposite,
+                        sentAtMillis = message.atMillis,
+                        leadMillis = roundTripMillis / 2f,
                     ),
                 )
             }
@@ -620,7 +630,28 @@ class ShelfViewModel(
                     else -> Delivery.SENT
                 }
                 takeOverPeerVideo(start.itemId)
-                eventChannel.send(ShelfEvent.PeerCardArrived(message.itemId))
+                val letGo = slide.exitEdge?.let { edge ->
+                    incomingCardVelocity(
+                        SlideMessage.DragMove(
+                            itemId = start.itemId,
+                            seq = 0,
+                            exitEdge = edge,
+                            alongEdgeMm = 0f,
+                            penetrationMm = 0f,
+                            outwardMmPerS = message.outwardMmPerS,
+                            alongEdgeMmPerS = message.alongEdgeMmPerS,
+                            tiltDegrees = 0f,
+                        ),
+                        peer.link,
+                    )
+                }
+                eventChannel.send(
+                    ShelfEvent.PeerCardArrived(
+                        id = message.itemId,
+                        velocityXPxPerS = letGo?.let { density.xMmToPx(it.leftMm) } ?: 0f,
+                        velocityYPxPerS = letGo?.let { density.yMmToPx(it.topMm) } ?: 0f,
+                    ),
+                )
                 // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen
                 // doesn't stop it.
                 transferScope.launch {
@@ -794,9 +825,22 @@ class ShelfViewModel(
 
     // endregion
 
-    private class OutgoingSlide(val id: String) {
+    private inner class OutgoingSlide(val id: String) {
         var seq = 0
+        var frames = 0
         var isStreaming = false
+
+        /** This phone's clock when the frame clock read 0, for stamping moves by when their frame was drawn. */
+        private var frameClockOrigin: Long? = null
+
+        /** When [frame] was drawn, by this phone's clock: frame times are evenly spaced, unlike when moves go out. */
+        fun stamp(frame: SlideFrame): Long {
+            val now = nowMillis()
+            if (frame.frameTimeNanos == 0L) return now
+            val frameMillis = frame.frameTimeNanos / 1_000_000
+            val origin = frameClockOrigin ?: (now - frameMillis).also { frameClockOrigin = it }
+            return origin + frameMillis
+        }
         var startFailed = false
         var edge: ExitEdge? = null
         var outwardMmPerS = 0f
@@ -811,6 +855,9 @@ class ShelfViewModel(
 
     private class IncomingSlide(val start: SlideMessage.DragStart) {
         var lastSeq = -1
+
+        /** The edge its moves left the peer through. */
+        var exitEdge: ExitEdge? = null
 
         /** The peer offered its video with this card: it waits to hear how the file goes. */
         var videoOffered = false

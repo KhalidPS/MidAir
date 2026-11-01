@@ -169,6 +169,46 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
+    fun `moves are stamped with when their frame was drawn`() = runTest {
+        loaded()
+        clock.nowMillis = 10_000
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame().copy(frameTimeNanos = 2_000_000_000)))
+        // Handled late, but drawn 8 ms after the first: stamped 8 ms after it.
+        clock.nowMillis = 10_030
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame().copy(frameTimeNanos = 2_008_000_000)))
+
+        val moves = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMove>()
+        assertThat(moves.map { it.atMillis }).isEqualTo(listOf(10_000L, 10_008L))
+    }
+
+    @Test
+    fun `on a slow link every other move is sent, and the last one always`() = runTest {
+        createViewModel(FakePeer(media = FakeMediaChannel(isFast = false)))
+        loaded()
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+
+        repeat(6) { viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -100f))) }
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -500f)))
+
+        val moves = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMove>()
+        assertThat(moves.size).isEqualTo(4)
+        assertThat(moves.last().penetrationMm).isCloseTo(-50f, Tolerance)
+    }
+
+    @Test
+    fun `a shelf paired over a slow link says so`() = runTest {
+        createViewModel(FakePeer(media = FakeMediaChannel(isFast = false)))
+
+        viewModel.state.test {
+            val state = awaitLoaded()
+            assertThat(state.isPaired).isTrue()
+            assertThat(state.isLinkSlow).isTrue()
+        }
+    }
+
+    @Test
     fun `moves toward an edge that doesn't face the peer are not streamed`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
@@ -377,7 +417,7 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
-    fun `the peer's card is drawn ahead by half the measured round trip`() = runTest {
+    fun `the peer's card goes to the screen with its speed, when it was there, and the trip to predict away`() = runTest {
         viewModel.onAction(ShelfAction.OnViewportChanged(widthPx = 700, heightPx = 1500))
         clock.nowMillis = 1_080
         peer.transport.deliver(SlideMessage.Pong(pingSentAtMillis = 1_000)) // 80 ms round trip
@@ -385,11 +425,45 @@ class ShelfViewModelSlideTest {
             peer.transport.deliver(peerStart)
             skipItems(1)
 
-            // 100 mm/s outward, predicted 40 ms (half the round trip) + 30 ms (smoothing) ahead: 7 mm further in.
-            peer.transport.deliver(move(penetrationMm = 20f, outwardMmPerS = 100f))
+            peer.transport.deliver(move(penetrationMm = 20f, outwardMmPerS = 100f).copy(atMillis = 5_000))
 
             val moved = awaitItem() as ShelfEvent.PeerCardMoved
-            assertThat(moved.leftPx).isCloseTo(-110f, Tolerance)
+            // Where it was, not predicted: the screen plays the moves back evenly and predicts from there.
+            assertThat(moved.leftPx).isCloseTo(-180f, Tolerance)
+            // 100 mm/s outward through the peer's right edge is 100 mm/s rightward here.
+            assertThat(moved.velocityXPxPerS).isCloseTo(1_000f, Tolerance)
+            assertThat(moved.sentAtMillis).isEqualTo(5_000L)
+            assertThat(moved.leadMillis).isCloseTo(40f, Tolerance)
+        }
+    }
+
+    @Test
+    fun `the peer's card is drawn in this screen's millimetres`() = runTest {
+        // The peer's millimetres are 10 % longer than this screen's.
+        createViewModel(FakePeer(link = SlideLink(gapMm = 8f, peerSide = ExitEdge.RIGHT, peerMmScale = 1.1f)))
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+
+            val lifted = awaitItem() as ShelfEvent.PeerCardLifted
+            assertThat(lifted.card.widthPx).isCloseTo(330f, Tolerance)
+            assertThat(lifted.card.heightPx).isCloseTo(440f, Tolerance)
+        }
+    }
+
+    @Test
+    fun `a card let go on the peer arrives with its speed`() = runTest {
+        viewModel.onAction(ShelfAction.OnViewportChanged(widthPx = 700, heightPx = 1500))
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+            skipItems(1)
+            peer.transport.deliver(move())
+            skipItems(1)
+            peer.transport.deliver(commit("9"))
+
+            val arrived = awaitItem() as ShelfEvent.PeerCardArrived
+            // 200 mm/s out of the peer's right edge: 2 000 px/s rightward on this screen.
+            assertThat(arrived.velocityXPxPerS).isCloseTo(2_000f, Tolerance)
+            cancelAndIgnoreRemainingEvents()
         }
     }
 
