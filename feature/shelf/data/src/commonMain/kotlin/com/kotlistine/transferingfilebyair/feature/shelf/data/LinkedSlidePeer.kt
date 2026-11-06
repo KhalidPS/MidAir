@@ -10,6 +10,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage.FileRoute.Route
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferProgress
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import com.kotlistine.transferingfilebyair.feature.shelf.data.file.ReceivedFileStore
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.Delivery
@@ -23,9 +24,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -35,11 +36,14 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-/** How long a let-go card waits to hear which incoming file is its own. */
+/** How long a let-go card waits to hear which incoming file is its own (or that it is queued). */
 private val OfferWait = 15.seconds
 
 /**
@@ -48,10 +52,18 @@ private val OfferWait = 15.seconds
  */
 private val RouteWait = 5.seconds
 
+/** A stop for a file that wasn't being received yet is honoured for this long (ids come back once an item is gone). */
+private val CancelKeep = 30.seconds
+
 /**
  * The paired device as the shelf sees it, on a [PeerLink] (Nearby on Android). A handed-over card's file follows
  * it: the sender announces the transfer ([SlideMessage.FileOffer]) and streams the bytes; the receiver matches the
  * transfer to the card, waits for every byte, keeps the file and puts it on its shelf.
+ *
+ * Files go [maxActiveSends] at a time (one by default), like any file-sharing app: several files at once over one
+ * radio each go slower, none finishes early, the receiver's storage takes several writes at once, and every card
+ * message waits behind a chunk of each. A file waiting its turn is announced as queued ([SlideMessage.FileQueued]), so
+ * the receiver keeps waiting for it. Either side can stop one file ([SlideMessage.FileCancelled]), queued or moving.
  *
  * When the card carried its playing video, the receiver has most of the file already (it read it to play it), so it
  * says how the file goes ([SlideMessage.FileRoute]): it takes the rest over the [MediaChannel] itself, so no second
@@ -63,7 +75,8 @@ class LinkedSlidePeer(
     private val store: ReceivedFileStore,
     /** How the screens sit, once lined up in pairing. */
     private val geometry: LinkGeometry,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
+    maxActiveSends: Int = 1,
 ) : SlidePeer {
 
     override val transport: Transport get() = peerLink.transport
@@ -75,20 +88,56 @@ class LinkedSlidePeer(
 
     override val media: MediaChannel? get() = peerLink.media
 
-    /** Transfer ids announced by the peer, by the item id on its shelf. */
-    private val offers = MutableStateFlow<Map<String, Long>>(emptyMap())
+    // region Sending
+
+    /** Turns to send: a file holds one while its bytes move. */
+    private val sendSlots = Semaphore(maxActiveSends)
+
+    /** This device's items whose files are queued or moving, with their transfer id once announced. */
+    private val outgoing = MutableStateFlow<Map<String, Long?>>(emptyMap())
+
+    /** Items whose send was stopped (here, or by the peer); their send fails as cancelled. */
+    private val stoppedSends = MutableStateFlow<Set<String>>(emptySet())
 
     /** The peer's latest word on how the file of each of this device's items goes, by item id. */
     private val routes = MutableStateFlow<Map<String, RouteNote>>(emptyMap())
 
-    /** Items the user stopped before their transfer was known; their receive fails as soon as it is. */
-    private val cancelled = MutableStateFlow<Set<String>>(emptySet())
+    // endregion
+
+    // region Receiving
+
+    /** Transfer ids announced by the peer, by the item id on its shelf. */
+    private val offers = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    /** The peer's items whose files wait for others to go first. */
+    private val queued = MutableStateFlow<Set<String>>(emptySet())
+
+    /** The peer's items whose files won't come (stopped on either side), and when that was heard. */
+    private val cancelled = MutableStateFlow<Map<String, TimeSource.Monotonic.ValueTimeMark>>(emptyMap())
+
+    /** Received files are written to their final place one at a time: storage is slow enough with one writer. */
+    private val saving = Mutex()
+
+    // endregion
 
     init {
         peerLink.transport.incoming
             .onEach { message ->
                 when (message) {
-                    is SlideMessage.FileOffer -> offers.update { it + (message.itemId to message.transferId) }
+                    is SlideMessage.FileOffer -> {
+                        offers.update { it + (message.itemId to message.transferId) }
+                        queued.update { it - message.itemId }
+                    }
+                    is SlideMessage.FileQueued -> queued.update { it + message.itemId }
+                    is SlideMessage.FileCancelled ->
+                        if (message.bySender) {
+                            // The peer stopped sending one of its items to this device.
+                            markCancelled(message.itemId)
+                            offers.value[message.itemId]?.let(peerLink::cancelTransfer)
+                        } else {
+                            // The peer stopped receiving one of this device's items.
+                            stopSend(message.itemId)
+                        }
                     is SlideMessage.FileRoute -> routes.update { it + (message.itemId to RouteNote(message.route)) }
                     else -> Unit
                 }
@@ -96,19 +145,65 @@ class LinkedSlidePeer(
             .launchIn(scope)
     }
 
-    override suspend fun send(file: OutgoingFile): EmptyResult<DataError> {
-        if (file.peerMayFetch) {
-            when (peerFetch(file.itemId)) {
-                Route.FETCHED -> return Result.Success(Unit)
-                Route.CANCELLED -> return Result.Failure(DataError.Network.CANCELLED)
-                null -> return Result.Failure(DataError.Network.DISCONNECTED)
-                Route.SEND, Route.FETCHING -> Unit
+    override suspend fun send(file: OutgoingFile, progress: TransferProgress): EmptyResult<DataError> {
+        val id = file.itemId
+        stoppedSends.update { it - id }
+        outgoing.update { it + (id to null) }
+        try {
+            if (file.peerMayFetch) {
+                when (peerFetch(id)) {
+                    Route.FETCHED -> return Result.Success(Unit)
+                    Route.CANCELLED -> return Result.Failure(DataError.Network.CANCELLED)
+                    null -> return Result.Failure(DataError.Network.DISCONNECTED)
+                    Route.SEND, Route.FETCHING -> Unit
+                }
             }
-        }
-        return peerLink.sendFile(file.uri) { transferId ->
-            peerLink.transport.send(SlideMessage.FileOffer(file.itemId, transferId))
+            unlessSendStopped(id) { takeTurn(id, progress) } ?: return Result.Failure(DataError.Network.CANCELLED)
+            try {
+                if (id in stoppedSends.value) return Result.Failure(DataError.Network.CANCELLED)
+                return peerLink.sendFile(
+                    uri = file.uri,
+                    announce = { transferId ->
+                        outgoing.update { it + (id to transferId) }
+                        // Stopped just before its id was known: stop it now (the link then sends nothing).
+                        if (id in stoppedSends.value) peerLink.cancelTransfer(transferId)
+                        peerLink.transport.send(SlideMessage.FileOffer(id, transferId))
+                    },
+                    onProgress = progress::progressed,
+                )
+            } finally {
+                sendSlots.release()
+            }
+        } finally {
+            outgoing.update { it - id }
+            stoppedSends.update { it - id }
         }
     }
+
+    /** Waits for a turn to send; a file that has to wait tells the peer it is queued, so the peer keeps waiting. */
+    private suspend fun takeTurn(id: String, progress: TransferProgress) {
+        if (sendSlots.tryAcquire()) return
+        progress.queued()
+        peerLink.transport.send(SlideMessage.FileQueued(id))
+        sendSlots.acquire()
+    }
+
+    override fun cancelSend(itemId: String) {
+        if (itemId !in outgoing.value) return
+        stopSend(itemId)
+        // The peer drops its card for it (and stops fetching it, when it was taking it from the video).
+        scope.launch { peerLink.transport.send(SlideMessage.FileCancelled(itemId, bySender = true)) }
+    }
+
+    private fun stopSend(itemId: String) {
+        if (itemId !in outgoing.value) return
+        stoppedSends.update { it + itemId }
+        outgoing.value[itemId]?.let(peerLink::cancelTransfer)
+    }
+
+    /** Runs [block] unless the send of [itemId] is stopped first: null then. */
+    private suspend fun <T : Any> unlessSendStopped(itemId: String, block: suspend () -> T): T? =
+        unlessStopped(stoppedSends.map { itemId in it }, block)
 
     /**
      * Waits for the peer to say how the file of [itemId] goes, and while it fetches it, until it has. Returns how it
@@ -130,38 +225,68 @@ class LinkedSlidePeer(
         routes.update { it - itemId }
     }
 
-    override suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit): Result<String, DataError> {
-        when (file.delivery) {
-            Delivery.SENT -> Unit
-            Delivery.ASK_TO_SEND -> peerLink.transport.send(SlideMessage.FileRoute(file.peerItemId, Route.SEND))
-            Delivery.FETCH -> fetch(file, onProgress)?.let { return it }
-        }
-        val transferId = withTimeoutOrNull(OfferWait) {
-            offers.map { it[file.peerItemId] }.filterNotNull().first()
-        } ?: return Result.Failure(DataError.Network.DISCONNECTED)
-        if (file.peerItemId in cancelled.value) {
-            cancelled.update { it - file.peerItemId }
-            offers.update { it - file.peerItemId }
-            peerLink.cancelTransfer(transferId)
-            return Result.Failure(DataError.Network.CANCELLED)
-        }
-        val location = try {
-            peerLink.receiveFile(transferId, onProgress)
+    override suspend fun receive(file: IncomingFile, progress: TransferProgress): Result<String, DataError> {
+        val id = file.peerItemId
+        // A stop heard long ago was for an earlier item with this id.
+        cancelled.update { all -> all.filterValues { it.elapsedNow() < CancelKeep } }
+        try {
+            when (file.delivery) {
+                Delivery.SENT -> Unit
+                Delivery.ASK_TO_SEND -> peerLink.transport.send(SlideMessage.FileRoute(id, Route.SEND))
+                Delivery.FETCH -> fetch(file, progress)?.let { return it }
+            }
+            val transferId = when (val offer = awaitOffer(id, progress)) {
+                is Offer.Made -> offer.transferId
+                Offer.Stopped -> {
+                    // Its bytes may be on their way already: they stop here too.
+                    offers.value[id]?.let(peerLink::cancelTransfer)
+                    return Result.Failure(DataError.Network.CANCELLED)
+                }
+                Offer.Lost -> return Result.Failure(DataError.Network.DISCONNECTED)
+                Offer.Queued -> error("Not an outcome")
+            }
+            if (id in cancelled.value) {
+                peerLink.cancelTransfer(transferId)
+                return Result.Failure(DataError.Network.CANCELLED)
+            }
+            val arrivedAt = when (val arrived = peerLink.receiveFile(transferId, progress::progressed)) {
+                is Result.Failure -> return arrived
+                is Result.Success -> arrived.data
+            }
+            return keep(file, arrivedAt, progress)
         } finally {
-            offers.update { it - file.peerItemId }
+            offers.update { it - id }
+            queued.update { it - id }
+            cancelled.update { it - id }
         }
-        val arrivedAt = when (val arrived = location) {
-            is Result.Failure -> return arrived
-            is Result.Success -> arrived.data
+    }
+
+    /**
+     * Waits for the peer to announce the file of [id]: within [OfferWait], or for as long as the peer says it is
+     * queued. Ends early when the file is stopped or the link goes.
+     */
+    private suspend fun awaitOffer(id: String, progress: TransferProgress): Offer {
+        val heard = combine(offers, queued, cancelled, peerLink.state) { offers, queued, cancelled, link ->
+            val transferId = offers[id]
+            when {
+                id in cancelled -> Offer.Stopped
+                transferId != null -> Offer.Made(transferId)
+                link !is LinkState.Connected -> Offer.Lost
+                id in queued -> Offer.Queued
+                else -> null
+            }
         }
-        return keep(file, arrivedAt)
+        val first = withTimeoutOrNull(OfferWait) { heard.filterNotNull().first() } ?: return Offer.Lost
+        if (first != Offer.Queued) return first
+        progress.queued()
+        return heard.filterNotNull().first { it != Offer.Queued }
     }
 
     /**
      * Takes the file from the peer's video over the media channel. Returns the outcome, or null when the fetch failed
      * with the link still up and the peer was asked to send the file instead.
      */
-    private suspend fun fetch(file: IncomingFile, onProgress: (Float) -> Unit): Result<String, DataError>? {
+    private suspend fun fetch(file: IncomingFile, progress: TransferProgress): Result<String, DataError>? {
         val media = peerLink.media
         if (media == null) {
             peerLink.transport.send(SlideMessage.FileRoute(file.peerItemId, Route.SEND))
@@ -170,10 +295,13 @@ class LinkedSlidePeer(
         if (peerLink.transport.send(SlideMessage.FileRoute(file.peerItemId, Route.FETCHING)) is Result.Failure) {
             return Result.Failure(DataError.Network.DISCONNECTED)
         }
-        val fetched = fetchUnlessStopped(media, file, onProgress)
+        val fetched = unlessStopped(cancelled.map { file.peerItemId in it }) {
+            media.fetch(file.peerItemId, file.sizeBytes) { fraction ->
+                progress.progressed((fraction.toDouble() * file.sizeBytes).toLong())
+            }
+        }
         if (fetched == null) {
             media.forget(file.peerItemId)
-            cancelled.update { it - file.peerItemId }
             peerLink.transport.send(SlideMessage.FileRoute(file.peerItemId, Route.CANCELLED))
             return Result.Failure(DataError.Network.CANCELLED)
         }
@@ -187,7 +315,7 @@ class LinkedSlidePeer(
                 return null
             }
         }
-        val kept = keep(file, location)
+        val kept = keep(file, location, progress)
         if (kept is Result.Failure) {
             media.forget(file.peerItemId)
             peerLink.transport.send(SlideMessage.FileRoute(file.peerItemId, Route.CANCELLED))
@@ -198,35 +326,13 @@ class LinkedSlidePeer(
         return kept
     }
 
-    /** [MediaChannel.fetch], unless the user stops it ([cancelReceive]) first: null then. */
-    private suspend fun fetchUnlessStopped(
-        media: MediaChannel,
-        file: IncomingFile,
-        onProgress: (Float) -> Unit,
-    ): Result<String, DataError>? = coroutineScope {
-        if (file.peerItemId in cancelled.value) return@coroutineScope null
-        val fetching = async { media.fetch(file.peerItemId, file.sizeBytes, onProgress) }
-        val stopper = launch {
-            cancelled.first { file.peerItemId in it }
-            fetching.cancel()
-        }
-        try {
-            fetching.await()
-        } catch (e: CancellationException) {
-            // The fetch was stopped, not this receive.
-            if (!fetching.isCancelled || !isActive) throw e
-            null
-        } finally {
-            stopper.cancel()
-        }
-    }
-
     /**
      * Keeps the file that arrived at [location] and puts it on the shelf; returns its item id. A video read from the
      * peer while it played goes on from the kept copy.
      */
-    private suspend fun keep(file: IncomingFile, location: String): Result<String, DataError> {
-        val kept = when (val stored = store.keep(location, file.name, file.mimeType)) {
+    private suspend fun keep(file: IncomingFile, location: String, progress: TransferProgress): Result<String, DataError> {
+        progress.saving()
+        val kept = when (val stored = saving.withLock { store.keep(location, file.name, file.mimeType) }) {
             is Result.Failure -> return stored
             is Result.Success -> stored.data
         }
@@ -239,8 +345,44 @@ class LinkedSlidePeer(
     }
 
     override fun cancelReceive(peerItemId: String) {
-        val transferId = offers.value[peerItemId]
-        if (transferId != null) peerLink.cancelTransfer(transferId) else cancelled.update { it + peerItemId }
+        markCancelled(peerItemId)
+        offers.value[peerItemId]?.let(peerLink::cancelTransfer)
+        // The peer takes it out of its queue (or stops it), and puts the item back on its shelf.
+        scope.launch { peerLink.transport.send(SlideMessage.FileCancelled(peerItemId, bySender = false)) }
+    }
+
+    private fun markCancelled(peerItemId: String) {
+        cancelled.update { it + (peerItemId to TimeSource.Monotonic.markNow()) }
+    }
+
+    /** What waiting for a file's announcement came to. */
+    private sealed interface Offer {
+        data class Made(val transferId: Long) : Offer
+        data object Queued : Offer
+        data object Stopped : Offer
+        data object Lost : Offer
+    }
+}
+
+/**
+ * Runs [block] unless [isStopped] turns true first: null then. Only the block is stopped; the caller carries on (or is
+ * cancelled itself, as usual).
+ */
+private suspend fun <T : Any> unlessStopped(isStopped: Flow<Boolean>, block: suspend () -> T): T? = coroutineScope {
+    if (isStopped.first()) return@coroutineScope null
+    val work = async { block() }
+    val stopper = launch {
+        isStopped.first { it }
+        work.cancel()
+    }
+    try {
+        work.await()
+    } catch (e: CancellationException) {
+        // The block was stopped, not this caller.
+        if (!work.isCancelled || !isActive) throw e
+        null
+    } finally {
+        stopper.cancel()
     }
 }
 

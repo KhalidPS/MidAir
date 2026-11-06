@@ -54,6 +54,14 @@ internal sealed interface SlideMessageDto {
     data class FileOffer(val itemId: String, val transferId: Long) : SlideMessageDto
 
     @Serializable
+    @SerialName("file_queued")
+    data class FileQueued(val itemId: String) : SlideMessageDto
+
+    @Serializable
+    @SerialName("file_cancelled")
+    data class FileCancelled(val itemId: String, val bySender: Boolean) : SlideMessageDto
+
+    @Serializable
     @SerialName("ping")
     data class Ping(val sentAtMillis: Long) : SlideMessageDto
 

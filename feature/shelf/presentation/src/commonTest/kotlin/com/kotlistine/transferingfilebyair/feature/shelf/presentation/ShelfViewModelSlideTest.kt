@@ -1,5 +1,9 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation
 
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferBoard
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferDirection
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKey
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferStatus
 import app.cash.turbine.ReceiveTurbine
 import app.cash.turbine.test
 import assertk.assertThat
@@ -72,10 +76,13 @@ class ShelfViewModelSlideTest {
             density = density,
             peer = peer,
             keepAlive = keepAlive,
+            board = board,
             clock = clock,
             timeZone = TimeZone.UTC,
         )
     }
+
+    private val board = TransferBoard()
 
     /** A 300 px wide card on a 700 px wide screen, its right side [penetrationPx] past the right edge. */
     private fun frame(penetrationPx: Float = -100f, cardTopPx: Float = 250f, cardWidthPx: Float = 300f): SlideFrame {
@@ -329,6 +336,32 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
+    fun `a sending file can be stopped from the list, and comes back to the shelf without an error`() = runTest {
+        peer.sendGate = CompletableDeferred()
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.events.test {
+                viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+                viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
+                viewModel.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+                val sending = TransferKey(TransferDirection.SENDING, "1")
+                assertThat(board.transfers.value.single().key).isEqualTo(sending)
+
+                viewModel.onAction(ShelfAction.OnCancelTransfer(sending))
+                assertThat(peer.cancelledSends).containsExactly("1")
+                // The peer link answers a stopped send as cancelled.
+                peer.sendResult = Result.Failure(DataError.Network.CANCELLED)
+                peer.sendGate?.complete(Unit)
+
+                expectNoEvents()
+            }
+            assertThat(board.transfers.value.single().status).isEqualTo(TransferStatus.CANCELLED)
+            assertThat(repository.items.value.map { it.id }).containsExactly("1")
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1")
+        }
+    }
+
+    @Test
     fun `retrying a failed send announces the card again and delivers the file`() = runTest {
         viewModel.state.test {
             awaitLoaded()
@@ -528,15 +561,73 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
-    fun `the arriving card shows how much of its file is here`() = runTest {
+    fun `the arriving card's transfer shows how much of its file is here, apart from the shelf's state`() = runTest {
         val arrival = CompletableDeferred<Result<String, DataError>>()
-        createViewModel(FakePeer(onReceive = { arrival.await() }, progressSteps = listOf(0.25f, 0.251f, 0.5f)))
+        createViewModel(FakePeer(onReceive = { arrival.await() }, progressSteps = listOf(98_750L, 197_500L)))
         viewModel.state.test {
             awaitLoaded()
             peer.transport.deliver(peerStart)
             peer.transport.deliver(commit("9"))
 
-            assertThat(expectMostRecentItem().arriving.single().progress).isEqualTo(0.5f)
+            // The shelf only knows the card is waiting; how far its file has got is the transfer's.
+            assertThat(expectMostRecentItem().arriving.single())
+                .isEqualTo(ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 0.75f))
+        }
+        val transfer = board.transfers.value.single()
+        assertThat(transfer.key).isEqualTo(TransferKey(TransferDirection.RECEIVING, "9"))
+        assertThat(transfer.status).isEqualTo(TransferStatus.ACTIVE)
+        assertThat(transfer.fraction).isEqualTo(0.5f)
+    }
+
+    @Test
+    fun `a received file's transfer ends as done, a failed one as failed`() = runTest {
+        val arrivals = mutableMapOf<String, CompletableDeferred<Result<String, DataError>>>()
+        createViewModel(
+            FakePeer(onReceive = { file ->
+                CompletableDeferred<Result<String, DataError>>().also { arrivals[file.peerItemId] = it }.await()
+            }),
+        )
+        viewModel.state.test {
+            awaitLoaded()
+            peer.transport.deliver(peerStart)
+            peer.transport.deliver(commit("9"))
+            peer.transport.deliver(peerStart.copy(itemId = "10", name = "Notes.md"))
+            peer.transport.deliver(commit("10"))
+
+            arrivals.getValue("9").complete(Result.Success("received-1"))
+            arrivals.getValue("10").complete(Result.Failure(DataError.Network.DISCONNECTED))
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertThat(board.transfers.value.map { it.key.itemId to it.status }).containsExactly(
+            "9" to TransferStatus.DONE,
+            "10" to TransferStatus.FAILED,
+        )
+    }
+
+    @Test
+    fun `stopping an arriving card's transfer from the list stops its receive`() = runTest {
+        val arrival = CompletableDeferred<Result<String, DataError>>()
+        createViewModel(FakePeer(onReceive = { arrival.await() }))
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+            peer.transport.deliver(commit("9"))
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        viewModel.onAction(ShelfAction.OnCancelTransfer(TransferKey(TransferDirection.RECEIVING, "9")))
+
+        assertThat(peer.cancelledReceives).containsExactly("9")
+    }
+
+    @Test
+    fun `the transfers list opens and closes`() = runTest {
+        createViewModel(FakePeer())
+        viewModel.state.test {
+            awaitLoaded()
+            viewModel.onAction(ShelfAction.OnTransfersClick)
+            assertThat(awaitItem().isTransfersVisible).isEqualTo(true)
+            viewModel.onAction(ShelfAction.OnTransfersDismiss)
+            assertThat(awaitItem().isTransfersVisible).isEqualTo(false)
         }
     }
 

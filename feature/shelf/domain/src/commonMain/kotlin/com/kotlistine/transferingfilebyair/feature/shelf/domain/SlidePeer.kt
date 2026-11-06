@@ -5,6 +5,7 @@ import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideLink
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferProgress
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import kotlinx.coroutines.flow.Flow
 
@@ -21,16 +22,24 @@ interface SlidePeer {
     /** Plays the peer's videos from the frame they are at, while their files are still on the peer (null: it can't). */
     val media: MediaChannel? get() = null
 
-    /** Sends the file behind a handed-over card; returns once the peer has all of it. */
-    suspend fun send(file: OutgoingFile): EmptyResult<DataError>
+    /**
+     * Sends the file behind a handed-over card; returns once the peer has all of it. Files go one at a time, so each
+     * gets the link's full speed and the cards' own messages aren't held up behind several files: a file that has to
+     * wait its turn reports [TransferProgress.queued] (and the peer hears it is coming). Fails with
+     * [DataError.Network.CANCELLED] once either side stopped it ([cancelSend], or the peer's [cancelReceive]).
+     */
+    suspend fun send(file: OutgoingFile, progress: TransferProgress = TransferProgress.None): EmptyResult<DataError>
+
+    /** Stops sending the file of this device's item [itemId], queued or under way; its send fails as cancelled. */
+    fun cancelSend(itemId: String)
 
     /**
-     * Takes in a file the peer slid over and puts it on this shelf, reporting how much has arrived (0..1) to
-     * [onProgress]. Returns the new shelf item's id.
+     * Takes in a file the peer slid over and puts it on this shelf, reporting to [progress] as it arrives. Waits as
+     * long as the peer says it is queued. Returns the new shelf item's id.
      */
-    suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit = {}): Result<String, DataError>
+    suspend fun receive(file: IncomingFile, progress: TransferProgress = TransferProgress.None): Result<String, DataError>
 
-    /** Stops receiving the file of the peer's item [peerItemId]; its receive then fails as cancelled. */
+    /** Stops receiving the file of the peer's item [peerItemId] (the peer is told); its receive fails as cancelled. */
     fun cancelReceive(peerItemId: String)
 }
 

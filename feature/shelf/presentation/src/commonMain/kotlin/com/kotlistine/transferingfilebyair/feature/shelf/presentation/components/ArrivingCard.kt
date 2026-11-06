@@ -37,13 +37,18 @@ import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirTheme
 import com.kotlistine.transferingfilebyair.core.media.VideoSurface
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferStatus
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.TransferUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.CardName
 
 /**
  * A card from the paired device in its slot while its file comes in: the sender's picture, dimmed, with a ring
  * showing how much has arrived. A tap stops the transfer. Laid out like [ShelfCard], so the item that replaces it
  * once the file is here takes exactly its place.
+ *
+ * Its progress comes from [transfer], read here and not in the shelf's state: a few readings a second redraw this
+ * card only, never the grid.
  *
  * A video that came over playing plays on here, read from the peer, with a small ring in the corner instead.
  * [isVideoActive] is false while the card is still flying in: the flying card shows the video until it lands.
@@ -53,11 +58,13 @@ internal fun ArrivingCard(
     item: ArrivingItemUi,
     picture: ImageBitmap?,
     onTap: () -> Unit,
+    transfer: () -> TransferUi? = { null },
     modifier: Modifier = Modifier,
     previewModifier: Modifier = Modifier,
     isVideoActive: Boolean = true,
 ) {
-    val progress = animateFloatAsState(item.progress, tween(180, easing = FastOutSlowInEasing))
+    val current = transfer()
+    val progress = animateFloatAsState(current?.fraction ?: 0f, tween(300, easing = FastOutSlowInEasing))
     val video = LocalCardVideo.current?.takeIf { it.itemId == item.id }
     Column(modifier) {
         Box(
@@ -95,13 +102,26 @@ internal fun ArrivingCard(
                 overflow = TextOverflow.MiddleEllipsis,
             )
             Text(
-                text = "Receiving · ${(item.progress * 100).toInt()}%",
+                text = current.label(),
                 style = MaterialTheme.typography.labelMedium,
                 color = AirColors.OnSurfaceMuted,
                 maxLines = 1,
             )
         }
     }
+}
+
+/** "Waiting", "Receiving · 42% · 4.1 MB/s", "Saving". */
+private fun TransferUi?.label(): String = when (this?.status) {
+    null -> "Receiving"
+    TransferStatus.QUEUED -> "Waiting its turn"
+    TransferStatus.SAVING -> "Saving"
+    TransferStatus.ACTIVE -> buildString {
+        append("Receiving · ").append(percent.ifEmpty { "0%" })
+        if (speed.isNotEmpty()) append(" · ").append(speed)
+    }
+    TransferStatus.DONE -> "Received"
+    TransferStatus.FAILED, TransferStatus.CANCELLED -> detail
 }
 
 @Composable
@@ -156,7 +176,7 @@ private fun DrawScope.drawProgressRing(progress: Float) {
 private fun ArrivingCardPreview() {
     AirTheme {
         ArrivingCard(
-            item = ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 4f / 3f, progress = 0.42f),
+            item = ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 4f / 3f),
             picture = null,
             onTap = {},
             modifier = Modifier.width(180.dp),

@@ -14,7 +14,10 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.ApproachRangeMm
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferBoard
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferDirection
 import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAlive
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKey
 import com.kotlistine.transferingfilebyair.core.transfer.domain.keeping
 import com.kotlistine.transferingfilebyair.core.transfer.domain.arrival
 import com.kotlistine.transferingfilebyair.core.transfer.domain.incomingCardPosition
@@ -39,6 +42,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.Hand
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.PlayingVideoUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.TransfersUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.toUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
 import kotlinx.coroutines.CoroutineScope
@@ -52,6 +56,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -64,6 +69,13 @@ import kotlinx.datetime.TimeZone
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+
+/** The error of a failed [Result]; null for a success; [whenMissing] when there is no result (it was cut short). */
+private fun Result<*, DataError>?.errorOr(whenMissing: DataError): DataError? = when (this) {
+    null -> whenMissing
+    is Result.Failure -> error
+    is Result.Success -> null
+}
 
 /** A card sent again after a failure has no slide to measure; the peer draws it this wide. */
 private const val RetryCardWidthMm = 40f
@@ -95,6 +107,8 @@ class ShelfViewModel(
     private val transfers: CoroutineScope? = null,
     /** Keeps the app alive while a file moves (a notification on Android). */
     private val keepAlive: TransferKeepAlive = TransferKeepAlive.None,
+    /** Every file moving either way, app-wide (the notification shows it too). */
+    private val board: TransferBoard = TransferBoard(),
     /** Plays videos in their cards; the screen draws its picture. Without one, a tapped video opens in another app. */
     val videoEngine: VideoEngine? = null,
     /** Watches for a fist and an open hand in front of the screen (the front camera). Without one, no air gestures. */
@@ -180,6 +194,15 @@ class ShelfViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), ShelfState())
 
+    /**
+     * Every file moving to or from the peer, with its own progress. Apart from [state] on purpose: it changes a few
+     * times a second per file, and only the transfers list and the arriving cards' labels need to follow it, not the
+     * whole shelf.
+     */
+    val fileTransfers: StateFlow<TransfersUi> = board.transfers
+        .map { list -> TransfersUi(list.map { it.toUi() }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), TransfersUi())
+
     // Buffered: incoming-card moves arrive at frame rate and must not wait on a collector that is mid-event.
     private val eventChannel = Channel<ShelfEvent>(Channel.BUFFERED)
     val events = eventChannel.receiveAsFlow()
@@ -216,7 +239,12 @@ class ShelfViewModel(
             is ShelfAction.OnSlideReturned -> stopMirroring(action.id)
             is ShelfAction.OnViewportChanged -> viewportWidthPx = action.widthPx
             is ShelfAction.OnIncomingCardTap ->
-                if (arriving.any { it.id == action.id }) peer?.cancelReceive(action.id)
+                if (arriving.any { it.id == action.id }) board.cancel(TransferKey(TransferDirection.RECEIVING, action.id))
+            is ShelfAction.OnCancelTransfer -> board.cancel(action.key)
+            ShelfAction.OnCancelAllTransfers -> board.cancelAll()
+            ShelfAction.OnClearFinishedTransfers -> board.clearFinished()
+            ShelfAction.OnTransfersClick -> _state.update { it.copy(isTransfersVisible = true) }
+            ShelfAction.OnTransfersDismiss -> _state.update { it.copy(isTransfersVisible = false) }
             is ShelfAction.OnRetrySend -> resend(action.id)
             ShelfAction.OnAirGestureToggle -> toggleAirGestures()
             is ShelfAction.OnCameraPermission -> onCameraPermission(action.granted, action.justAsked)
@@ -372,14 +400,30 @@ class ShelfViewModel(
      * carried its video, the peer may take the file from what it already read ([peerMayFetch]).
      */
     private suspend fun deliverFile(item: ShelfItemUi, peerMayFetch: Boolean = false) {
-        val delivered = peer?.send(OutgoingFile(itemId = item.id, uri = item.uri, peerMayFetch = peerMayFetch))
-        if (delivered is Result.Failure) {
-            undoSend(item.id)
-            eventChannel.send(ShelfEvent.ShowSendFailed(id = item.id, name = item.name, error = delivered.error))
-        } else {
-            finishSend(item.id)
+        val peer = peer ?: return finishSend(item.id)
+        val key = TransferKey(TransferDirection.SENDING, item.id)
+        val progress = board.add(key, item.name, item.mimeType, item.sizeBytes) { peer.cancelSend(item.id) }
+        var delivered: EmptyResult<DataError>? = null
+        try {
+            delivered = peer.send(OutgoingFile(itemId = item.id, uri = item.uri, peerMayFetch = peerMayFetch), progress)
+        } finally {
+            // Cut short (the app-wide scope ended) counts as stopped.
+            board.finish(key, delivered.errorOr(DataError.Network.CANCELLED))
+        }
+        when (val outcome = delivered) {
+            is Result.Success -> finishSend(item.id)
+            // Stopped by either user: the item is simply back on this shelf.
+            is Result.Failure -> {
+                undoSend(item.id)
+                if (outcome.error != DataError.Network.CANCELLED) {
+                    eventChannel.send(ShelfEvent.ShowSendFailed(id = item.id, name = item.name, error = outcome.error))
+                }
+            }
+            null -> Unit
         }
     }
+
+
 
     /**
      * Sends a file again after a failed transfer, without a slide: the peer is told about the card and that it was let
@@ -732,7 +776,9 @@ class ShelfViewModel(
             is SlideMessage.PlaybackClock ->
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
-            is SlideMessage.FileOffer, is SlideMessage.FileRoute, is SlideMessage.SwipeCrossed -> Unit
+            is SlideMessage.FileOffer, is SlideMessage.FileRoute, is SlideMessage.FileQueued, is SlideMessage.FileCancelled,
+            is SlideMessage.SwipeCrossed,
+            -> Unit
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null
@@ -803,20 +849,16 @@ class ShelfViewModel(
         movesToOwnFile: Boolean = false,
     ) {
         receivingNames += start.name
-        var lastPercent = -1
         val file = IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes, delivery)
+        val key = TransferKey(TransferDirection.RECEIVING, start.itemId)
+        // Its progress goes to the board, not the shelf's state: the grid doesn't redraw on every percent.
+        val progress = board.add(key, start.name, start.mimeType, start.sizeBytes) { peer.cancelReceive(start.itemId) }
+        var outcome: Result<String, DataError>? = null
         val result = try {
-            peer.receive(file) { fraction ->
-                // Whole percents are plenty for a ring, and keep the state light on big files.
-                val percent = (fraction * 100).toInt()
-                if (percent != lastPercent) {
-                    lastPercent = percent
-                    // Back on the transfer scope's thread, whichever thread the link reports from.
-                    transferScope.launch { showProgress(start.itemId, fraction) }
-                }
-            }
+            peer.receive(file, progress).also { outcome = it }
         } finally {
-            // Also when the wait is called off (a catch the peer never heard about).
+            // Also when the wait is called off (a catch the peer never heard about): that counts as stopped.
+            board.finish(key, outcome.errorOr(DataError.Network.CANCELLED))
             receivingNames.remove(start.name)
             caughtIds.remove(start.itemId)
         }
@@ -841,13 +883,6 @@ class ShelfViewModel(
                 if (result.error != DataError.Network.CANCELLED) eventChannel.send(ShelfEvent.ShowError(result.error))
             }
         }
-    }
-
-    private fun showProgress(id: String, fraction: Float) {
-        val index = arriving.indexOfFirst { it.id == id }
-        if (index < 0) return
-        arriving[index] = arriving[index].copy(progress = fraction.coerceIn(0f, 1f))
-        publishItems()
     }
 
     /**

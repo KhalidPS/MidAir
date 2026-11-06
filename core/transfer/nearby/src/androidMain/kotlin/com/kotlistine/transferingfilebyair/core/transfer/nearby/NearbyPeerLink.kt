@@ -109,8 +109,8 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
     private val transfers = ConcurrentHashMap<Long, CompletableDeferred<Result<String?, DataError.Network>>>()
     private val incomingFiles = ConcurrentHashMap<Long, Payload>()
 
-    /** Who wants to hear how far an incoming file has got, by transfer id. */
-    private val progressListeners = ConcurrentHashMap<Long, (Float) -> Unit>()
+    /** Who wants to hear how far a file has got (in bytes), by transfer id, either way. */
+    private val progressListeners = ConcurrentHashMap<Long, (Long) -> Unit>()
 
     private fun transfer(id: Long) = transfers.getOrPut(id) { CompletableDeferred() }
 
@@ -317,6 +317,7 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
     override suspend fun sendFile(
         uri: String,
         announce: suspend (transferId: Long) -> Unit,
+        onProgress: (bytesSent: Long) -> Unit,
     ): EmptyResult<DataError.Network> {
         val endpoint = connectedEndpoint ?: return Result.Failure(DataError.Network.DISCONNECTED)
         val descriptor = try {
@@ -327,21 +328,29 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         return descriptor.use {
             val payload = Payload.fromFile(descriptor)
             val outcome = transfer(payload.id)
+            progressListeners[payload.id] = onProgress
             try {
                 announce(payload.id)
+                // Stopped while it was being announced: nothing goes.
+                if (outcome.isCompleted) {
+                    return@use outcome.await() as? Result.Failure ?: Result.Failure(DataError.Network.CANCELLED)
+                }
                 val sent = nearbyCall { client.sendPayload(endpoint, payload).await() }
                 if (sent is Result.Failure) return@use sent
+                // Stopped while it was being handed to Nearby, whose cancel came too early to count: stop it now.
+                if (outcome.isCompleted) client.cancelPayload(payload.id)
                 when (val result = outcome.await()) {
                     is Result.Success -> Result.Success(Unit)
                     is Result.Failure -> result
                 }
             } finally {
+                progressListeners.remove(payload.id)
                 transfers.remove(payload.id)
             }
         }
     }
 
-    override suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit): Result<String, DataError.Network> {
+    override suspend fun receiveFile(transferId: Long, onProgress: (Long) -> Unit): Result<String, DataError.Network> {
         progressListeners[transferId] = onProgress
         val result = try {
             transfer(transferId).await()
@@ -621,10 +630,8 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                     incomingFiles.remove(id)
                     outcome.complete(Result.Failure(DataError.Network.CANCELLED))
                 }
-                PayloadTransferUpdate.Status.IN_PROGRESS -> {
-                    val total = update.totalBytes
-                    if (total > 0) progressListeners[id]?.invoke((update.bytesTransferred.toFloat() / total).coerceIn(0f, 1f))
-                }
+                // Coalesced by whoever listens (see TransferBoard): Nearby reports every chunk.
+                PayloadTransferUpdate.Status.IN_PROGRESS -> progressListeners[id]?.invoke(update.bytesTransferred)
                 else -> Unit
             }
         }

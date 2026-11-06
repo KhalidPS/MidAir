@@ -11,6 +11,8 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferProgress
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flowOf
@@ -41,8 +43,8 @@ class FakeTransport : Transport {
 class FakePeer(
     override val link: SlideLink = SlideLink(gapMm = 8f, peerSide = ExitEdge.RIGHT),
     private val onReceive: suspend (IncomingFile) -> Result<String, DataError> = { Result.Success("received-1") },
-    /** Progress reported while receiving, before the result. */
-    private val progressSteps: List<Float> = emptyList(),
+    /** Progress reported while receiving (bytes so far), before the result. */
+    private val progressSteps: List<Long> = emptyList(),
     override val media: MediaChannel? = null,
 ) : SlidePeer {
     override val transport = FakeTransport()
@@ -54,16 +56,26 @@ class FakePeer(
 
     override val isLinked: Flow<Boolean> = flowOf(true)
 
-    override suspend fun send(file: OutgoingFile): EmptyResult<DataError> {
+    /** When set, a send waits for this before returning [sendResult]. */
+    var sendGate: CompletableDeferred<Unit>? = null
+
+    override suspend fun send(file: OutgoingFile, progress: TransferProgress): EmptyResult<DataError> {
         sentFiles += file
+        sendGate?.await()
         return sendResult
+    }
+
+    val cancelledSends = mutableListOf<String>()
+
+    override fun cancelSend(itemId: String) {
+        cancelledSends += itemId
     }
 
     val cancelledReceives = mutableListOf<String>()
 
-    override suspend fun receive(file: IncomingFile, onProgress: (Float) -> Unit): Result<String, DataError> {
+    override suspend fun receive(file: IncomingFile, progress: TransferProgress): Result<String, DataError> {
         received += file
-        progressSteps.forEach(onProgress)
+        progressSteps.forEach(progress::progressed)
         return onReceive(file)
     }
 

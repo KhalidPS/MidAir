@@ -17,6 +17,8 @@ data class ShelfState(
     val arriving: List<ArrivingItemUi> = emptyList(),
     /** Received items by the id of the arriving card they took over from, so the card turns into the item in place. */
     val arrivedFrom: Map<String, String> = emptyMap(),
+    /** The list of files moving either way is open. */
+    val isTransfersVisible: Boolean = false,
     /** The video playing in its card, if any. */
     val playing: PlayingVideoUi? = null,
     val air: AirGestureUi = AirGestureUi(),

@@ -31,7 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -79,11 +83,15 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.LocalCardVideo
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfBottomBar
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.ShelfGrid
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.TransfersPill
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.TransfersSheet
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.arrivingKey
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.HandPointUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.TransfersUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.permission.rememberCameraPermission
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.permission.rememberNotificationPermission
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.ArrivalWave
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.EdgeBloom
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.IncomingCard
@@ -115,6 +123,18 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
         viewModel.onAction(ShelfAction.OnCameraPermission(granted, justAsked = true))
     }
     val hand = viewModel.hand.collectAsStateWithLifecycle()
+    // Read through a lambda, by the few composables that show progress: the rest of the screen doesn't follow it.
+    val transfers = viewModel.fileTransfers.collectAsStateWithLifecycle()
+    val notifications = rememberNotificationPermission()
+    // Asked for once, the first time a file starts moving: that's when its progress needs a notification.
+    val isMoving by remember { derivedStateOf { transfers.value.active.isNotEmpty() } }
+    var askedForNotifications by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isMoving) {
+        if (isMoving && !askedForNotifications) {
+            askedForNotifications = true
+            notifications.requestIfNeeded()
+        }
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onAction(ShelfAction.OnScreenHidden) }
     // The camera only watches for air gestures while the shelf is on screen; the permission may change meanwhile.
@@ -209,6 +229,7 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
         videoEngine = viewModel.videoEngine,
         grabState = grabState,
         hand = { hand.value },
+        transfers = { transfers.value },
     )
 }
 
@@ -228,6 +249,8 @@ fun ShelfScreen(
     grabState: GrabState = rememberGrabState(),
     /** Where the camera sees the hand, while air gestures watch. Read in the draw phase only. */
     hand: () -> HandPointUi? = { null },
+    /** Every file moving either way. Read only by the pill, the list and the arriving cards. */
+    transfers: () -> TransfersUi = { TransfersUi() },
 ) {
     // Bottom chrome rises into place shortly after the first frame.
     val barEnter = remember { Animatable(0f) }
@@ -295,6 +318,9 @@ fun ShelfScreen(
     }
 
     val insets = WindowInsets.safeDrawing.asPaddingValues()
+    // Only whether the pill shows, not every progress reading, reaches this screen's composition.
+    val currentTransfers by rememberUpdatedState(transfers)
+    val isPillShown by remember { derivedStateOf { currentTransfers().active.isNotEmpty() } }
     val content = when {
         state.isLoading -> ShelfContent.Loading
         state.items.isEmpty() && state.arriving.isEmpty() -> ShelfContent.Empty
@@ -348,6 +374,7 @@ fun ShelfScreen(
                             arrivedFrom = state.arrivedFrom,
                             pictures = incomingSlide.pictures,
                             flyingId = incomingSlide.flyingId,
+                            transferOf = { id -> transfers().receiving(id) },
                             gridState = gridState,
                             grabState = grabState,
                             contentPadding = PaddingValues(
@@ -428,14 +455,35 @@ fun ShelfScreen(
                     .padding(top = 12.dp, start = 24.dp, end = 24.dp),
             )
 
-            SnackbarHost(
-                hostState = snackbarHostState,
+            // Above the bottom bar; the snackbar rises over it when both show.
+            TransfersPill(
+                transfers = transfers,
+                onClick = { onAction(ShelfAction.OnTransfersClick) },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = 84.dp),
             )
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 84.dp)
+                    .padding(bottom = if (isPillShown) 48.dp else 0.dp),
+            )
         }
+    }
+
+    if (state.isTransfersVisible) {
+        TransfersSheet(
+            transfers = transfers,
+            onCancel = { onAction(ShelfAction.OnCancelTransfer(it)) },
+            onCancelAll = { onAction(ShelfAction.OnCancelAllTransfers) },
+            onClearFinished = { onAction(ShelfAction.OnClearFinishedTransfers) },
+            onDismiss = { onAction(ShelfAction.OnTransfersDismiss) },
+        )
     }
 
     if (state.isClearConfirmationVisible) {
@@ -476,7 +524,7 @@ private fun ShelfScreenItemsPreview() {
                     previewItem("4", "Q4 Report.pdf", "16 KB · 13:25", FileKind.PDF, "PDF", 0.78f),
                     previewItem("5", "Walrus.mp4", "18 MB · 13:24", FileKind.VIDEO, "MP4", 1.6f),
                 ),
-                arriving = listOf(ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 4f / 3f, progress = 0.42f)),
+                arriving = listOf(ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 4f / 3f)),
             ),
             onAction = {},
         )

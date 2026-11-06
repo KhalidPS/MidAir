@@ -80,6 +80,19 @@ sealed interface SlideMessage {
      */
     data class FileOffer(val itemId: String, val transferId: Long) : SlideMessage
 
+    /**
+     * The file behind the handed-over card [itemId] waits for other files to go first (files go one at a time). Its
+     * [FileOffer] follows when its turn comes; until then the receiver waits for it, however long that takes.
+     */
+    data class FileQueued(val itemId: String) : SlideMessage
+
+    /**
+     * The file behind card [itemId] won't come: one side stopped it, queued or under way. [itemId] is always the id on
+     * the sending device's shelf; [bySender] says which side stopped it (each device numbers its own items, so the
+     * same id can be moving both ways at once).
+     */
+    data class FileCancelled(val itemId: String, val bySender: Boolean) : SlideMessage
+
     /** Round-trip time probe; answered with [Pong] carrying the same timestamp. */
     data class Ping(val sentAtMillis: Long) : SlideMessage
 

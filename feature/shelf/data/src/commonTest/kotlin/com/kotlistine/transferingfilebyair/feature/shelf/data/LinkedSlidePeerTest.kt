@@ -1,6 +1,7 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.data
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
@@ -22,6 +23,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.Delivery
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferProgress
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -30,8 +32,11 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.minutes
 import kotlin.test.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -80,11 +85,12 @@ class LinkedSlidePeerTest {
         val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
         link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
         link.arrived[5] = "content://nearby/5"
-        val progress = mutableListOf<Float>()
+        val progress = RecordingProgress()
 
-        peer.receive(incoming) { progress += it }
+        peer.receive(incoming, progress)
 
-        assertThat(progress).containsExactly(0.5f, 1f)
+        assertThat(progress.bytes).containsExactly(50L, 100L)
+        assertThat(progress.isSaving).isEqualTo(true)
     }
 
     @Test
@@ -273,7 +279,8 @@ class LinkedSlidePeerTest {
         peer.cancelReceive("9")
 
         assertThat(receiving.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
-        assertThat(link.sent.last()).isEqualTo(SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.CANCELLED))
+        assertThat(link.sent).contains(SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.CANCELLED))
+        assertThat(link.sent).contains(SlideMessage.FileCancelled("9", bySender = false))
         assertThat(media.forgotten).containsExactly("9")
     }
 
@@ -292,6 +299,154 @@ class LinkedSlidePeerTest {
 
     // endregion
 
+    // region Several files: one at a time, each stoppable.
+
+    @Test
+    fun `files go one at a time, and one waiting its turn is announced as queued`() = runTest(UnconfinedTestDispatcher()) {
+        link.sendGate = CompletableDeferred()
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val secondProgress = RecordingProgress()
+
+        val first = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+        val second = async { peer.send(OutgoingFile(itemId = "5", uri = "content://file/5"), secondProgress) }
+
+        assertThat(link.sentFiles).containsExactly("content://file/4")
+        assertThat(secondProgress.isQueued).isEqualTo(true)
+        assertThat(link.sent).containsExactly(SlideMessage.FileOffer("4", 77), SlideMessage.FileQueued("5"))
+
+        link.sendGate?.complete(Unit)
+
+        assertThat(first.await()).isEqualTo(Result.Success(Unit))
+        assertThat(second.await()).isEqualTo(Result.Success(Unit))
+        assertThat(link.sentFiles).containsExactly("content://file/4", "content://file/5")
+        assertThat(link.sent.last()).isEqualTo(SlideMessage.FileOffer("5", 78))
+    }
+
+    @Test
+    fun `progress of a sent file is passed on`() = runTest(UnconfinedTestDispatcher()) {
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val progress = RecordingProgress()
+
+        peer.send(OutgoingFile(itemId = "4", uri = "content://file/4"), progress)
+
+        assertThat(progress.bytes).containsExactly(10L)
+    }
+
+    @Test
+    fun `stopping a queued file fails it as cancelled, never sends it, and tells the peer`() = runTest(UnconfinedTestDispatcher()) {
+        link.sendGate = CompletableDeferred()
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val first = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+        val second = async { peer.send(OutgoingFile(itemId = "5", uri = "content://file/5")) }
+
+        peer.cancelSend("5")
+
+        assertThat(second.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(link.sent).contains(SlideMessage.FileCancelled("5", bySender = true))
+        link.sendGate?.complete(Unit)
+        assertThat(first.await()).isEqualTo(Result.Success(Unit))
+        assertThat(link.sentFiles).containsExactly("content://file/4")
+    }
+
+    @Test
+    fun `stopping a file under way cancels its transfer, and the next one goes`() = runTest(UnconfinedTestDispatcher()) {
+        link.sendGate = CompletableDeferred()
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val first = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+        val second = async { peer.send(OutgoingFile(itemId = "5", uri = "content://file/5")) }
+
+        peer.cancelSend("4")
+
+        assertThat(first.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(link.cancelledTransfers).containsExactly(77L)
+        assertThat(link.sentFiles).containsExactly("content://file/4", "content://file/5")
+        link.sendGate?.complete(Unit)
+        assertThat(second.await()).isEqualTo(Result.Success(Unit))
+    }
+
+    @Test
+    fun `the peer stopping its receive stops the send`() = runTest(UnconfinedTestDispatcher()) {
+        link.sendGate = CompletableDeferred()
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val sending = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+
+        link.inbound.emit(SlideMessage.FileCancelled("4", bySender = false))
+
+        assertThat(sending.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(link.cancelledTransfers).containsExactly(77L)
+    }
+
+    @Test
+    fun `the peer stopping its own send leaves this device's send of the same id alone`() = runTest(UnconfinedTestDispatcher()) {
+        link.sendGate = CompletableDeferred()
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val sending = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+
+        link.inbound.emit(SlideMessage.FileCancelled("4", bySender = true))
+        link.sendGate?.complete(Unit)
+
+        assertThat(sending.await()).isEqualTo(Result.Success(Unit))
+        assertThat(link.cancelledTransfers).isEmpty()
+    }
+
+    @Test
+    fun `a queued file is waited for well past the usual wait`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val progress = RecordingProgress()
+        val receiving = async { peer.receive(incoming, progress) }
+
+        link.inbound.emit(SlideMessage.FileQueued("9"))
+        advanceTimeBy(5.minutes)
+        assertThat(receiving.isActive).isEqualTo(true)
+        assertThat(progress.isQueued).isEqualTo(true)
+
+        link.arrived[5] = "content://nearby/5"
+        link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
+
+        assertThat(receiving.await()).isEqualTo(Result.Success("kept-1"))
+    }
+
+    @Test
+    fun `the sender stopping a queued file fails its receive as cancelled`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val receiving = async { peer.receive(incoming) }
+
+        link.inbound.emit(SlideMessage.FileQueued("9"))
+        link.inbound.emit(SlideMessage.FileCancelled("9", bySender = true))
+
+        assertThat(receiving.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(shelf.items.value.size).isEqualTo(0)
+    }
+
+    @Test
+    fun `stopping a queued receive tells the sender`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val receiving = async { peer.receive(incoming) }
+        link.inbound.emit(SlideMessage.FileQueued("9"))
+
+        peer.cancelReceive("9")
+
+        assertThat(receiving.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(link.sent).containsExactly(SlideMessage.FileCancelled("9", bySender = false))
+    }
+
+    @Test
+    fun `the link going while a file is queued fails its receive`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val receiving = async { peer.receive(incoming) }
+        link.inbound.emit(SlideMessage.FileQueued("9"))
+
+        link.state.value = LinkState.Idle
+
+        assertThat(receiving.await()).isEqualTo(Result.Failure(DataError.Network.DISCONNECTED))
+    }
+
+    // endregion
+
     @Test
     fun `the peer counts as linked only while connected`() = runTest(UnconfinedTestDispatcher()) {
         val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
@@ -300,6 +455,25 @@ class LinkedSlidePeerTest {
         link.state.value = LinkState.Connected(PeerDevice("ep", "Pixel"))
 
         assertThat(peer.isLinked.first()).isEqualTo(true)
+    }
+}
+
+/** Records what a transfer reported. */
+private class RecordingProgress : TransferProgress {
+    val bytes = mutableListOf<Long>()
+    var isQueued = false
+    var isSaving = false
+
+    override fun queued() {
+        isQueued = true
+    }
+
+    override fun progressed(bytesDone: Long) {
+        bytes += bytesDone
+    }
+
+    override fun saving() {
+        isSaving = true
     }
 }
 
@@ -320,23 +494,49 @@ private class FakeLink(override val media: MediaChannel? = null) : PeerLink {
         }
     }
 
-    override suspend fun sendFile(uri: String, announce: suspend (transferId: Long) -> Unit): EmptyResult<DataError.Network> {
-        announce(77)
+    /** When set, a send waits here after its announcement (as a big file takes a while); null: it is done at once. */
+    var sendGate: CompletableDeferred<Unit>? = null
+
+    /** Transfer ids handed out, in order, starting at 77. */
+    private var nextTransferId = 77L
+
+    override suspend fun sendFile(
+        uri: String,
+        announce: suspend (transferId: Long) -> Unit,
+        onProgress: (bytesSent: Long) -> Unit,
+    ): EmptyResult<DataError.Network> {
+        val transferId = nextTransferId++
+        val outcome = CompletableDeferred<EmptyResult<DataError.Network>>()
+        sending[transferId] = outcome
+        announce(transferId)
+        if (outcome.isCompleted) return outcome.await()
         sentFiles += uri
+        onProgress(10)
+        sendGate?.let { gate ->
+            select {
+                gate.onAwait { }
+                outcome.onAwait { }
+            }
+        }
+        if (outcome.isCompleted) return outcome.await()
         return Result.Success(Unit)
     }
 
+    /** Sends under way, by transfer id: cancelling one completes it as cancelled. */
+    private val sending = mutableMapOf<Long, CompletableDeferred<EmptyResult<DataError.Network>>>()
+
     val cancelledTransfers = mutableListOf<Long>()
 
-    override suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit): Result<String, DataError.Network> {
+    override suspend fun receiveFile(transferId: Long, onProgress: (Long) -> Unit): Result<String, DataError.Network> {
         val location = arrived[transferId] ?: return Result.Failure(DataError.Network.DISCONNECTED)
-        onProgress(0.5f)
-        onProgress(1f)
+        onProgress(50)
+        onProgress(100)
         return Result.Success(location)
     }
 
     override fun cancelTransfer(transferId: Long) {
         cancelledTransfers += transferId
+        sending[transferId]?.complete(Result.Failure(DataError.Network.CANCELLED))
     }
 
     override suspend fun startSearching(): EmptyResult<DataError.Network> = Result.Success(Unit)

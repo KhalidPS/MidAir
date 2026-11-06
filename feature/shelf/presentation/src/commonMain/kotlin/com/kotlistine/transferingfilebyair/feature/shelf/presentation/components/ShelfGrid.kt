@@ -34,6 +34,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.ShelfActio
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.air.GrabState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.TransferUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotCoordinates
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotRegistry
@@ -71,6 +72,8 @@ internal fun ShelfGrid(
     pictures: Map<String, ImageBitmap>,
     /** The arriving card still in the air: its slot stays empty until it lands. */
     flyingId: String?,
+    /** The receiving transfer of an arriving card, by card id. Read by the card itself, so progress redraws it alone. */
+    transferOf: (String) -> TransferUi?,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
@@ -108,6 +111,7 @@ internal fun ShelfGrid(
                 item = item,
                 picture = pictures[item.id],
                 onTap = { onAction(ShelfAction.OnIncomingCardTap(item.id)) },
+                transfer = { transferOf(item.id) },
                 isVideoActive = !isFlying,
                 previewModifier = Modifier
                     .onPlaced { slot.value = it }

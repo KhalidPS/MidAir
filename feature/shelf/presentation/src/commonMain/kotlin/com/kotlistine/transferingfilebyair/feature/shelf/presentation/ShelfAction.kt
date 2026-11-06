@@ -1,6 +1,7 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation
 
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKey
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
 
 /** User intents from the shelf screen, handled by [ShelfViewModel.onAction]. */
@@ -56,6 +57,21 @@ sealed interface ShelfAction {
 
     /** Send again a file whose transfer failed (from the failure message). */
     data class OnRetrySend(val id: String) : ShelfAction
+
+    // Transfers.
+
+    /** The transfers pill was tapped: show every file moving either way. */
+    data object OnTransfersClick : ShelfAction
+
+    data object OnTransfersDismiss : ShelfAction
+
+    /** Stop one file, queued or moving, either way. */
+    data class OnCancelTransfer(val key: TransferKey) : ShelfAction
+
+    data object OnCancelAllTransfers : ShelfAction
+
+    /** Take the finished transfers off the list. */
+    data object OnClearFinishedTransfers : ShelfAction
 
     // Air gestures.
 

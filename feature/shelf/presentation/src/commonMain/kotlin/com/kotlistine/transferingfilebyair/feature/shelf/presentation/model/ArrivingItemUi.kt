@@ -8,8 +8,6 @@ data class ArrivingItemUi(
     /** The item's id on the peer's shelf. */
     val id: String,
     val name: String,
-    /** Width / height of the card's preview area, as the peer drew it. */
+    /** Width / height of the card's preview area, as the peer drew it. Its progress is on the transfers board. */
     val aspectRatio: Float,
-    /** How much of the file is here (0..1). */
-    val progress: Float = 0f,
 )
