@@ -53,4 +53,27 @@ sealed interface ShelfEvent {
         val velocityXPxPerS: Float = 0f,
         val velocityYPxPerS: Float = 0f,
     ) : ShelfEvent
+
+    // Air gestures.
+
+    /** Ask for the camera permission; answer with [ShelfAction.OnCameraPermission]. */
+    data object RequestCameraPermission : ShelfEvent
+
+    /**
+     * A fist closed over the shelf at ([x], [y]) (0..1 across and down the screen): grab the card nearest to it and
+     * report it with [ShelfAction.OnCardGrabbed]. Nothing to report if there is no card to grab.
+     */
+    data class GrabCardAt(val x: Float, val y: Float) : ShelfEvent
+
+    /** The held card goes back into its slot (opened here, held too long, or the peer can't take it). */
+    data class HeldCardPutBack(val id: String) : ShelfEvent
+
+    /** A hand opened in front of the peer: the held card is gone from here, its file is on its way. */
+    data class HeldCardCaught(val id: String) : ShelfEvent
+
+    /**
+     * The peer's held card was caught here: it bursts out of the opened hand at ([x], [y]) (0..1 across and down the
+     * screen) and flies into its slot in [ShelfState.arriving].
+     */
+    data class PeerCardCaught(val id: String, val x: Float, val y: Float) : ShelfEvent
 }

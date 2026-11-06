@@ -7,6 +7,7 @@ internal fun DataError.toMessage(): String = when (this) {
     DataError.Local.PERMISSION_DENIED -> "Access to the file was denied."
     DataError.Local.DISK_FULL -> "Your device is out of storage."
     DataError.Local.UNSUPPORTED_FORMAT -> "This device can't play this file."
+    DataError.Local.CAMERA_UNAVAILABLE -> "The camera isn't available for air gestures."
     DataError.Local.UNKNOWN -> "Something went wrong."
     DataError.Network.DISCONNECTED -> "The other device isn't connected."
     DataError.Network.PERMISSION_MISSING -> "Allow nearby devices to pair with the device next to you."

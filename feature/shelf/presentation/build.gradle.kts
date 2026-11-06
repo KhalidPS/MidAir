@@ -11,5 +11,9 @@ kotlin {
             implementation(libs.coil.compose)
             implementation(libs.kotlinx.datetime)
         }
+        androidMain.dependencies {
+            // The runtime camera permission request for air gestures.
+            implementation(libs.androidx.activity.compose)
+        }
     }
 }

@@ -62,7 +62,7 @@ private val ExitClearance = 16.dp
 private const val ThumbnailMaxBytes = 24 * 1024
 private val ThumbnailAttempts = listOf(320 to 80, 256 to 70, 192 to 55)
 
-private fun ImageBitmap.encodeWithinBudget(): ByteArray? =
+internal fun ImageBitmap.encodeWithinBudget(): ByteArray? =
     ThumbnailAttempts.firstNotNullOfOrNull { (maxSide, quality) ->
         encodeForTransfer(maxSide, quality)?.takeIf { it.size <= ThumbnailMaxBytes }
     }

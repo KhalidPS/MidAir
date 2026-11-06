@@ -94,6 +94,14 @@ internal sealed interface SlideMessageDto {
     @Serializable
     @SerialName("route")
     data class FileRoute(val itemId: String, val route: FileRouteDto) : SlideMessageDto
+
+    @Serializable
+    @SerialName("grab")
+    data class Grabbed(val itemId: String, val handSize: Float = 0f) : SlideMessageDto
+
+    @Serializable
+    @SerialName("release")
+    data class Released(val itemId: String) : SlideMessageDto
 }
 
 @Serializable

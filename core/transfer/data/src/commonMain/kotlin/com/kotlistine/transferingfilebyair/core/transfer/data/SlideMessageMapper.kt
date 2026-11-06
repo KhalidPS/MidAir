@@ -41,6 +41,8 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
     is SlideMessage.PlaybackOffer -> SlideMessageDto.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
     is SlideMessage.PlaybackClock -> SlideMessageDto.PlaybackClock(itemId, positionMs, isPlaying)
     is SlideMessage.FileRoute -> SlideMessageDto.FileRoute(itemId, route.toDto())
+    is SlideMessage.Grabbed -> SlideMessageDto.Grabbed(itemId, handSize)
+    is SlideMessage.Released -> SlideMessageDto.Released(itemId)
 }
 
 internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
@@ -82,6 +84,8 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
     is SlideMessageDto.PlaybackOffer -> SlideMessage.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
     is SlideMessageDto.PlaybackClock -> SlideMessage.PlaybackClock(itemId, positionMs, isPlaying)
     is SlideMessageDto.FileRoute -> SlideMessage.FileRoute(itemId, route.toDomain())
+    is SlideMessageDto.Grabbed -> SlideMessage.Grabbed(itemId, handSize)
+    is SlideMessageDto.Released -> SlideMessage.Released(itemId)
 }
 
 private fun ExitEdge.toDto(): ExitEdgeDto = when (this) {

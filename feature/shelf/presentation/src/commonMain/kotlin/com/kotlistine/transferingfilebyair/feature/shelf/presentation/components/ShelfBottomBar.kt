@@ -31,13 +31,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 import com.kotlistine.transferingfilebyair.core.designsystem.icons.AirIcons
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.textSwap
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 
-/** Floating capsule from the reference design: paired device · add · item count · more. */
+/** Floating capsule from the reference design: paired device · air gestures · add · item count · more. */
 @Composable
 internal fun ShelfBottomBar(
     itemCount: Int,
@@ -47,6 +48,10 @@ internal fun ShelfBottomBar(
     onAddClick: () -> Unit,
     onClearClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Whether this device can watch for a hand; the hand button shows only then. */
+    isAirGestureAvailable: Boolean = false,
+    isAirGestureOn: Boolean = false,
+    onAirGestureClick: () -> Unit = {},
 ) {
     Row(
         modifier = modifier
@@ -73,6 +78,7 @@ internal fun ShelfBottomBar(
                 LinkMark(isPaired = isPaired, isSlow = isLinkSlow, modifier = Modifier.align(Alignment.TopEnd))
             }
         }
+        if (isAirGestureAvailable) AirGestureButton(isOn = isAirGestureOn, onClick = onAirGestureClick)
         AddButton(onClick = onAddClick)
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             AnimatedContent(targetState = itemCount, transitionSpec = { textSwap() }) { count ->
@@ -84,6 +90,27 @@ internal fun ShelfBottomBar(
             }
         }
         BarMenu(canClear = itemCount > 0, onClearClick = onClearClick)
+    }
+}
+
+/** Turns air gestures on and off: lit while the camera may watch for a fist over the shelf. */
+@Composable
+private fun AirGestureButton(isOn: Boolean, onClick: () -> Unit) {
+    val lit by animateFloatAsState(if (isOn) 1f else 0f, Motion.enter(240), label = "airLit")
+    IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .graphicsLayer { alpha = lit }
+                .clip(CircleShape)
+                .background(AirColors.OnSurface.copy(alpha = 0.14f)),
+        )
+        Icon(
+            imageVector = AirIcons.Hand,
+            contentDescription = if (isOn) "Turn off air gestures" else "Turn on air gestures",
+            tint = lerp(AirColors.OnSurfaceMuted, AirColors.OnSurface, lit),
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 

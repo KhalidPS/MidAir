@@ -31,6 +31,7 @@ import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.stagger
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.ShelfAction
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.air.GrabState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideState
@@ -73,6 +74,8 @@ internal fun ShelfGrid(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
+    /** A card grabbed by an air gesture: its slot is empty while it is in the hand, and no other card lifts. */
+    grabState: GrabState? = null,
 ) {
     // One clock for the whole first-load cascade; every card reads its own slice in the draw phase.
     val intro = remember { Animatable(0f) }
@@ -146,9 +149,13 @@ internal fun ShelfGrid(
                 onOpenClick = { onAction(ShelfAction.OnOpenClick(item.id)) },
                 onRemoveClick = { onAction(ShelfAction.OnRemoveClick(item.id)) },
                 previewModifier = Modifier
-                    .liftToSlide(slideState, key = item.id, slot = slot) { slideState.tryLift(currentItem, it) }
-                    // While a copy is in the overlay (lifted), the slot shows nothing; the label stays, under the blur.
-                    .graphicsLayer { alpha = if (slideState.hiddenId == item.id) 0f else 1f }
+                    .liftToSlide(slideState, key = item.id, slot = slot) {
+                        grabState?.item == null && slideState.tryLift(currentItem, it)
+                    }
+                    // While a copy is in the overlay (lifted or grabbed), the slot shows nothing; the label stays.
+                    .graphicsLayer {
+                        alpha = if (slideState.hiddenId == item.id || grabState?.hiddenId == item.id) 0f else 1f
+                    }
                     .drawWithContent {
                         drawContent()
                         val cover = handOff.value

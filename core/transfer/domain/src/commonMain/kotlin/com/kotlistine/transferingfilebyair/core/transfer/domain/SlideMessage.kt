@@ -103,8 +103,20 @@ sealed interface SlideMessage {
         val httpUrl: String? = null,
     ) : SlideMessage
 
-    /** Where the sender's video is, reported a few times a second while its card is in the air. */
+    /** Where the sender's video is, reported a few times a second while its card is in the air (or held in a fist). */
     data class PlaybackClock(val itemId: String, val positionMs: Long, val isPlaying: Boolean) : SlideMessage
+
+    /**
+     * Air gesture: the card announced by [DragStart] was grabbed with a fist instead of slid. The peer waits for the
+     * hand to open in front of it, then answers [Released]. [DragCancel] withdraws it (put back, or held too long).
+     * [handSize] is how big the fist was in this phone's camera (0..1): when both phones saw the same fist and each
+     * grabbed a card, the one it was closer to keeps its grab. A grabbed playing video is offered with
+     * [PlaybackOffer] and reported with [PlaybackClock] while it is held, exactly as while it slides.
+     */
+    data class Grabbed(val itemId: String, val handSize: Float = 0f) : SlideMessage
+
+    /** The receiver's answer to [Grabbed]: the hand opened here. The card is ours; its file follows as usual. */
+    data class Released(val itemId: String) : SlideMessage
 
     /**
      * The receiver's answer about the file behind a card whose video it was offered ([PlaybackOffer]): whether the

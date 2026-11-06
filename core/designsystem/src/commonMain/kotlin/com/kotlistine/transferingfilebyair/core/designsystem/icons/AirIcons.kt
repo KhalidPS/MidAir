@@ -41,6 +41,27 @@ object AirIcons {
         }
     }
 
+    /** An open hand: air gestures (grab with a fist, let go by opening the hand). */
+    val Hand: ImageVector by lazy {
+        icon("Hand") {
+            stroke(width = 1.6f) {
+                // Four fingers, the middle ones longest.
+                moveTo(8f, 11.5f); lineTo(8f, 6f)
+                moveTo(11f, 10.5f); lineTo(11f, 4f)
+                moveTo(14f, 10.5f); lineTo(14f, 4.5f)
+                moveTo(17f, 11.5f); lineTo(17f, 7f)
+                // The palm, from the thumb round to the little finger.
+                moveTo(8f, 13.5f)
+                lineTo(5.5f, 11f)
+                moveTo(8f, 11.5f)
+                lineTo(8f, 15f)
+                quadTo(8.5f, 20.5f, 12.5f, 20.5f)
+                quadTo(17f, 20.5f, 17f, 15.5f)
+                lineTo(17f, 11.5f)
+            }
+        }
+    }
+
     val Play: ImageVector by lazy {
         icon("Play") {
             fill {

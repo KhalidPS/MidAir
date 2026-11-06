@@ -27,6 +27,10 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.core.ktx)
+            // Air gestures: the front camera, and the hand-pose model that reads it.
+            implementation(libs.androidx.camera.camera2)
+            implementation(libs.androidx.camera.lifecycle)
+            implementation(libs.mediapipe.tasks.vision)
         }
         commonTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)

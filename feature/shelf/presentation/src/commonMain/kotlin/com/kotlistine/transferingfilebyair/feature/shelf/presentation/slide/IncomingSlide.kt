@@ -69,6 +69,9 @@ private const val MaxCarriedSpeedPx = 6000f
 
 /** How long the light takes to ripple out across the screen after a card arrives. */
 private const val WaveMillis = 1100
+
+/** How small a caught card is as it bursts out of the opened hand. */
+private const val EmergeFromScale = 0.15f
 private val IncomingElevation = 28.dp
 
 /** Every placed grid slot by key, so a received card can find where it lands. */
@@ -133,6 +136,12 @@ class IncomingSlideState internal constructor(
 
     /** The let-go's momentum, on top of the landing: starts at the card's speed and dies out by the slot. */
     private val momentum = Animatable(Offset.Zero, Offset.VectorConverter)
+
+    /** 0 → 1 while a card caught by an opened hand grows out of the palm (1 for every other card). */
+    private val emerge = Animatable(1f)
+
+    /** Caught from the air rather than slid in: no light at an edge, it came out of a hand. */
+    private var isCaught = false
     private val arrival = Animatable(0f)
     private val glow = Animatable(1f)
     private val wave = Animatable(1f)
@@ -165,7 +174,7 @@ class IncomingSlideState internal constructor(
 
     internal fun bloom(): Bloom? {
         val card = card ?: return null
-        if (!isShown) return null
+        if (!isShown || isCaught) return null
         val y = position.value.y + card.heightPx / 2f
         return Bloom(entryEdge, arrival.value * glow.value, y)
     }
@@ -179,7 +188,11 @@ class IncomingSlideState internal constructor(
     internal fun drawnRect(card: IncomingCardUi): Rect {
         val following = Rect(position.value, Size(card.widthPx, card.heightPx))
         val t = landing.value
-        if (t == 0f) return following.translate(momentum.value)
+        if (t == 0f) {
+            // A caught card grows out of the palm about its centre; every other card is at full size already.
+            val size = following.size * (EmergeFromScale + (1f - EmergeFromScale) * emerge.value)
+            return Rect(following.center - Offset(size.width / 2f, size.height / 2f), size).translate(momentum.value)
+        }
         landingTo()?.let { lastLandingTo = it }
         return lerp(landingFrom, lastLandingTo, t).translate(momentum.value)
     }
@@ -198,10 +211,12 @@ class IncomingSlideState internal constructor(
         this.card = card
         picture = null
         isShown = false
+        isCaught = false
         playback.start()
         drawnVelocity = Offset.Zero
         followedFrames = 0
         scope.launch {
+            emerge.snapTo(1f)
             tilt.snapTo(0f)
             turn.snapTo(0f)
             landing.snapTo(0f)
@@ -305,6 +320,44 @@ class IncomingSlideState internal constructor(
         }
     }
 
+    /**
+     * The card was caught by a hand opening in front of this phone, at [center] (overlay pixels): it bursts out of the
+     * palm, then flies into its slot like a card that slid in. A video it carries plays as it comes out.
+     */
+    fun onCaught(id: String, center: Offset) {
+        val card = card?.takeIf { it.id == id } ?: return
+        followJob?.cancel()
+        withdrawJob?.cancel()
+        withdrawJob = null
+        flyingId = id
+        isCaught = true
+        arrivalJob = scope.launch {
+            try {
+                // Kept whole on screen, wherever the camera thought the hand was.
+                val halfWidth = card.widthPx / 2f
+                val halfHeight = card.heightPx / 2f
+                val x = center.x.coerceIn(halfWidth, maxOf(halfWidth, containerSize.width - halfWidth))
+                val y = center.y.coerceIn(halfHeight, maxOf(halfHeight, containerSize.height - halfHeight))
+                position.snapTo(Offset(x - halfWidth, y - halfHeight))
+                emerge.snapTo(0f)
+                isShown = true
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                coroutineScope {
+                    launch { emerge.animateTo(1f, Motion.pop()) }
+                    launch { arrival.animateTo(1f, tween(240, easing = FastOutSlowInEasing)) }
+                }
+                flyIntoSlot(card, carried = Offset.Zero)
+            } finally {
+                // Even when cut short, the slot shows first and the card goes a couple of frames later: no gap.
+                withContext(NonCancellable) {
+                    if (flyingId == card.id) flyingId = null
+                    awaitFrames(2)
+                    clear(card.id)
+                }
+            }
+        }
+    }
+
     private suspend fun flyIntoSlot(card: IncomingCardUi, carried: Offset) {
         // Wait (briefly) for the grid to lay the new slot out.
         var destination: Rect? = null
@@ -348,9 +401,11 @@ class IncomingSlideState internal constructor(
         card = null
         picture = null
         isShown = false
+        isCaught = false
         landingTo = { null }
         drawnVelocity = Offset.Zero
         followedFrames = 0
+        emerge.snapTo(1f)
         momentum.snapTo(Offset.Zero)
         landing.snapTo(0f)
         arrival.snapTo(0f)

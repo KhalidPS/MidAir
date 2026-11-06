@@ -26,7 +26,16 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrecti
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGesture
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGestureDetector
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandFrame
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandPose
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandSmoother
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandTracker
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.AirGestureUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.CatchableCardUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.HandPointUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.PlayingVideoUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
@@ -38,6 +47,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.StateFlow
@@ -52,12 +62,26 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** A card sent again after a failure has no slide to measure; the peer draws it this wide. */
 private const val RetryCardWidthMm = 40f
 
-/** How often a lifted card's video reports where it is, so the peer's half stays on the same frame. */
+/** How often a lifted (or grabbed) card's video reports where it is, so the peer's half stays on the same frame. */
 private const val PlaybackClockMillis = 250L
+
+/**
+ * A card held in the air longer than this goes back to its slot: nobody is coming to take it. Long enough to walk the
+ * hand over, short enough not to leave a card stuck (the hint offers putting it back sooner, with a tap).
+ */
+private val HoldLimit = 12.seconds
+
+/**
+ * A hand opening near this phone while it holds a card puts the card back only after this long: the phones lie side
+ * by side, so this camera may well see the hand open over the other phone, whose catch then wins.
+ */
+private val PutBackGrace = 800.milliseconds
 
 class ShelfViewModel(
     private val repository: ShelfRepository,
@@ -73,6 +97,8 @@ class ShelfViewModel(
     private val keepAlive: TransferKeepAlive = TransferKeepAlive.None,
     /** Plays videos in their cards; the screen draws its picture. Without one, a tapped video opens in another app. */
     val videoEngine: VideoEngine? = null,
+    /** Watches for a fist and an open hand in front of the screen (the front camera). Without one, no air gestures. */
+    private val hands: HandTracker? = null,
     private val clock: Clock = Clock.System,
     private val timeZone: TimeZone = TimeZone.currentSystemDefault(),
 ) : ViewModel() {
@@ -114,6 +140,36 @@ class ShelfViewModel(
     /** Messages to the peer go out one at a time, in order, whatever the transport's own threading. */
     private val sendLock = Mutex()
 
+    private var air = AirGestureUi(isAvailable = hands != null)
+    private val detector = AirGestureDetector()
+    private val smoother = HandSmoother()
+    private var watchJob: Job? = null
+    private var isScreenVisible = false
+    private var isCameraPermitted = false
+
+    /** The camera failed: it isn't tried again until the user turns air gestures on again or grants it anew. */
+    private var cameraFailed = false
+
+    /** Air gestures turn on once the camera permission being asked for is granted. */
+    private var turnOnWhenPermitted = false
+
+    /** The card in this user's hand, announced to the peer. */
+    private var held: HeldCard? = null
+
+    /** The last grab seen by the camera, waiting for its card to be picked ([ShelfAction.OnCardGrabbed]). */
+    private var pendingGrab: AirGesture.Grab? = null
+
+    /** The card in the peer's user's hand, catchable here (with its video, when it carries one). */
+    private var catchable: IncomingSlide? = null
+
+    /** Peer cards caught here whose files are still to come; the peer may still take one back. */
+    private val caughtIds = mutableSetOf<String>()
+
+    private val _hand = MutableStateFlow<HandPointUi?>(null)
+
+    /** The hand in front of the camera while air gestures watch, at camera rate. Read it in the draw phase only. */
+    val hand: StateFlow<HandPointUi?> = _hand
+
     private val _state = MutableStateFlow(ShelfState())
     val state: StateFlow<ShelfState> = _state
         .onStart {
@@ -131,6 +187,7 @@ class ShelfViewModel(
     init {
         if (peer != null) talkTo(peer)
         videoEngine?.let(::watch)
+        publishAir()
     }
 
     override fun onCleared() {
@@ -161,6 +218,15 @@ class ShelfViewModel(
             is ShelfAction.OnIncomingCardTap ->
                 if (arriving.any { it.id == action.id }) peer?.cancelReceive(action.id)
             is ShelfAction.OnRetrySend -> resend(action.id)
+            ShelfAction.OnAirGestureToggle -> toggleAirGestures()
+            is ShelfAction.OnCameraPermission -> onCameraPermission(action.granted, action.justAsked)
+            is ShelfAction.OnScreenVisibilityChanged -> {
+                isScreenVisible = action.isVisible
+                updateWatching()
+            }
+            is ShelfAction.OnCardGrabbed -> holdCard(action)
+            ShelfAction.OnCatchTap -> catchCard(x = 0.5f, y = 0.35f)
+            ShelfAction.OnPutBackTap -> held?.let { putBack(it, tellPeer = true) }
         }
     }
 
@@ -198,13 +264,16 @@ class ShelfViewModel(
     }
 
     /**
-     * A card with [id] is on this screen: on the shelf, waiting for its file, or coming in from the peer. A received
-     * item counts from the moment it is known, before the shelf's own list catches up with it.
+     * A card with [id] is on this screen: on the shelf, waiting for its file, coming in from the peer, or held over
+     * from the peer (or just caught from it). A received item counts from the moment it is known, before the shelf's
+     * own list catches up with it.
      */
     private fun isOnScreen(id: String): Boolean =
         _state.value.items.any { it.id == id } ||
             arriving.any { it.id == id } ||
             incoming?.start?.itemId == id ||
+            catchable?.start?.itemId == id ||
+            id in caughtIds ||
             (id in arrivedFrom && shelfItems.none { it.id == id })
 
     private fun addFiles(uris: List<String>) {
@@ -398,31 +467,49 @@ class ShelfViewModel(
             // One turn of the send lock: the retry goes out before anything queued after the start, and the outcome
             // is recorded before a commit can be sent.
             sendLock.withLock {
-                var result = peer.transport.send(start)
-                if (result is Result.Failure && result.error == DataError.Network.PAYLOAD_TOO_LARGE && start.thumbnail != null) {
-                    // The picture made it too big for one message: the peer can draw the card without it.
-                    result = peer.transport.send(start.copy(thumbnail = null))
-                }
                 // Without a start the peer ignores the rest of the slide, so the card can't be handed over.
-                if (result is Result.Failure) slide.startFailed = true
-                // Right behind the start, with the position read as it goes.
-                if (sharesVideo && !slide.startFailed) {
-                    playbackReport(item.id, offer = true, httpUrl = slide.videoUrl)?.let { offer ->
-                        // Sent or not, the peer may have it: it then answers how the file goes, and is waited for.
-                        slide.offeredVideo = true
-                        peer.transport.send(offer)
-                    }
-                }
+                if (announce(peer, start, slide, sharesVideo) is Result.Failure) slide.startFailed = true
             }
-            if (sharesVideo) reportPlayback(peer, slide)
+            if (sharesVideo) reportPlayback(peer, slide.id) { outgoing === slide }
         }
     }
 
     /**
-     * When the lifted card is the video playing here, lets the peer read its file, so the peer's half of the card plays
-     * it too: over the Wi-Fi network both phones are on, or over the pairing link once it is fast enough.
+     * Sends [start] and, when [card] carries its playing video, the offer right behind it, with the position read as
+     * it goes. Call it holding the send lock. Returns how the start went.
      */
-    private fun shareVideo(peer: SlidePeer, item: ShelfItemUi, slide: OutgoingSlide): Boolean {
+    private suspend fun announce(
+        peer: SlidePeer,
+        start: SlideMessage.DragStart,
+        card: CarriedCard,
+        sharesVideo: Boolean,
+    ): EmptyResult<DataError.Network> {
+        val result = sendStart(peer, start)
+        if (sharesVideo && result is Result.Success) {
+            playbackReport(card.id, offer = true, httpUrl = card.videoUrl)?.let { offer ->
+                // Sent or not, the peer may have it: it then answers how the file goes, and is waited for.
+                card.offeredVideo = true
+                peer.transport.send(offer)
+            }
+        }
+        return result
+    }
+
+    /** Sends [start]; call it holding the send lock. */
+    private suspend fun sendStart(peer: SlidePeer, start: SlideMessage.DragStart): EmptyResult<DataError.Network> {
+        val result = peer.transport.send(start)
+        if (result is Result.Failure && result.error == DataError.Network.PAYLOAD_TOO_LARGE && start.thumbnail != null) {
+            // The picture made it too big for one message: the peer can draw the card without it.
+            return peer.transport.send(start.copy(thumbnail = null))
+        }
+        return result
+    }
+
+    /**
+     * When the lifted (or grabbed) card is the video playing here, lets the peer read its file, so the peer's half of
+     * the card plays it too: over the Wi-Fi network both phones are on, or over the pairing link once it is fast enough.
+     */
+    private fun shareVideo(peer: SlidePeer, item: ShelfItemUi, card: CarriedCard): Boolean {
         if (videoEngine == null || _state.value.playing?.itemId != item.id) return false
         val media = peer.media ?: return false
         val url = media.share(item.id, item.uri)
@@ -430,7 +517,7 @@ class ShelfViewModel(
             media.unshare(item.id)
             return false
         }
-        slide.videoUrl = url
+        card.videoUrl = url
         return true
     }
 
@@ -446,13 +533,13 @@ class ShelfViewModel(
         }
     }
 
-    /** Reports where the video is a few times a second, for as long as its card is in the air. */
-    private suspend fun reportPlayback(peer: SlidePeer, slide: OutgoingSlide) {
+    /** Reports where the video of [id] is a few times a second, for as long as its card [isInAir] (slid or held). */
+    private suspend fun reportPlayback(peer: SlidePeer, id: String, isInAir: () -> Boolean) {
         while (true) {
             delay(PlaybackClockMillis)
-            if (outgoing !== slide) return
+            if (!isInAir()) return
             val sent = sendLock.withLock {
-                val report = playbackReport(slide.id, offer = false) ?: return@withLock false
+                val report = playbackReport(id, offer = false) ?: return@withLock false
                 peer.transport.send(report)
                 true
             }
@@ -538,7 +625,11 @@ class ShelfViewModel(
 
     private fun talkTo(peer: SlidePeer) {
         combine(peer.isLinked, peer.media?.isFastUpdates ?: flowOf(true)) { linked, fast -> linked to fast }
-            .onEach { (linked, fast) -> _state.update { it.copy(isPaired = linked, isLinkSlow = linked && !fast) } }
+            .onEach { (linked, fast) ->
+                _state.update { it.copy(isPaired = linked, isLinkSlow = linked && !fast) }
+                if (!linked) dropAirCards()
+                updateWatching()
+            }
             .launchIn(viewModelScope)
         peer.transport.incoming
             .onEach { onPeerMessage(peer, it) }
@@ -600,17 +691,44 @@ class ShelfViewModel(
                 )
             }
             is SlideMessage.DragCancel -> {
-                if (incoming?.start?.itemId != message.itemId) return
-                incoming = null
-                if (following?.itemId == message.itemId || _state.value.playing?.itemId == message.itemId) stopVideo()
+                val id = message.itemId
+                when {
+                    incoming?.start?.itemId == id -> incoming = null
+                    catchable?.start?.itemId == id -> clearCatchable()
+                    // Caught here just as the peer gave up holding it: its file won't come.
+                    id in caughtIds -> {
+                        peer.cancelReceive(id)
+                        return
+                    }
+                    else -> return
+                }
+                if (following?.itemId == id || _state.value.playing?.itemId == id) stopVideo()
                 // What was read of its video is no longer wanted.
-                peer.media?.forget(message.itemId)
-                eventChannel.send(ShelfEvent.PeerCardWithdrawn(message.itemId))
+                peer.media?.forget(id)
+                eventChannel.send(ShelfEvent.PeerCardWithdrawn(id))
             }
             is SlideMessage.PlaybackOffer -> {
-                incoming?.takeIf { it.start.itemId == message.itemId }?.videoOffered = true
+                peerCard(message.itemId)?.videoOffered = true
                 followPeerVideo(peer, message)
             }
+            is SlideMessage.Grabbed -> {
+                val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
+                val mine = held
+                if (mine != null) {
+                    // Both phones saw the same fist close: the one it was closer to (bigger in its camera) keeps
+                    // its grab, the other puts its card back. Both sides decide alike, so exactly one grab stays.
+                    if (!message.winsOver(mine)) return
+                    putBack(mine, tellPeer = true)
+                }
+                // Held, not slid: it waits for a hand to open here instead of following moves in from the edge. Its
+                // video (if it carries one) keeps playing along here, muted, ready for the catch.
+                incoming = null
+                catchable = slide
+                air = air.copy(catchable = CatchableCardUi(slide.start.itemId, slide.start.name))
+                publishAir()
+                updateWatching()
+            }
+            is SlideMessage.Released -> onPeerCaught(message.itemId)
             is SlideMessage.PlaybackClock ->
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
@@ -619,17 +737,6 @@ class ShelfViewModel(
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
                 incoming = null
                 val start = slide.start
-                // Its slot opens at the top of the shelf at once; the card flies into it and waits there for its file.
-                arriving.removeAll { it.id == start.itemId }
-                arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
-                publishItems()
-                val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
-                val delivery = when {
-                    video?.viaLink == true -> Delivery.FETCH
-                    slide.videoOffered -> Delivery.ASK_TO_SEND
-                    else -> Delivery.SENT
-                }
-                takeOverPeerVideo(start.itemId)
                 val letGo = slide.exitEdge?.let { edge ->
                     incomingCardVelocity(
                         SlideMessage.DragMove(
@@ -645,21 +752,46 @@ class ShelfViewModel(
                         peer.link,
                     )
                 }
-                eventChannel.send(
+                land(
+                    peer,
+                    slide,
                     ShelfEvent.PeerCardArrived(
-                        id = message.itemId,
+                        id = start.itemId,
                         velocityXPxPerS = letGo?.let { density.xMmToPx(it.leftMm) } ?: 0f,
                         velocityYPxPerS = letGo?.let { density.yMmToPx(it.topMm) } ?: 0f,
                     ),
                 )
-                // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen
-                // doesn't stop it.
-                transferScope.launch {
-                    keepAlive.keeping("Receiving “${slide.start.name}”") {
-                        // Read over the shared Wi-Fi, the video must move to its own file once that is here.
-                        receive(peer, slide.start, delivery, movesToOwnFile = video != null && !video.viaLink)
-                    }
-                }
+            }
+        }
+    }
+
+    /** The peer's card with [id], slid in or held over, while it is still coming. */
+    private fun peerCard(id: String): IncomingSlide? =
+        incoming?.takeIf { it.start.itemId == id } ?: catchable?.takeIf { it.start.itemId == id }
+
+    /**
+     * The peer's card is ours, let go past the edge or caught by a hand: [arrived] plays its arrival, and it waits for
+     * its file in its slot. A video it carried plays on here, with sound. Returns the wait for the file.
+     */
+    private suspend fun land(peer: SlidePeer, slide: IncomingSlide, arrived: ShelfEvent): Job {
+        val start = slide.start
+        // Its slot opens at the top of the shelf at once; the card flies into it and waits there for its file.
+        arriving.removeAll { it.id == start.itemId }
+        arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
+        publishItems()
+        val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
+        val delivery = when {
+            video?.viaLink == true -> Delivery.FETCH
+            slide.videoOffered -> Delivery.ASK_TO_SEND
+            else -> Delivery.SENT
+        }
+        takeOverPeerVideo(start.itemId)
+        eventChannel.send(arrived)
+        // In its own coroutine: messages keep flowing while the file comes in, and leaving the screen doesn't stop it.
+        return transferScope.launch {
+            keepAlive.keeping("Receiving “${start.name}”") {
+                // Read over the shared Wi-Fi, the video must move to its own file once that is here.
+                receive(peer, start, delivery, movesToOwnFile = video != null && !video.viaLink)
             }
         }
     }
@@ -673,16 +805,21 @@ class ShelfViewModel(
         receivingNames += start.name
         var lastPercent = -1
         val file = IncomingFile(start.itemId, start.name, start.mimeType, start.sizeBytes, delivery)
-        val result = peer.receive(file) { fraction ->
-            // Whole percents are plenty for a ring, and keep the state light on big files.
-            val percent = (fraction * 100).toInt()
-            if (percent != lastPercent) {
-                lastPercent = percent
-                // Back on the transfer scope's thread, whichever thread the link reports from.
-                transferScope.launch { showProgress(start.itemId, fraction) }
+        val result = try {
+            peer.receive(file) { fraction ->
+                // Whole percents are plenty for a ring, and keep the state light on big files.
+                val percent = (fraction * 100).toInt()
+                if (percent != lastPercent) {
+                    lastPercent = percent
+                    // Back on the transfer scope's thread, whichever thread the link reports from.
+                    transferScope.launch { showProgress(start.itemId, fraction) }
+                }
             }
+        } finally {
+            // Also when the wait is called off (a catch the peer never heard about).
+            receivingNames.remove(start.name)
+            caughtIds.remove(start.itemId)
         }
-        receivingNames.remove(start.name)
         arriving.removeAll { it.id == start.itemId }
         when (result) {
             is Result.Success -> {
@@ -720,7 +857,7 @@ class ShelfViewModel(
     private fun followPeerVideo(peer: SlidePeer, offer: SlideMessage.PlaybackOffer) {
         val engine = videoEngine ?: return
         val media = peer.media ?: return
-        if (incoming?.start?.itemId != offer.itemId) return
+        if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
         media.forget(offer.itemId)
         val follower = PlaybackFollower()
@@ -825,7 +962,276 @@ class ShelfViewModel(
 
     // endregion
 
-    private inner class OutgoingSlide(val id: String) {
+    // region Air gestures: a fist grabs a card here, a hand opening in front of the peer drops it there.
+
+    private fun publishAir() {
+        _state.update { it.copy(air = air) }
+    }
+
+    private fun toggleAirGestures() {
+        if (hands == null) return
+        when {
+            air.isOn -> setAirGestures(on = false)
+            isCameraPermitted -> setAirGestures(on = true)
+            else -> {
+                turnOnWhenPermitted = true
+                viewModelScope.launch { eventChannel.send(ShelfEvent.RequestCameraPermission) }
+            }
+        }
+    }
+
+    private fun onCameraPermission(granted: Boolean, justAsked: Boolean) {
+        if (granted && !isCameraPermitted) cameraFailed = false
+        isCameraPermitted = granted
+        if (justAsked && turnOnWhenPermitted) {
+            if (granted) {
+                setAirGestures(on = true)
+            } else {
+                viewModelScope.launch { eventChannel.send(ShelfEvent.ShowError(DataError.Local.CAMERA_UNAVAILABLE)) }
+            }
+        }
+        if (justAsked) turnOnWhenPermitted = false
+        updateWatching()
+    }
+
+    private fun setAirGestures(on: Boolean) {
+        turnOnWhenPermitted = false
+        if (on) cameraFailed = false
+        if (!on) held?.let { putBack(it, tellPeer = true) }
+        air = air.copy(isOn = on)
+        publishAir()
+        updateWatching()
+    }
+
+    /**
+     * The camera watches only while it can be useful: the shelf is on screen, a phone is paired, and either this user
+     * turned air gestures on or the peer's user is holding a card over to this phone.
+     */
+    private fun updateWatching() {
+        val hands = hands ?: return
+        val wanted = isScreenVisible && isCameraPermitted && !cameraFailed && _state.value.isPaired &&
+            (air.isOn || catchable != null)
+        if (wanted == (watchJob != null)) return
+        if (!wanted) {
+            watchJob?.cancel()
+            watchJob = null
+            _hand.value = null
+        } else {
+            detector.reset()
+            smoother.reset()
+            val job = hands.frames()
+                .onEach(::onHandFrame)
+                .catch {
+                    watchJob = null
+                    cameraFailed = true
+                    _hand.value = null
+                    air = air.copy(isOn = false, isWatching = false)
+                    publishAir()
+                    eventChannel.send(ShelfEvent.ShowError(DataError.Local.CAMERA_UNAVAILABLE))
+                }
+                .launchIn(viewModelScope)
+            // A camera that failed straight away has been given up on already.
+            watchJob = job.takeIf { it.isActive }
+        }
+        air = air.copy(isWatching = watchJob != null)
+        publishAir()
+    }
+
+    private suspend fun onHandFrame(frame: HandFrame) {
+        // Drawn smoothed and slightly ahead; gestures use the raw positions.
+        _hand.value = if (frame.pose == HandPose.NONE) {
+            null
+        } else {
+            val (x, y) = smoother.smooth(frame.x, frame.y, frame.atMillis)
+            HandPointUi(x, y, frame.pose == HandPose.FIST)
+        }
+        when (val gesture = detector.onFrame(frame)) {
+            is AirGesture.Grab -> if (canGrab()) {
+                pendingGrab = gesture
+                eventChannel.send(ShelfEvent.GrabCardAt(gesture.x, gesture.y))
+            }
+            // A hand opening catches the peer's card here; with a card in this hand, it puts it back instead (unless
+            // the peer catches it meanwhile). A hand that comes in already open counts too: the fist it carried may
+            // never have been in this camera's view.
+            is AirGesture.Release, is AirGesture.Open -> onHandOpened(gesture)
+            null -> Unit
+        }
+    }
+
+    private fun onHandOpened(gesture: AirGesture) {
+        when {
+            catchable != null -> {
+                detector.requireHandAway()
+                catchCard(gesture.x, gesture.y)
+            }
+            else -> held?.let { card ->
+                detector.requireHandAway()
+                if (card.putBackJob?.isActive != true) {
+                    card.putBackJob = viewModelScope.launch {
+                        delay(PutBackGrace)
+                        putBack(card, tellPeer = true)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun canGrab(): Boolean =
+        air.isOn && held == null && catchable == null && outgoing == null && _state.value.isPaired &&
+            _state.value.items.isNotEmpty()
+
+    /**
+     * The card picked for a grab is in the hand: the peer learns about it, and waits for a hand to open there. When it
+     * is the video playing here, it carries the video like a slid card: the peer plays along, muted, until the catch.
+     */
+    private fun holdCard(action: ShelfAction.OnCardGrabbed) {
+        val peer = peer
+        val item = shelfItems.firstOrNull { it.id == action.id && it.id !in sentIds }
+        if (peer == null || item == null || held != null || !canGrabNow()) {
+            if (held?.id != action.id) viewModelScope.launch { eventChannel.send(ShelfEvent.HeldCardPutBack(action.id)) }
+            return
+        }
+        val card = HeldCard(item.id, handSize = pendingGrab?.size ?: 0f)
+        pendingGrab = null
+        held = card
+        air = air.copy(heldId = item.id, heldName = item.name)
+        publishAir()
+        val start = SlideMessage.DragStart(
+            itemId = item.id,
+            name = item.name,
+            mimeType = item.mimeType,
+            sizeBytes = item.sizeBytes,
+            cardWidthMm = density.xPxToMm(action.cardWidthPx),
+            cardHeightMm = density.yPxToMm(action.cardHeightPx),
+            thumbnail = action.thumbnail,
+        )
+        val sharesVideo = shareVideo(peer, item, card)
+        transferScope.launch {
+            val announced = sendLock.withLock { announce(peer, start, card, sharesVideo) }
+            val grabbed = if (announced is Result.Failure) {
+                announced
+            } else {
+                deliver(peer, SlideMessage.Grabbed(item.id, card.handSize))
+            }
+            if (grabbed is Result.Failure) {
+                if (held === card) {
+                    putBack(card, tellPeer = true)
+                    eventChannel.send(ShelfEvent.ShowError(grabbed.error))
+                }
+            } else if (sharesVideo) {
+                reportPlayback(peer, card.id) { held === card }
+            }
+        }
+        card.expiry = viewModelScope.launch {
+            delay(HoldLimit)
+            if (held === card) putBack(card, tellPeer = true)
+        }
+    }
+
+    /** Like [canGrab], minus the card that may already be on its way into the hand. */
+    private fun canGrabNow(): Boolean = air.isOn && catchable == null && outgoing == null && _state.value.isPaired
+
+    private fun putBack(card: HeldCard, tellPeer: Boolean) {
+        if (held !== card) return
+        held = null
+        card.expiry?.cancel()
+        card.putBackJob?.cancel()
+        air = air.copy(heldId = null, heldName = null)
+        publishAir()
+        // Back on this shelf: the peer stops reading its video.
+        peer?.media?.unshare(card.id)
+        if (tellPeer) post(SlideMessage.DragCancel(card.id))
+        viewModelScope.launch { eventChannel.send(ShelfEvent.HeldCardPutBack(card.id)) }
+    }
+
+    /**
+     * A hand opened in front of the peer: the held card leaves this shelf, and its file follows (a video it carried
+     * stays readable, so the peer plays on and may take the file from what it read).
+     */
+    private suspend fun onPeerCaught(id: String) {
+        val card = held?.takeIf { it.id == id }
+        val item = shelfItems.firstOrNull { it.id == id }
+        if (card == null || item == null) {
+            // Not held any more (put back or timed out just before): the peer must not wait for a file.
+            post(SlideMessage.DragCancel(id))
+            card?.let { putBack(it, tellPeer = false) }
+            return
+        }
+        held = null
+        card.expiry?.cancel()
+        card.putBackJob?.cancel()
+        air = air.copy(heldId = null, heldName = null)
+        publishAir()
+        sentIds.add(id)
+        publishItems()
+        eventChannel.send(ShelfEvent.HeldCardCaught(id))
+        transferScope.launch {
+            keepAlive.keeping("Sending “${item.name}”") { deliverFile(item, peerMayFetch = card.offeredVideo) }
+        }
+    }
+
+    /**
+     * Catches the peer's held card at ([x], [y]) on this screen. The card lands at once, while the peer is told: waiting
+     * for the message to go out first made the catch feel late. If it can't go out, the landing is undone.
+     */
+    private fun catchCard(x: Float, y: Float) {
+        val peer = peer ?: return
+        val slide = catchable ?: return
+        val id = slide.start.itemId
+        clearCatchable()
+        caughtIds += id
+        transferScope.launch {
+            val receiving = land(peer, slide, ShelfEvent.PeerCardCaught(id, x, y))
+            val answered = deliver(peer, SlideMessage.Released(id))
+            if (answered is Result.Failure) {
+                // The peer never heard of the catch, so no file is coming (and its video stops here).
+                receiving.cancel()
+                caughtIds.remove(id)
+                arriving.removeAll { it.id == id }
+                publishItems()
+                peer.media?.forget(id)
+                eventChannel.send(ShelfEvent.PeerCardWithdrawn(id))
+                eventChannel.send(ShelfEvent.ShowError(answered.error))
+            }
+        }
+    }
+
+    private fun clearCatchable() {
+        catchable = null
+        air = air.copy(catchable = null)
+        publishAir()
+        updateWatching()
+    }
+
+    /** The link dropped: whatever was held in the air, on either side, goes back. */
+    private suspend fun dropAirCards() {
+        held?.let { putBack(it, tellPeer = false) }
+        val waiting = catchable ?: return
+        clearCatchable()
+        if (following?.itemId == waiting.start.itemId) stopVideo()
+        eventChannel.send(ShelfEvent.PeerCardWithdrawn(waiting.start.itemId))
+    }
+
+    private fun SlideMessage.Grabbed.winsOver(mine: HeldCard): Boolean =
+        if (handSize != mine.handSize) handSize > mine.handSize else itemId > mine.id
+
+    // endregion
+
+    /** A card carried off this shelf toward the peer, slid or held in a fist, and the video it may carry. */
+    private open class CarriedCard(val id: String) {
+        /** Where the peer reads this card's video over the shared Wi-Fi, when it is one. */
+        var videoUrl: String? = null
+
+        /** Its video was offered to the peer, which then says how the file goes once it has the card. */
+        var offeredVideo = false
+    }
+
+    private class HeldCard(id: String, val handSize: Float) : CarriedCard(id) {
+        var expiry: Job? = null
+        var putBackJob: Job? = null
+    }
+
+    private inner class OutgoingSlide(id: String) : CarriedCard(id) {
         var seq = 0
         var frames = 0
         var isStreaming = false
@@ -845,12 +1251,6 @@ class ShelfViewModel(
         var edge: ExitEdge? = null
         var outwardMmPerS = 0f
         var alongEdgeMmPerS = 0f
-
-        /** Where the peer reads this card's video over the shared Wi-Fi, when it is one. */
-        var videoUrl: String? = null
-
-        /** Its video was offered to the peer, which then says how the file goes after the commit. */
-        var offeredVideo = false
     }
 
     private class IncomingSlide(val start: SlideMessage.DragStart) {

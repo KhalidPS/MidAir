@@ -11,7 +11,10 @@ import kotlinx.coroutines.SupervisorJob
 import org.koin.core.module.Module
 import org.koin.dsl.module
 
-/** Provides [ShelfDatabase], a FileMetadataSource and a ReceivedFileStore for the current platform. */
+/**
+ * Provides [ShelfDatabase], a FileMetadataSource and a ReceivedFileStore for the current platform, and a HandTracker
+ * where the platform can watch for air gestures.
+ */
 internal expect val platformShelfDataModule: Module
 
 val shelfDataModule = module {
