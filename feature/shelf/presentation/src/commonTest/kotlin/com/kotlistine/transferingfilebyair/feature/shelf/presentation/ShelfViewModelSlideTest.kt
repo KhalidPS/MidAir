@@ -176,7 +176,7 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
-    fun `while a move is still going out, only the newest one waits, and none goes after the let-go`() = runTest {
+    fun `moves made while one goes out all go together in the next message, and none after the let-go`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
         viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -100f)))
@@ -190,9 +190,11 @@ class ShelfViewModelSlideTest {
         peer.transport.gate = null
         busy.complete(Unit)
 
-        val moves = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMove>()
-        // The first, the one that was going out when the link got busy, and the newest; the one in between is gone.
-        assertThat(moves.map { it.seq }).containsExactly(1, 2, 4)
+        // The first alone, the one going out when the link got busy alone, then the two made meanwhile together.
+        val sent = peer.transport.sentSlides
+        assertThat(sent.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2)
+        assertThat(sent.filterIsInstance<SlideMessage.DragMoves>().map { batch -> batch.moves.map { it.seq } })
+            .containsExactly(listOf(3, 4))
 
         peer.transport.gate = CompletableDeferred()
         viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
@@ -201,9 +203,28 @@ class ShelfViewModelSlideTest {
         peer.transport.gate?.complete(Unit)
         peer.transport.gate = null
 
-        val sent = peer.transport.sentSlides
-        assertThat(sent.last()).isInstanceOf(SlideMessage.DragCommit::class)
-        assertThat(sent.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2, 4, 5)
+        val afterLetGo = peer.transport.sentSlides
+        assertThat(afterLetGo.last()).isInstanceOf(SlideMessage.DragCommit::class)
+        // The move made after the one going out was let go with its card: the commit says where it went.
+        assertThat(afterLetGo.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2, 5)
+        assertThat(afterLetGo.filterIsInstance<SlideMessage.DragMoves>().size).isEqualTo(1)
+    }
+
+    @Test
+    fun `a batch keeps only the last half second of moves`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -100f)))
+        val busy = CompletableDeferred<Unit>()
+        peer.transport.gate = busy
+
+        repeat(41) { viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -99f + it))) }
+        peer.transport.gate = null
+        busy.complete(Unit)
+
+        // Move 2 was going out; of the 40 made meanwhile, the newest 30 follow together.
+        val batch = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMoves>().single()
+        assertThat(batch.moves.map { it.seq }).isEqualTo((13..42).toList())
     }
 
     @Test
@@ -528,6 +549,20 @@ class ShelfViewModelSlideTest {
             // 200 mm/s out of the peer's right edge: 2 000 px/s rightward on this screen.
             assertThat(arrived.velocityXPxPerS).isCloseTo(2_000f, Tolerance)
             cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `moves that came together are played back one by one`() = runTest {
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+            skipItems(1)
+
+            peer.transport.deliver(SlideMessage.DragMoves(listOf(move(seq = 1), move(seq = 2), move(seq = 3))))
+
+            val moved = listOf(awaitItem(), awaitItem(), awaitItem())
+            assertThat(moved.all { it is ShelfEvent.PeerCardMoved }).isEqualTo(true)
+            expectNoEvents()
         }
     }
 

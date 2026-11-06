@@ -378,7 +378,7 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             Log.w("AirLink", "Card messages paused ${now - last} ms, then ${message::class.simpleName}")
         }
         lastSlideMessageAt = when (message) {
-            is SlideMessage.DragMove, is SlideMessage.PlaybackClock, is SlideMessage.DragStart,
+            is SlideMessage.DragMove, is SlideMessage.DragMoves, is SlideMessage.PlaybackClock, is SlideMessage.DragStart,
             is SlideMessage.PlaybackOffer,
             -> now
             else -> null
@@ -404,6 +404,10 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             }
             is SlideMessage.DragMove ->
                 if (moveTimings.itemId == message.itemId) moveTimings.add(message.seq, now, message.atMillis)
+            // Batched while the link was busy: each came in now.
+            is SlideMessage.DragMoves -> message.moves.forEach { move ->
+                if (moveTimings.itemId == move.itemId) moveTimings.add(move.seq, now, move.atMillis)
+            }
             is SlideMessage.DragCommit -> endSlide(message.itemId, "landed")
             is SlideMessage.DragCancel -> endSlide(message.itemId, "withdrawn")
             else -> Unit

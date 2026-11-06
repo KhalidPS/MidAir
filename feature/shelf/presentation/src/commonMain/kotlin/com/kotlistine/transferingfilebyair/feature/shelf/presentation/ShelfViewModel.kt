@@ -78,6 +78,9 @@ private fun Result<*, DataError>?.errorOr(whenMissing: DataError): DataError? = 
     is Result.Success -> null
 }
 
+/** Moves kept for the next message at most: half a second of frames, plenty to draw the card's path evenly. */
+private const val MaxBatchedMoves = 30
+
 /** A card sent again after a failure has no slide to measure; the peer draws it this wide. */
 private const val RetryCardWidthMm = 40f
 
@@ -156,13 +159,14 @@ class ShelfViewModel(
     private val sendLock = Mutex()
 
     /**
-     * The newest move of the card in the air that hasn't gone out yet. Moves are made every frame, but while a file
-     * moves over the same link one message can take hundreds of milliseconds to go: queued, they piled up by the
-     * thousand, the peer played the backlog back in slow motion, and the let-go waited behind all of it. So a move
-     * waiting while another goes out is replaced by the next one, never queued: only where the card is now matters
-     * (the peer fills in between).
+     * Moves of the card in the air that haven't gone out yet, oldest first. Moves are made every frame, but while a
+     * file or a video's pieces share the link, one message can take hundreds of milliseconds to go. One message per
+     * move then piled up by the thousand (the peer played the backlog back in slow motion, and the let-go waited
+     * behind all of it); dropping all but the newest left the peer too few points to draw the card's path evenly.
+     * So the moves made while one message goes out all go together in the next ([SlideMessage.DragMoves]): every
+     * point arrives, and never more than one message waits. At most [MaxBatchedMoves] are kept.
      */
-    private var pendingMove: SlideMessage.DragMove? = null
+    private val pendingMoves = ArrayDeque<SlideMessage.DragMove>()
     private var moveSender: Job? = null
 
     private var air = AirGestureUi(isAvailable = hands != null)
@@ -667,18 +671,22 @@ class ShelfViewModel(
         return false
     }
 
-    /** Sends [move] as soon as the link is free, in place of any older move still waiting (see [pendingMove]). */
+    /** Sends [move] as soon as the link is free, with any others made meanwhile (see [pendingMoves]). */
     private fun postMove(move: SlideMessage.DragMove) {
         val peer = peer ?: return
-        pendingMove = move
+        pendingMoves.addLast(move)
+        while (pendingMoves.size > MaxBatchedMoves) pendingMoves.removeFirst()
         if (moveSender?.isActive == true) return
         moveSender = transferScope.launch {
-            while (true) {
-                val next = pendingMove ?: break
-                pendingMove = null
+            while (pendingMoves.isNotEmpty()) {
                 // Let go or put back meanwhile: its commit or cancel says where it went, and no move may follow it.
-                if (outgoing?.id != next.itemId) continue
-                deliver(peer, next)
+                val batch = pendingMoves.filter { it.itemId == outgoing?.id }
+                pendingMoves.clear()
+                when (batch.size) {
+                    0 -> Unit
+                    1 -> deliver(peer, batch.single())
+                    else -> deliver(peer, SlideMessage.DragMoves(batch))
+                }
             }
         }
     }
@@ -752,35 +760,9 @@ class ShelfViewModel(
                     ),
                 )
             }
-            is SlideMessage.DragMove -> {
-                val slide = incoming?.takeIf { it.start.itemId == message.itemId && message.seq > it.lastSeq } ?: return
-                slide.lastSeq = message.seq
-                slide.exitEdge = message.exitEdge
-                // Where the card was when the move left the peer; the screen plays the moves back evenly and draws
-                // the card where it is by now.
-                val link = peer.link
-                val position = incomingCardPosition(
-                    move = message,
-                    cardWidthMm = slide.start.cardWidthMm,
-                    receiverWidthMm = density.xPxToMm(viewportWidthPx.toFloat()),
-                    link = link,
-                )
-                val velocity = incomingCardVelocity(message, link)
-                eventChannel.send(
-                    ShelfEvent.PeerCardMoved(
-                        id = message.itemId,
-                        leftPx = density.xMmToPx(position.leftMm),
-                        topPx = density.yMmToPx(position.topMm),
-                        velocityXPxPerS = density.xMmToPx(velocity.leftMm),
-                        velocityYPxPerS = density.yMmToPx(velocity.topMm),
-                        tiltDegrees = message.tiltDegrees,
-                        arrival = message.arrival(link),
-                        entryEdge = message.exitEdge.opposite,
-                        sentAtMillis = message.atMillis,
-                        leadMillis = roundTripMillis / 2f,
-                    ),
-                )
-            }
+            is SlideMessage.DragMove -> onPeerMove(peer, message)
+            // Sent together while the link was busy: played back exactly as if each had come alone.
+            is SlideMessage.DragMoves -> message.moves.forEach { onPeerMove(peer, it) }
             is SlideMessage.DragCancel -> {
                 val id = message.itemId
                 when {
@@ -856,6 +838,37 @@ class ShelfViewModel(
                 )
             }
         }
+    }
+
+    /** One move of the peer's card in the air. */
+    private suspend fun onPeerMove(peer: SlidePeer, message: SlideMessage.DragMove) {
+        val slide = incoming?.takeIf { it.start.itemId == message.itemId && message.seq > it.lastSeq } ?: return
+        slide.lastSeq = message.seq
+        slide.exitEdge = message.exitEdge
+        // Where the card was when the move left the peer; the screen plays the moves back evenly and draws
+        // the card where it is by now.
+        val link = peer.link
+        val position = incomingCardPosition(
+            move = message,
+            cardWidthMm = slide.start.cardWidthMm,
+            receiverWidthMm = density.xPxToMm(viewportWidthPx.toFloat()),
+            link = link,
+        )
+        val velocity = incomingCardVelocity(message, link)
+        eventChannel.send(
+            ShelfEvent.PeerCardMoved(
+                id = message.itemId,
+                leftPx = density.xMmToPx(position.leftMm),
+                topPx = density.yMmToPx(position.topMm),
+                velocityXPxPerS = density.xMmToPx(velocity.leftMm),
+                velocityYPxPerS = density.yMmToPx(velocity.topMm),
+                tiltDegrees = message.tiltDegrees,
+                arrival = message.arrival(link),
+                entryEdge = message.exitEdge.opposite,
+                sentAtMillis = message.atMillis,
+                leadMillis = roundTripMillis / 2f,
+            ),
+        )
     }
 
     /** The peer's card with [id], slid in or held over, while it is still coming. */

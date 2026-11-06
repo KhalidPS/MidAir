@@ -64,6 +64,13 @@ sealed interface SlideMessage {
         val atMillis: Long = 0L,
     ) : SlideMessage
 
+    /**
+     * Several [DragMove]s of one card, oldest first, sent together because the link was busy while they were made
+     * (a file or a video's pieces held it). The peer plays each back as if it had come alone: it needs every one to
+     * draw the card's path evenly, so they are batched rather than dropped.
+     */
+    data class DragMoves(val moves: List<DragMove>) : SlideMessage
+
     /** The card was let go short of the edge and sprang back: the peer withdraws whatever it showed. */
     data class DragCancel(val itemId: String) : SlideMessage
 
