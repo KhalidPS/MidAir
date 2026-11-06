@@ -176,6 +176,37 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
+    fun `while a move is still going out, only the newest one waits, and none goes after the let-go`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -100f)))
+        // The link is busy now (a file is moving): everything waits.
+        val busy = CompletableDeferred<Unit>()
+        peer.transport.gate = busy
+
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -90f)))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -80f)))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -70f)))
+        peer.transport.gate = null
+        busy.complete(Unit)
+
+        val moves = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMove>()
+        // The first, the one that was going out when the link got busy, and the newest; the one in between is gone.
+        assertThat(moves.map { it.seq }).containsExactly(1, 2, 4)
+
+        peer.transport.gate = CompletableDeferred()
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 250f)))
+        viewModel.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+        peer.transport.gate?.complete(Unit)
+        peer.transport.gate = null
+
+        val sent = peer.transport.sentSlides
+        assertThat(sent.last()).isInstanceOf(SlideMessage.DragCommit::class)
+        assertThat(sent.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2, 4, 5)
+    }
+
+    @Test
     fun `moves are stamped with when their frame was drawn`() = runTest {
         loaded()
         clock.nowMillis = 10_000

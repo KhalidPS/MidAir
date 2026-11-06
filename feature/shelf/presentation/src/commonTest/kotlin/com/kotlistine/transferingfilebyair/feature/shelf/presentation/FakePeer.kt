@@ -26,7 +26,11 @@ class FakeTransport : Transport {
 
     override val incoming: Flow<SlideMessage> = inbound
 
+    /** When set, every send waits for it first, as on a link busy with a file. */
+    var gate: CompletableDeferred<Unit>? = null
+
     override suspend fun send(message: SlideMessage): EmptyResult<DataError.Network> {
+        gate?.await()
         failWith(message)?.let { return Result.Failure(it) }
         sent += message
         return Result.Success(Unit)

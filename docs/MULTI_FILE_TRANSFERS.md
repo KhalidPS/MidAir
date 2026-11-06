@@ -41,3 +41,23 @@ arrive, but it sends files all at once as before.
 5. Lock the sender and pull down the shade: the summary, one notification per file, and Stop on each. When all are
    done: "3 files received" on the receiver.
 6. Logs worth saving: `AirLink` (card messages paused), `AirSlide`, and `NearbyConnections` in the GMS process.
+
+## Second run (share_multi_file_2.mp4): still laggy on the receiver
+
+The files queued correctly, but the receiver still felt slow. The recording shows the phone draws at full rate when
+there is something to draw: about 28 frames a second while a card flies in. During the long blurred stretches with
+the ring (7.6–16 s, 20–25 s, 29–43 s), the picture changes only 2–8 times a second, and a card sits at the edge for
+14 s before everything lands at once.
+
+The cause was the sender, not the receiver's animations. Every drag frame made one `DragMove`, and each one waited its
+turn behind a lock until Nearby took it. With a file on the same link, that takes hundreds of milliseconds per message,
+so moves piled up by the thousand. The receiver played the backlog back evenly, which looked like slow motion. The shelf
+stayed blurred the whole time (it blurs while a card is coming), and the let-go waited behind the whole backlog.
+
+Fix: `ShelfViewModel.postMove` keeps only the newest unsent move. While one goes out, newer ones replace the waiting
+one, and none goes out after the card was let go or put back.
+
+Still expected: while a file moves, the receiver's half gets fewer positions per second (as many as the link lets
+through), so it can look steppier than with no file moving. But it stays current, and the let-go arrives at once.
+Making it fully smooth during a transfer would need the file's bytes to pause while a card is in the air. Nearby can't
+pause a file payload, so that means sending files through a stream this app paces.

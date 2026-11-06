@@ -154,6 +154,16 @@ class ShelfViewModel(
     /** Messages to the peer go out one at a time, in order, whatever the transport's own threading. */
     private val sendLock = Mutex()
 
+    /**
+     * The newest move of the card in the air that hasn't gone out yet. Moves are made every frame, but while a file
+     * moves over the same link one message can take hundreds of milliseconds to go: queued, they piled up by the
+     * thousand, the peer played the backlog back in slow motion, and the let-go waited behind all of it. So a move
+     * waiting while another goes out is replaced by the next one, never queued: only where the card is now matters
+     * (the peer fills in between).
+     */
+    private var pendingMove: SlideMessage.DragMove? = null
+    private var moveSender: Job? = null
+
     private var air = AirGestureUi(isAvailable = hands != null)
     private val detector = AirGestureDetector()
     private val smoother = HandSmoother()
@@ -612,7 +622,7 @@ class ShelfViewModel(
         slide.edge = edge
         slide.outwardMmPerS = density.xPxToMm(frame.outwardPxPerS(edge))
         slide.alongEdgeMmPerS = density.yPxToMm(frame.velocityYPxPerS)
-        post(
+        postMove(
             SlideMessage.DragMove(
                 itemId = frame.id,
                 seq = slide.seq,
@@ -651,6 +661,22 @@ class ShelfViewModel(
         if (committed is Result.Success && !slide.startFailed) return true
         post(SlideMessage.DragCancel(slide.id))
         return false
+    }
+
+    /** Sends [move] as soon as the link is free, in place of any older move still waiting (see [pendingMove]). */
+    private fun postMove(move: SlideMessage.DragMove) {
+        val peer = peer ?: return
+        pendingMove = move
+        if (moveSender?.isActive == true) return
+        moveSender = transferScope.launch {
+            while (true) {
+                val next = pendingMove ?: break
+                pendingMove = null
+                // Let go or put back meanwhile: its commit or cancel says where it went, and no move may follow it.
+                if (outgoing?.id != next.itemId) continue
+                deliver(peer, next)
+            }
+        }
     }
 
     /** Queues [message] for the peer. Messages go out in call order. */
