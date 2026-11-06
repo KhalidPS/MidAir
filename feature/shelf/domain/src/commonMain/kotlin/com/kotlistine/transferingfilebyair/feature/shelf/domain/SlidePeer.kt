@@ -77,4 +77,11 @@ enum class Delivery {
      * takes the rest the same way, instead of a second transfer competing with the video. Sent if that fails.
      */
     FETCH,
+
+    /**
+     * This device pulls the file from the peer in pieces over the pairing link, one file at a time, and asks for no
+     * new piece while a card is in the air ([MediaChannel.holdFetches]): the card's moves never wait behind a whole
+     * file. Sent as usual if that fails.
+     */
+    PULL,
 }

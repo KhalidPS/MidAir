@@ -40,6 +40,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -51,6 +53,9 @@ private val OfferWait = 15.seconds
  * the commit lands; a peer that never answers doesn't know how, and gets the file sent.
  */
 private val RouteWait = 5.seconds
+
+/** How often a sender looks at how much of a pulled file the peer has taken, for its progress. */
+private val ServedPoll = 500.milliseconds
 
 /** A stop for a file that wasn't being received yet is honoured for this long (ids come back once an item is gone). */
 private val CancelKeep = 30.seconds
@@ -118,6 +123,9 @@ class LinkedSlidePeer(
     /** Received files are written to their final place one at a time: storage is slow enough with one writer. */
     private val saving = Mutex()
 
+    /** Files pulled from the peer go one at a time too, for the same reasons as sent ones. */
+    private val pullSlots = Semaphore(1)
+
     // endregion
 
     init {
@@ -149,9 +157,13 @@ class LinkedSlidePeer(
         val id = file.itemId
         stoppedSends.update { it - id }
         outgoing.update { it + (id to null) }
+        // On Wi-Fi the peer pulls the file in pieces, holding back while a card is in the air (see Delivery.PULL).
+        val media = peerLink.media
+        val offersPull = !file.peerMayFetch && media != null && media.isFast
+        if (offersPull) media.share(id, file.uri)
         try {
-            if (file.peerMayFetch) {
-                when (peerFetch(id)) {
+            if (file.peerMayFetch || offersPull) {
+                when (peerFetch(id, progress)) {
                     Route.FETCHED -> return Result.Success(Unit)
                     Route.CANCELLED -> return Result.Failure(DataError.Network.CANCELLED)
                     null -> return Result.Failure(DataError.Network.DISCONNECTED)
@@ -175,6 +187,7 @@ class LinkedSlidePeer(
                 sendSlots.release()
             }
         } finally {
+            if (offersPull) media.unshare(id)
             outgoing.update { it - id }
             stoppedSends.update { it - id }
         }
@@ -209,20 +222,43 @@ class LinkedSlidePeer(
      * Waits for the peer to say how the file of [itemId] goes, and while it fetches it, until it has. Returns how it
      * ended: [Route.SEND] when the peer wants it sent (or never answered), null when the link went meanwhile.
      */
-    private suspend fun peerFetch(itemId: String): Route? = try {
+    private suspend fun peerFetch(itemId: String, progress: TransferProgress): Route? = try {
         // Only fresh words count: one left over from an earlier item with the same id must not end this send.
         val heard = routes.map { notes -> notes[itemId]?.takeIf { it.at.elapsedNow() < RouteWait * 2 }?.route }
         val first = withTimeoutOrNull(RouteWait) { heard.filterNotNull().first() } ?: Route.SEND
         if (first != Route.FETCHING) {
             first
         } else {
-            merge(
-                heard.filter { it != null && it != Route.FETCHING },
-                peerLink.state.filter { it !is LinkState.Connected }.map { null },
-            ).first()
+            coroutineScope {
+                // The peer may wait for its other files first; this side only sees what it has taken so far.
+                progress.queued()
+                val reporting = launch { reportServed(itemId, progress) }
+                try {
+                    merge(
+                        heard.filter { it != null && it != Route.FETCHING },
+                        peerLink.state.filter { it !is LinkState.Connected }.map { null },
+                    ).first()
+                } finally {
+                    reporting.cancel()
+                }
+            }
         }
     } finally {
         routes.update { it - itemId }
+    }
+
+    /** Reports how much of [itemId] the peer has pulled, while it pulls. */
+    private suspend fun reportServed(itemId: String, progress: TransferProgress) {
+        val media = peerLink.media ?: return
+        var last = 0L
+        while (true) {
+            delay(ServedPoll)
+            val served = media.servedBytes(itemId)
+            if (served > last) {
+                last = served
+                progress.progressed(served)
+            }
+        }
     }
 
     override suspend fun receive(file: IncomingFile, progress: TransferProgress): Result<String, DataError> {
@@ -234,6 +270,11 @@ class LinkedSlidePeer(
                 Delivery.SENT -> Unit
                 Delivery.ASK_TO_SEND -> peerLink.transport.send(SlideMessage.FileRoute(id, Route.SEND))
                 Delivery.FETCH -> fetch(file, progress)?.let { return it }
+                Delivery.PULL -> {
+                    // Anything kept under this id is from an earlier file (ids come back once an item is gone).
+                    peerLink.media?.forget(id)
+                    fetch(file, progress, oneAtATime = true)?.let { return it }
+                }
             }
             val transferId = when (val offer = awaitOffer(id, progress)) {
                 is Offer.Made -> offer.transferId
@@ -286,7 +327,12 @@ class LinkedSlidePeer(
      * Takes the file from the peer's video over the media channel. Returns the outcome, or null when the fetch failed
      * with the link still up and the peer was asked to send the file instead.
      */
-    private suspend fun fetch(file: IncomingFile, progress: TransferProgress): Result<String, DataError>? {
+    private suspend fun fetch(
+        file: IncomingFile,
+        progress: TransferProgress,
+        /** Waits for other pulled files to finish first. */
+        oneAtATime: Boolean = false,
+    ): Result<String, DataError>? {
         val media = peerLink.media
         if (media == null) {
             peerLink.transport.send(SlideMessage.FileRoute(file.peerItemId, Route.SEND))
@@ -296,8 +342,16 @@ class LinkedSlidePeer(
             return Result.Failure(DataError.Network.DISCONNECTED)
         }
         val fetched = unlessStopped(cancelled.map { file.peerItemId in it }) {
-            media.fetch(file.peerItemId, file.sizeBytes) { fraction ->
-                progress.progressed((fraction.toDouble() * file.sizeBytes).toLong())
+            if (oneAtATime && !pullSlots.tryAcquire()) {
+                progress.queued()
+                pullSlots.acquire()
+            }
+            try {
+                media.fetch(file.peerItemId, file.sizeBytes) { fraction ->
+                    progress.progressed((fraction.toDouble() * file.sizeBytes).toLong())
+                }
+            } finally {
+                if (oneAtATime) pullSlots.release()
             }
         }
         if (fetched == null) {

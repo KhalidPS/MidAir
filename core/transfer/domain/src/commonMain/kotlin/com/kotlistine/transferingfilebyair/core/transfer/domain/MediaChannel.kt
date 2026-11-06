@@ -61,4 +61,14 @@ interface MediaChannel {
 
     /** Lets go of everything kept of the peer's file [fileId]: it is no longer wanted, or is about to be read anew. */
     fun forget(fileId: String) = Unit
+
+    /**
+     * Whether a card is in the air between the two phones. While one is, [fetch] asks for no new pieces: every byte
+     * shares the one connection with the card's moves, and a file's bytes going at full speed held those moves up for
+     * seconds. Pieces already on their way still come.
+     */
+    fun holdFetches(hold: Boolean) = Unit
+
+    /** How many bytes of this phone's [share]d file [fileId] the peer has taken so far, in pieces that went whole. */
+    fun servedBytes(fileId: String): Long = 0L
 }

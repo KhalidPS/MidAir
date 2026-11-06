@@ -12,6 +12,7 @@ import com.kotlistine.transferingfilebyair.core.media.VideoEngineEvent
 import com.kotlistine.transferingfilebyair.core.media.VideoSource
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ApproachRangeMm
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferBoard
@@ -396,6 +397,7 @@ class ShelfViewModel(
         publishItems()
         val slide = outgoing?.takeIf { it.id == id }
         outgoing = null
+        syncCardInAir()
         transferScope.launch {
             if (!handOver(slide, edge)) {
                 eventChannel.send(ShelfEvent.ShowSent(id = id, name = item.name))
@@ -506,6 +508,7 @@ class ShelfViewModel(
         val item = shelfItems.firstOrNull { it.id == action.id } ?: return
         val slide = OutgoingSlide(action.id)
         outgoing = slide
+        syncCardInAir()
         val start = SlideMessage.DragStart(
             itemId = item.id,
             name = item.name,
@@ -640,6 +643,7 @@ class ShelfViewModel(
     private fun stopMirroring(id: String) {
         if (outgoing?.id != id) return
         outgoing = null
+        syncCardInAir()
         // Back on this shelf: the peer stops reading its video. (A sent card's video stays readable: the peer plays on.)
         peer?.media?.unshare(id)
         post(SlideMessage.DragCancel(id))
@@ -706,7 +710,24 @@ class ShelfViewModel(
             .launchIn(viewModelScope)
     }
 
+    /**
+     * Whether a card is in the air between the phones, either way: slid, held in a fist, or coming from the peer. Files
+     * pulled from the peer make way for it meanwhile (see [MediaChannel.holdFetches]).
+     */
+    private fun syncCardInAir() {
+        val inAir = outgoing != null || incoming != null || held != null || catchable != null
+        peer?.media?.holdFetches(inAir)
+    }
+
     private suspend fun onPeerMessage(peer: SlidePeer, message: SlideMessage) {
+        try {
+            handlePeerMessage(peer, message)
+        } finally {
+            syncCardInAir()
+        }
+    }
+
+    private suspend fun handlePeerMessage(peer: SlidePeer, message: SlideMessage) {
         when (message) {
             // Answered here for the whole app (the shelf is always under the other screens), with this clock's time
             // so the line-up can compare the two phones' clocks.
@@ -854,6 +875,8 @@ class ShelfViewModel(
         val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
         val delivery = when {
             video?.viaLink == true -> Delivery.FETCH
+            // On Wi-Fi, pulled in pieces that make way for the cards' moves.
+            peer.media?.isFast == true -> Delivery.PULL
             slide.videoOffered -> Delivery.ASK_TO_SEND
             else -> Delivery.SENT
         }
@@ -1155,6 +1178,7 @@ class ShelfViewModel(
         val card = HeldCard(item.id, handSize = pendingGrab?.size ?: 0f)
         pendingGrab = null
         held = card
+        syncCardInAir()
         air = air.copy(heldId = item.id, heldName = item.name)
         publishAir()
         val start = SlideMessage.DragStart(
@@ -1195,6 +1219,7 @@ class ShelfViewModel(
     private fun putBack(card: HeldCard, tellPeer: Boolean) {
         if (held !== card) return
         held = null
+        syncCardInAir()
         card.expiry?.cancel()
         card.putBackJob?.cancel()
         air = air.copy(heldId = null, heldName = null)
@@ -1219,6 +1244,7 @@ class ShelfViewModel(
             return
         }
         held = null
+        syncCardInAir()
         card.expiry?.cancel()
         card.putBackJob?.cancel()
         air = air.copy(heldId = null, heldName = null)
@@ -1259,6 +1285,7 @@ class ShelfViewModel(
 
     private fun clearCatchable() {
         catchable = null
+        syncCardInAir()
         air = air.copy(catchable = null)
         publishAir()
         updateWatching()

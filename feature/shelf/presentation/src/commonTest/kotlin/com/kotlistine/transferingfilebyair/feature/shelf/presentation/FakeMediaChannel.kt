@@ -15,6 +15,13 @@ class FakeMediaChannel(
     /** Shared files by id. */
     val shared = mutableMapOf<String, String>()
 
+    /** Every hold asked for (true: a card is in the air). */
+    val holds = mutableListOf<Boolean>()
+
+    override fun holdFetches(hold: Boolean) {
+        holds += hold
+    }
+
     /** Every range asked for: file id and offset. */
     val opened = mutableListOf<Pair<String, Long>>()
 
