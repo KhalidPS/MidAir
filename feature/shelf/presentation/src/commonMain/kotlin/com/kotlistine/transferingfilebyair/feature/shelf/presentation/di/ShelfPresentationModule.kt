@@ -15,6 +15,7 @@ val shelfPresentationModule = module {
             transfers = getOrNull(named(TransfersScope)),
             keepAlive = getOrNull() ?: TransferKeepAlive.None,
             board = get(),
+            sentIds = get(),
             videoEngine = getOrNull(),
             hands = getOrNull(),
         )

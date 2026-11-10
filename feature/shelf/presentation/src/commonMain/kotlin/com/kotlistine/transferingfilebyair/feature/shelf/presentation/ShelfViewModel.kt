@@ -28,6 +28,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrection
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGesture
@@ -113,6 +114,11 @@ class ShelfViewModel(
     private val keepAlive: TransferKeepAlive = TransferKeepAlive.None,
     /** Every file moving either way, app-wide (the notification shows it too). */
     private val board: TransferBoard = TransferBoard(),
+    /**
+     * Sent items, hidden from the shelf until they are removed for good (or brought back). App-wide: a send goes on
+     * after its screen is closed, so the next screen must hide its item too.
+     */
+    private val sentIds: SentItems = SentItems(),
     /** Plays videos in their cards; the screen draws its picture. Without one, a tapped video opens in another app. */
     val videoEngine: VideoEngine? = null,
     /** Watches for a fist and an open hand in front of the screen (the front camera). Without one, no air gestures. */
@@ -128,8 +134,6 @@ class ShelfViewModel(
     /** Everything in the repository, including items that were just sent and are waiting out the undo window. */
     private var shelfItems: List<ShelfItemUi> = emptyList()
 
-    /** Sent items, hidden from the shelf until they are removed for good (or brought back). */
-    private val sentIds = mutableSetOf<String>()
     private var isClearing = false
 
     /**
@@ -281,6 +285,10 @@ class ShelfViewModel(
                 publishItems()
                 playLocalCopy()
             }
+            .launchIn(viewModelScope)
+        // A send begun by an earlier screen ends while this one is open: its item goes, or comes back.
+        sentIds.ids
+            .onEach { if (!_state.value.isLoading) publishItems() }
             .launchIn(viewModelScope)
     }
 
