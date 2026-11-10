@@ -821,7 +821,7 @@ class ShelfViewModel(
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
             is SlideMessage.FileOffer, is SlideMessage.FileRoute, is SlideMessage.FileQueued, is SlideMessage.FileCancelled,
-            is SlideMessage.SwipeCrossed,
+            is SlideMessage.FileKept, is SlideMessage.SwipeCrossed,
             -> Unit
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return

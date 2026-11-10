@@ -50,6 +50,7 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
     is SlideMessage.Grabbed -> handSize.isFinite() && handSize in 0f..1f
     is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong,
     is SlideMessage.FileRoute, is SlideMessage.Released, is SlideMessage.FileQueued, is SlideMessage.FileCancelled,
+    is SlideMessage.FileKept,
     -> true
 }
 

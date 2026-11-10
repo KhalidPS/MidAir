@@ -57,6 +57,7 @@ class SlideMessageCodecTest {
             SlideMessage.FileQueued("7"),
             SlideMessage.FileCancelled("7", bySender = true),
             SlideMessage.FileCancelled("7", bySender = false),
+            SlideMessage.FileKept("7"),
             SlideMessage.Ping(sentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000, answeredAtMillis = 1_700_000_000_321),

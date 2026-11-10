@@ -66,6 +66,10 @@ internal sealed interface SlideMessageDto {
     data class FileCancelled(val itemId: String, val bySender: Boolean) : SlideMessageDto
 
     @Serializable
+    @SerialName("file_kept")
+    data class FileKept(val itemId: String) : SlideMessageDto
+
+    @Serializable
     @SerialName("ping")
     data class Ping(val sentAtMillis: Long) : SlideMessageDto
 
