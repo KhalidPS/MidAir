@@ -27,9 +27,13 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.UnattendedReceiver
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -468,6 +472,30 @@ class ShelfViewModelSlideTest {
     // endregion
 
     // region Receiving
+
+    @Test
+    fun `while this screen is open, the peer's file is received once, here, not by the unattended receiver`() = runTest {
+        val transfers = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        // A peer of its own: the screen made in setUp listens to the shared one.
+        peer = FakePeer()
+        val unattended = UnattendedReceiver(peer, board, keepAlive, transfers)
+        viewModel = ShelfViewModel(
+            repository = repository,
+            density = density,
+            peer = peer,
+            keepAlive = keepAlive,
+            board = board,
+            unattended = unattended,
+            clock = clock,
+            timeZone = TimeZone.UTC,
+        )
+
+        peer.transport.deliver(peerStart)
+        peer.transport.deliver(commit("9"))
+
+        assertThat(peer.received.map { it.peerItemId }).containsExactly("9")
+        transfers.cancel()
+    }
 
     @Test
     fun `a card lifted on the peer is announced at the same physical size`() = runTest {
