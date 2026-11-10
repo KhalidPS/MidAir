@@ -100,6 +100,12 @@ sealed interface SlideMessage {
      */
     data class FileCancelled(val itemId: String, val bySender: Boolean) : SlideMessage
 
+    /**
+     * The receiver kept the file of the sender's card [itemId] for good: saved, and on its shelf. Only then is a sent
+     * file done; until it hears this, the sender keeps the item, so a file the receiver couldn't keep is never lost.
+     */
+    data class FileKept(val itemId: String) : SlideMessage
+
     /** Round-trip time probe; answered with [Pong] carrying the same timestamp. */
     data class Ping(val sentAtMillis: Long) : SlideMessage
 

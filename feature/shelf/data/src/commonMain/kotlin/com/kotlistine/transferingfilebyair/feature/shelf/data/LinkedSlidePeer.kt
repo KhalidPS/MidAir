@@ -42,6 +42,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -59,6 +60,13 @@ private val ServedPoll = 500.milliseconds
 
 /** A stop for a file that wasn't being received yet is honoured for this long (ids come back once an item is gone). */
 private val CancelKeep = 30.seconds
+
+/**
+ * How long a sender waits, once its bytes are through, to hear that the peer kept the file. Saving a big video to
+ * Downloads takes a while; a peer that never says so may not have kept it, and the item comes back here (at worst a
+ * copy on both phones, never a file on neither).
+ */
+private val KeptWait = 3.minutes
 
 /**
  * The paired device as the shelf sees it, on a [PeerLink] (Nearby on Android). A handed-over card's file follows
@@ -107,6 +115,9 @@ class LinkedSlidePeer(
     /** The peer's latest word on how the file of each of this device's items goes, by item id. */
     private val routes = MutableStateFlow<Map<String, RouteNote>>(emptyMap())
 
+    /** This device's items whose sent files the peer said it kept ([SlideMessage.FileKept]). */
+    private val keptByPeer = MutableStateFlow<Set<String>>(emptySet())
+
     // endregion
 
     // region Receiving
@@ -147,6 +158,9 @@ class LinkedSlidePeer(
                             stopSend(message.itemId)
                         }
                     is SlideMessage.FileRoute -> routes.update { it + (message.itemId to RouteNote(message.route)) }
+                    // Only while its send is on: a word for an item no longer sent is old.
+                    is SlideMessage.FileKept ->
+                        if (message.itemId in outgoing.value) keptByPeer.update { it + message.itemId }
                     else -> Unit
                 }
             }
@@ -156,6 +170,7 @@ class LinkedSlidePeer(
     override suspend fun send(file: OutgoingFile, progress: TransferProgress): EmptyResult<DataError> {
         val id = file.itemId
         stoppedSends.update { it - id }
+        keptByPeer.update { it - id }
         outgoing.update { it + (id to null) }
         // On Wi-Fi the peer pulls the file in pieces, holding back while a card is in the air (see Delivery.PULL).
         val media = peerLink.media
@@ -171,9 +186,9 @@ class LinkedSlidePeer(
                 }
             }
             unlessSendStopped(id) { takeTurn(id, progress) } ?: return Result.Failure(DataError.Network.CANCELLED)
-            try {
+            val sent = try {
                 if (id in stoppedSends.value) return Result.Failure(DataError.Network.CANCELLED)
-                return peerLink.sendFile(
+                peerLink.sendFile(
                     uri = file.uri,
                     announce = { transferId ->
                         outgoing.update { it + (id to transferId) }
@@ -184,13 +199,36 @@ class LinkedSlidePeer(
                     onProgress = progress::progressed,
                 )
             } finally {
+                // The next file may go while the peer saves this one.
                 sendSlots.release()
             }
+            if (sent is Result.Failure) return sent
+            return awaitKept(id, progress)
         } finally {
             if (offersPull) media.unshare(id)
             outgoing.update { it - id }
             stoppedSends.update { it - id }
+            keptByPeer.update { it - id }
         }
+    }
+
+    /**
+     * Waits, once all of [id]'s bytes went, for the peer to say it kept the file: they may have reached the peer
+     * without anything there taking them in. Fails when the peer couldn't keep it, the link goes, or it never says.
+     */
+    private suspend fun awaitKept(id: String, progress: TransferProgress): EmptyResult<DataError> {
+        progress.saving()
+        val heard = combine(keptByPeer, stoppedSends, peerLink.state) { kept, stopped, link ->
+            when {
+                id in kept -> Result.Success(Unit)
+                // The peer couldn't keep it (it says so as a stop), or this user stopped it meanwhile.
+                id in stopped -> Result.Failure(DataError.Network.CANCELLED)
+                link !is LinkState.Connected -> Result.Failure(DataError.Network.DISCONNECTED)
+                else -> null
+            }
+        }
+        return withTimeoutOrNull(KeptWait) { heard.filterNotNull().first() }
+            ?: Result.Failure(DataError.Network.DISCONNECTED)
     }
 
     /** Waits for a turn to send; a file that has to wait tells the peer it is queued, so the peer keeps waiting. */
@@ -294,7 +332,15 @@ class LinkedSlidePeer(
                 is Result.Failure -> return arrived
                 is Result.Success -> arrived.data
             }
-            return keep(file, arrivedAt, progress)
+            val kept = keep(file, arrivedAt, progress)
+            // The sender keeps its item until it hears this: a file not kept here goes back on its shelf.
+            peerLink.transport.send(
+                when (kept) {
+                    is Result.Success -> SlideMessage.FileKept(id)
+                    is Result.Failure -> SlideMessage.FileCancelled(id, bySender = false)
+                },
+            )
+            return kept
         } finally {
             offers.update { it - id }
             queued.update { it - id }
