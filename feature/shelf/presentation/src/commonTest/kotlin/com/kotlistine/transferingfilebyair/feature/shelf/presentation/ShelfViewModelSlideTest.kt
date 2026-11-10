@@ -27,9 +27,13 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -463,6 +467,69 @@ class ShelfViewModelSlideTest {
         peer.transport.deliver(SlideMessage.Ping(sentAtMillis = 42))
 
         assertThat(peer.transport.sent.last()).isEqualTo(SlideMessage.Pong(pingSentAtMillis = 42))
+    }
+
+    @Test
+    fun `a screen opened while a file is still sent keeps its item hidden, and it goes once the send ends`() = runTest {
+        val transfers = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val sent = SentItems()
+        peer.sendGate = CompletableDeferred()
+        sendFromAnEarlierScreen(transfers, sent)
+
+        val reopened = screenSharing(transfers, sent)
+        reopened.state.test {
+            assertThat(awaitLoaded().items).isEmpty()
+
+            peer.sendGate?.complete(Unit)
+
+            assertThat(repository.items.value).isEmpty()
+            assertThat(reopened.state.value.items).isEmpty()
+            assertThat(sent.ids.value).isEmpty()
+        }
+        transfers.cancel()
+    }
+
+    @Test
+    fun `a screen opened while a file is still sent shows its item again when the send fails`() = runTest {
+        val transfers = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val sent = SentItems()
+        peer.sendGate = CompletableDeferred()
+        peer.sendResult = Result.Failure(DataError.Network.DISCONNECTED)
+        sendFromAnEarlierScreen(transfers, sent)
+
+        val reopened = screenSharing(transfers, sent)
+        reopened.state.test {
+            assertThat(awaitLoaded().items).isEmpty()
+
+            peer.sendGate?.complete(Unit)
+
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1")
+            assertThat(repository.items.value.map { it.id }).containsExactly("1")
+        }
+        transfers.cancel()
+    }
+
+    /** A screen whose sends run in [transfers] and whose sent items are kept in [sent], as in the app. */
+    private fun screenSharing(transfers: CoroutineScope, sent: SentItems) = ShelfViewModel(
+        repository = repository,
+        density = density,
+        peer = peer,
+        transfers = transfers,
+        keepAlive = keepAlive,
+        board = board,
+        sentIds = sent,
+        clock = clock,
+        timeZone = TimeZone.UTC,
+    )
+
+    /** Item "1" is slid to the peer from a screen that is then left; its file is still on its way. */
+    private suspend fun sendFromAnEarlierScreen(transfers: CoroutineScope, sent: SentItems) {
+        val earlier = screenSharing(transfers, sent)
+        earlier.state.test { awaitLoaded() }
+        earlier.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        earlier.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
+        earlier.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+        assertThat(peer.sentFiles.map { it.itemId }).containsExactly("1")
     }
 
     // endregion
