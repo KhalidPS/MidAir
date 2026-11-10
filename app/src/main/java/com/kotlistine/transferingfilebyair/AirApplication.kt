@@ -4,6 +4,7 @@ import android.app.Application
 import com.kotlistine.transferingfilebyair.core.transfer.nearby.nearbyModule
 import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAlive
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.di.TransfersScope
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.di.unattendedReceiverModule
 import com.kotlistine.transferingfilebyair.shared.appModules
 import com.kotlistine.transferingfilebyair.transfer.ServiceTransferKeepAlive
 import kotlinx.coroutines.CoroutineScope
@@ -20,7 +21,7 @@ class AirApplication : Application() {
         startKoin {
             androidContext(this@AirApplication)
             // The Android link to the device next door, and what keeps transfers alive, join the shared modules.
-            modules(appModules + nearbyModule + transferModule)
+            modules(appModules + nearbyModule + transferModule + unattendedReceiverModule)
         }
     }
 }

@@ -31,6 +31,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.UnattendedReceiver
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGesture
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGestureDetector
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandFrame
@@ -119,6 +120,8 @@ class ShelfViewModel(
      * after its screen is closed, so the next screen must hide its item too.
      */
     private val sentIds: SentItems = SentItems(),
+    /** Takes in the peer's files while no shelf screen is open; this screen takes them itself while it lives. */
+    unattended: UnattendedReceiver? = null,
     /** Plays videos in their cards; the screen draws its picture. Without one, a tapped video opens in another app. */
     val videoEngine: VideoEngine? = null,
     /** Watches for a fist and an open hand in front of the screen (the front camera). Without one, no air gestures. */
@@ -128,6 +131,9 @@ class ShelfViewModel(
 ) : ViewModel() {
 
     private var isObservingItems = false
+
+    /** Hands the peer's cards back to the unattended receiver once this screen is gone. */
+    private val stopAttending: () -> Unit = unattended?.attend() ?: {}
 
     private val transferScope: CoroutineScope get() = transfers ?: viewModelScope
 
@@ -233,6 +239,7 @@ class ShelfViewModel(
     }
 
     override fun onCleared() {
+        stopAttending()
         videoEngine?.release()
     }
 

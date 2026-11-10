@@ -9,5 +9,8 @@ kotlin {
             api(projects.core.transfer.domain)
             implementation(libs.kotlinx.coroutines.core)
         }
+        commonTest.dependencies {
+            implementation(libs.kotlinx.coroutines.test)
+        }
     }
 }
