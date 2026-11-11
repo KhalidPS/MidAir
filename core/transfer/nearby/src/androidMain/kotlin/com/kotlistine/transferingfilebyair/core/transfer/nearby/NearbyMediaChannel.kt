@@ -76,12 +76,6 @@ private const val DigestTimeoutMillis = 60_000L
  */
 private const val CardHoldMaxMillis = 15_000L
 
-/**
- * How much of a file's end is fetched ahead of its card, with its first piece. A phone's recording keeps its index
- * there: about 1.5 MB for a 676 MB one. A player starts by reading both, which cost 1.2 to 3.2 s of round trips.
- */
-private const val IndexTailBytes = 4L * 1024 * 1024
-
 /** Room left on this phone after a fetch, on top of the fetched file and the copy kept of it. */
 private const val SpareBytes = 64L * 1024 * 1024
 
@@ -236,17 +230,91 @@ internal class NearbyMediaChannel(
         if (local.containsKey(fileId) || prefetching[fileId]?.isActive == true) return
         prefetching[fileId] = scope.launch {
             val startedAt = System.currentTimeMillis()
-            for (span in indexSpans(sizeBytes, PieceBytes, IndexTailBytes)) {
-                // Never in the way of a card's moves or of a video that plays now.
-                withTimeoutOrNull(CardHoldMaxMillis) { cardInAir.first { !it } }
-                withTimeoutOrNull(PlayerFirstMillis) { playerPieces.first { it <= 0 } }
-                if (keptOf(fileId).any { it.span.start <= span.start && it.span.end >= span.end }) continue
-                val piece = openPiece(fileId, span.start, span.length, forPlayer = false) ?: return@launch
-                // Kept as it ends (claimed when it arrived).
-                piece.ended.await()
-                piece.close()
+            // What a player reads before it can show a frame: the start of each of the file's boxes, up to the one
+            // with the pictures, and all of its index, wherever that is and however long (a phone's recording keeps
+            // it at the end, about 0.3 MB a minute; a downloaded video often at the start). Read at the lift, they
+            // cost 1.2 to 3.2 s of round trips.
+            var offset = 0L
+            var boxes = 0
+            var hasIndex = false
+            var sawPictures = false
+            while (offset < sizeBytes && !(hasIndex && sawPictures) && ++boxes <= MaxMp4Boxes) {
+                val box = headerAhead(fileId, offset, sizeBytes)?.let { mp4BoxAt(offset, it, sizeBytes) } ?: break
+                when (box.type) {
+                    "moov" -> {
+                        if (!readAhead(fileId, ByteSpan(box.start, box.end))) break
+                        hasIndex = true
+                    }
+                    "mdat" -> sawPictures = true
+                }
+                offset = box.end
             }
-            Log.i(Tag, "Index of $fileId fetched ahead in ${System.currentTimeMillis() - startedAt} ms")
+            val millis = System.currentTimeMillis() - startedAt
+            if (hasIndex) {
+                Log.i(Tag, "Index of $fileId fetched ahead in $millis ms")
+            } else {
+                // Not MP4, or the other phone stopped sharing it: its card starts as it did before.
+                Log.i(Tag, "Index of $fileId not found ahead ($boxes boxes read, $millis ms)")
+            }
+        }
+    }
+
+    /**
+     * The first bytes of the box at [offset] of the other phone's file [fileId], for a look at what it is: from what is
+     * kept, or read ahead now. Null when they don't come.
+     */
+    private suspend fun headerAhead(fileId: String, offset: Long, sizeBytes: Long): ByteArray? {
+        val wanted = minOf(Mp4BoxHeaderBytes.toLong(), sizeBytes - offset).toInt()
+        keptBytes(fileId, offset, wanted)?.let { return it }
+        if (pieceAhead(fileId, offset, minOf(PieceBytes, sizeBytes - offset)) < wanted) return null
+        return keptBytes(fileId, offset, wanted)
+    }
+
+    /** Reads ahead whatever of [span] of [fileId] isn't kept yet, a piece at a time; false if a piece didn't come. */
+    private suspend fun readAhead(fileId: String, span: ByteSpan): Boolean {
+        var position = span.start
+        while (position < span.end) {
+            val here = keptOf(fileId).firstOrNull { position >= it.span.start && position < it.span.end }
+            if (here != null) {
+                position = here.span.end
+                continue
+            }
+            val got = pieceAhead(fileId, position, minOf(PieceBytes, span.end - position))
+            if (got <= 0) return false
+            position += got
+        }
+        return true
+    }
+
+    /**
+     * Asks for [length] bytes of [fileId] at [offset] ahead of its card, and waits until they are kept. Returns how many
+     * came: fewer than asked for when the other phone lets only so much be read yet, 0 when none did.
+     */
+    private suspend fun pieceAhead(fileId: String, offset: Long, length: Long): Long {
+        // Never in the way of a card's moves or of a video that plays now.
+        withTimeoutOrNull(CardHoldMaxMillis) { cardInAir.first { !it } }
+        withTimeoutOrNull(PlayerFirstMillis) { playerPieces.first { it <= 0 } }
+        val piece = openPiece(fileId, offset, length, forPlayer = false) ?: return 0
+        // Kept as it ends (claimed when it arrived).
+        val whole = piece.ended.await()
+        val size = piece.size
+        piece.close()
+        return if (whole) size else 0
+    }
+
+    /** [length] kept bytes of [fileId] at [offset]; null unless one kept piece has them all. */
+    private suspend fun keptBytes(fileId: String, offset: Long, length: Int): ByteArray? {
+        val piece = keptOf(fileId).firstOrNull { offset >= it.span.start && offset + length <= it.span.end } ?: return null
+        return withContext(Dispatchers.IO) {
+            try {
+                RandomAccessFile(piece.file, "r").use { file ->
+                    file.seek(offset - piece.span.start)
+                    ByteArray(length).also(file::readFully)
+                }
+            } catch (_: IOException) {
+                // Let go of meanwhile.
+                null
+            }
         }
     }
 

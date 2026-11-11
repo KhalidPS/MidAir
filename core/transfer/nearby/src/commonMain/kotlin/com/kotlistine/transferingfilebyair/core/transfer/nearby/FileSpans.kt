@@ -70,20 +70,3 @@ private fun MutableList<ByteSpan>.cut(start: Long, end: Long, maxBytes: Long) {
         from = to
     }
 }
-
-/**
- * The parts of a file of [size] bytes a video player reads before it can show a frame, wherever the frame is: the
- * file's first piece (its header) and its last [tailBytes] (where a phone's recording keeps its index), in file order,
- * in spans of at most [pieceBytes].
- */
-internal fun indexSpans(size: Long, pieceBytes: Long, tailBytes: Long): List<ByteSpan> {
-    require(pieceBytes > 0)
-    if (size <= 0) return emptyList()
-    val spans = mutableListOf(ByteSpan(0, minOf(pieceBytes, size)))
-    var start = maxOf(pieceBytes, size - tailBytes)
-    while (start < size) {
-        spans += ByteSpan(start, minOf(start + pieceBytes, size))
-        start += pieceBytes
-    }
-    return spans
-}
