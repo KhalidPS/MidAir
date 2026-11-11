@@ -181,7 +181,30 @@ again. A pull-back makes B let go of what it read.
 
 ---
 
-## 9. Comparison
+## 9. Stage 6: Exact index, index-only before lift, keep on pull-back
+
+- Branch: `fix/2026-11-11/1645-keep-index-on-pull-back`, built on Stage 5. It holds three fixes:
+  - "Read ahead exactly a video's index, wherever it is and however long".
+  - "Let the peer read only a playing video's header and index before its card is lifted".
+  - "Keep what was read of a video when its card is pulled back and it plays on".
+- Two videos: video 2 (the 676 MB recording above) and video 14. Test from 17:06 to 17:09. No crashes.
+
+| Slide time | Video | First frame after | Then | In step with A after | Card lag typical |
+|---|---|---|---|---|---|
+| 17:07:45 | 2 | 2.6 s | jumped twice | 8.3 s | 37 ms |
+| 17:08:10 | 14 | 2.0 s | played straight on | 2.0 s | 38 ms |
+| 17:08:52 (second lift, 17 s after a pull-back) | 14 | 0.4 s | held its frame 0.8 s, then dropped on B | 1.2 s | 44 ms |
+| 17:08:58 | 14 | 2.3 s (landed during load) | played straight on | 2.3 s | 48 ms |
+| 17:09:10 | 14 | 1.4 s | held its frame 0.2 s, then dropped | 1.7 s | 36 ms |
+| 17:09:17 (index not there yet) | 14 | 2.4 s | played straight on | 2.4 s | 41 ms |
+
+Note: the 17:08:52 slide is fast because B kept the index and the frames it had played when the card was pulled
+back. The 17:09:17 slide was lifted 1.4 s after a new read-ahead began, following a drop, so its index was not on B
+yet.
+
+---
+
+## 10. Comparison
 
 The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only the slides where it was recorded.
 
@@ -194,6 +217,7 @@ The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only
 | 4a. Aim-ahead, first | 5 | 2.5 to 5.8 s | 2.9 to 5.8 s | 0 of 5 (holds of 1.3 to 1.5 s in 2) | 44 to 62 ms |
 | 4b. Aim-ahead, tuned | 3 | 3.6 to 6.1 s | 3.6 to 13.0 s | 2 of 3 | 42 to 62 ms |
 | 5. Index read-ahead | 4 | 1.1 to 2.4 s | 1.8 to 2.4 s | 0 of 4 | 39 to 43 ms |
+| 6. Exact index, index-only, keep on pull-back | 6 | 0.4 to 2.6 s (1.4 to 2.6 s without the second lift) | 1.2 to 8.3 s | 1 of 6 | 36 to 48 ms |
 
 ### What each fix changed
 
@@ -204,10 +228,19 @@ The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only
 - **Index read-ahead (Stage 5):** first frame went from 2.4 to 6.1 s (all earlier stages) down to 1.1 to 2.4 s. In
   step went from 2.4 to 13 s down to 1.8 to 2.4 s. No jumps in 4 slides.
 - **Lift-before-Wi-Fi fix (Stage 2):** its own case is not measured yet.
+- **Exact index (Stage 6):** B walks the file's boxes and reads the whole index, wherever it is. The read-ahead of
+  video 2 took 1.05 s in 3 pieces, instead of 1.3 to 3.4 s in 5.
+- **Index-only before lift (Stage 6):** before a lift, A serves only the header and index, not the pictures and
+  sound. It costs one extra request at the lift (213 ms at 17:07:45).
+- **Keep on pull-back (Stage 6):** after a pull-back, B keeps what it read while the video plays on. The next lift,
+  17 s later, had its first frame after 0.4 s, the fastest of the day.
+- **The jump at 17:07:45** does not come from these three fixes. B was 1.01 s behind, just over the 1.0 s limit of
+  the jump rule, and its reload, aimed 1 s ahead, landed behind again. The catch-up fix
+  (`fix/2026-11-11/1740-catch-up-before-jumping`, pending) addresses this.
 
 ### How far to trust these numbers
 
-- **Small samples.** 2 to 6 slides per stage, one pair of phones, one video.
+- **Small samples.** 2 to 6 slides per stage, one pair of phones, one video (two in Stage 6).
 - **Measured in sequence.** The stages ran one after another on one afternoon. Loading speed varied between rounds
   for reasons not explained. Compare Stage 4a and 4b: the loading code is the same, but the first frame ranges
   differ.
@@ -218,5 +251,8 @@ The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only
 
 1. **The lifted-on-Bluetooth case** (Stage 2's target) is unverified on the phones.
 2. **Stalls after a drop:** B still stalled for 1.0 to 1.8 s after the card landed in some slides.
-3. **The index is read again after every pull-back.** A lift soon after a pull-back starts without it.
-4. **The remaining 1.1 to 2.4 s start:** picture data and the player's start-up buffer.
+3. **The remaining 1.1 to 2.4 s start:** picture data and the player's start-up buffer.
+4. **The extra request caused by the index-only rule:** B's player needs bytes just inside the picture data at every
+   start, no longer read ahead. One request at the lift, 213 ms measured.
+5. **The catch-up fix** (`fix/2026-11-11/1740-catch-up-before-jumping`) is installed on both phones and awaits its
+   phone test.
