@@ -9,6 +9,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
 import assertk.assertions.prop
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
@@ -284,6 +285,47 @@ class ShelfViewModelLiveVideoTest {
 
         assertThat(engine.loaded).isEqualTo(VideoSource.Url("http://192.168.1.20:40123/v/9?t=ab"))
         assertThat(engine.currentVolume).isEqualTo(0f)
+    }
+
+    @Test
+    fun `a video read over the shared Wi-Fi moves onto the pairing link once that gets fast`() = runTest {
+        media.isFast = false
+        loaded()
+        peer.transport.deliver(peerStart)
+        peer.transport.deliver(peerOffer.copy(httpUrl = "http://192.168.1.20:40123/v/9?t=ab"))
+
+        media.isFast = true
+
+        assertThat(engine.loaded).isNotNull().isInstanceOf(VideoSource.Remote::class)
+        (engine.loaded as VideoSource.Remote).open(1_234)
+        assertThat(media.opened).containsExactly("9" to 1_234L)
+        assertThat(engine.playWhenReady.value).isEqualTo(true)
+        assertThat(engine.currentVolume).isEqualTo(0f)
+    }
+
+    @Test
+    fun `a video that moved onto the pairing link has its file taken from what was read`() = runTest {
+        media.isFast = false
+        loaded()
+        peer.transport.deliver(peerStart)
+        peer.transport.deliver(peerOffer.copy(httpUrl = "http://192.168.1.20:40123/v/9?t=ab"))
+        media.isFast = true
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(peer.received.single().delivery).isEqualTo(Delivery.FETCH)
+    }
+
+    @Test
+    fun `a video read over the pairing link is not loaded again when the link's speed is reported again`() = runTest {
+        loaded()
+        receiveOffer()
+        val source = engine.loaded
+
+        media.isFast = false
+        media.isFast = true
+
+        assertThat(engine.loaded).isSameInstanceAs(source)
     }
 
     @Test

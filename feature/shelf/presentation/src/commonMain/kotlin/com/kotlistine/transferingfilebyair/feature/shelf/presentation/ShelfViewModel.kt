@@ -725,6 +725,8 @@ class ShelfViewModel(
             .onEach { (linked, fast) ->
                 _state.update { it.copy(isPaired = linked, isLinkSlow = linked && !fast) }
                 if (!linked) dropAirCards()
+                // The link just got onto Wi-Fi Direct: a video still read over the shared Wi-Fi moves onto it.
+                if (linked && fast) following?.let { readOverLink(peer, it) }
                 updateWatching()
             }
             .launchIn(viewModelScope)
@@ -901,6 +903,8 @@ class ShelfViewModel(
         arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
         publishItems()
         val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
+        // Lifted while the link was on Bluetooth, let go once it is on Wi-Fi Direct: read over it from here on.
+        if (video != null) readOverLink(peer, video)
         val delivery = when {
             video?.viaLink == true -> Delivery.FETCH
             // On Wi-Fi, pulled in pieces that make way for the cards' moves.
@@ -974,7 +978,7 @@ class ShelfViewModel(
         media.forget(offer.itemId)
         val follower = PlaybackFollower()
         follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = nowMillis(), oneWayMs = oneWayMillis())
-        val video = FollowedVideo(offer.itemId, follower)
+        val video = FollowedVideo(offer.itemId, offer.sizeBytes, follower)
         following = video
         viewModelScope.launch {
             // Over the pairing link once it is on Wi-Fi Direct: tried on phones, the shared Wi-Fi was far slower then
@@ -1001,6 +1005,23 @@ class ShelfViewModel(
             video.isLoaded = true
             _state.update { it.copy(playing = PlayingVideoUi(offer.itemId, isPaused = !offer.isPlaying)) }
         }
+    }
+
+    /**
+     * Moves a followed video read over the shared Wi-Fi onto the pairing link, once that is on Wi-Fi Direct, on the
+     * frame the peer is at. Left on the shared Wi-Fi it starves: the one radio hops between the two networks, and the
+     * file's own transfer takes the link (measured: 1.5 s of play for every 10 to 30 s of buffering).
+     */
+    private fun readOverLink(peer: SlidePeer, video: FollowedVideo) {
+        val engine = videoEngine ?: return
+        val media = peer.media ?: return
+        if (!video.isLoaded || video.viaLink || !media.isFast) return
+        video.viaLink = true
+        val source = VideoSource.Remote(video.itemId, video.sizeBytes) { media.open(video.itemId, it) }
+        val startAtMs = video.follower.startAt(nowMillis()) ?: engine.positionMs
+        engine.load(source, startAtMs = startAtMs, playWhenReady = engine.playWhenReady.value)
+        // A load starts at full volume: the peer's speaker still plays it while the card is over there.
+        engine.setVolume(0f)
     }
 
     /** Keeps this half of the card on the frame the peer's half shows. */
@@ -1379,7 +1400,7 @@ class ShelfViewModel(
         var videoOffered = false
     }
 
-    private class FollowedVideo(val itemId: String, val follower: PlaybackFollower) {
+    private class FollowedVideo(val itemId: String, val sizeBytes: Long, val follower: PlaybackFollower) {
         /** Loaded into the engine: until then (finding out which way to read it) nothing is steered. */
         var isLoaded = false
 
