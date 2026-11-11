@@ -167,6 +167,9 @@ class ShelfViewModel(
     /** The peer's video whose card was pulled back while it still plays there: what was read of it is kept meanwhile. */
     private var keptForRelift: String? = null
 
+    /** Whether the video in [keptForRelift] had started playing here before its card was pulled back. */
+    private var playedBeforePullBack = false
+
     /** A received item whose video is still read from the peer: it moves to its own file once the shelf has it. */
     private var streamedFromPeer: String? = null
     private var viewportWidthPx = 0
@@ -822,10 +825,17 @@ class ShelfViewModel(
                     }
                     else -> return
                 }
+                val hadPlayed = following?.takeIf { it.itemId == id }?.hasPlayed == true
                 if (following?.itemId == id || _state.value.playing?.itemId == id) stopVideo()
                 // What was read of its video is no longer wanted, unless it still plays over there: its card may be
                 // lifted again any moment, and reading its index again takes 1.3 to 2.7 s.
-                if (hinted?.itemId == id) keptForRelift = id else peer.media?.forget(id)
+                if (hinted?.itemId == id) {
+                    keptForRelift = id
+                    // Pulled back before its first frame showed: nothing of its pictures is here to start from.
+                    playedBeforePullBack = hadPlayed
+                } else {
+                    peer.media?.forget(id)
+                }
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(id))
             }
             is SlideMessage.PlaybackOffer -> {
@@ -1017,8 +1027,8 @@ class ShelfViewModel(
         if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
         // Lifted again: from here on it is let go as any card's video is.
-        val liftedAgain = keptForRelift == offer.itemId
-        if (liftedAgain) keptForRelift = null
+        val liftedAgain = keptForRelift == offer.itemId && playedBeforePullBack
+        if (keptForRelift == offer.itemId) keptForRelift = null
         // Unless it is the video the peer said was playing: its index, read ahead since, is what makes it start sooner.
         if (hinted?.let { it.itemId == offer.itemId && it.sizeBytes == offer.sizeBytes } != true) media.forget(offer.itemId)
         // What was read of it is still here then: it starts in a fraction of the time, so it aims closer.
@@ -1084,7 +1094,10 @@ class ShelfViewModel(
         }
         // While it buffers its position stands still, which says nothing about how far off it is.
         if (clock.isPlaying && !engine.isPlaying) return
-        if (clock.isPlaying) video.follower.onPlaying(now)
+        if (clock.isPlaying) {
+            video.hasPlayed = true
+            video.follower.onPlaying(now)
+        }
         when (val correction = video.follower.correct(engine.positionMs, now)) {
             is PlaybackCorrection.Seek -> engine.seekTo(correction.positionMs)
             is PlaybackCorrection.Speed -> engine.setSpeed(correction.speed)
@@ -1456,6 +1469,9 @@ class ShelfViewModel(
          * from them, and the player goes on from the kept copy without reloading.
          */
         var viaLink = false
+
+        /** Its frames have moved here: some of its pictures are read, and kept if its card is pulled back. */
+        var hasPlayed = false
 
         /** Waiting on a frame for the peer to get there. */
         var hold: Job? = null

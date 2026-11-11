@@ -681,7 +681,23 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
-    fun `a video lifted again after a pull-back aims closer, as what was read of it is still here`() = runTest {
+    fun `a video that played here and is lifted again after a pull-back aims closer`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        // Its frames move here: some of its pictures are read.
+        engine.isPlaying = true
+        peer.transport.deliver(SlideMessage.PlaybackClock("9", positionMs = 7_000, isPlaying = true))
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        receiveOffer()
+
+        // 0.6 s ahead of the frame the peer reports, not the 2 s of a first load.
+        assertThat(engine.loadedAtMs).isEqualTo(5_600)
+    }
+
+    @Test
+    fun `a video pulled back before it played here aims as a first load does when lifted again`() = runTest {
         loaded()
         peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
         receiveOffer()
@@ -689,8 +705,9 @@ class ShelfViewModelLiveVideoTest {
 
         receiveOffer()
 
-        // 0.6 s ahead of the frame the peer reports, not the 2 s of a first load.
-        assertThat(engine.loadedAtMs).isEqualTo(5_600)
+        // Nothing of its pictures is here: 2 s ahead, as for any first load. Its index is still kept.
+        assertThat(engine.loadedAtMs).isEqualTo(7_000)
+        assertThat(media.forgotten).isEmpty()
     }
 
     @Test
