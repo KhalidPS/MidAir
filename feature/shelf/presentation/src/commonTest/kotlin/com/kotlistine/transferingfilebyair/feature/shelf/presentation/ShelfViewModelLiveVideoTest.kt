@@ -209,14 +209,15 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
-    fun `a video that springs back plays on here, so the peer may read its index ahead again`() = runTest {
+    fun `a video that springs back stops being readable in full, and the peer may read its index ahead again`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnPreviewClick("1"))
         lift("1")
 
         viewModel.onAction(ShelfAction.OnSlideReturned("1"))
 
-        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(media.shared).isEqualTo(emptyMap())
+        assertThat(media.sharedIndex).isEqualTo(mapOf("1" to "content://videos/1"))
         assertThat(peer.transport.sentHints.size).isEqualTo(2)
     }
 
@@ -591,13 +592,15 @@ class ShelfViewModelLiveVideoTest {
     // region Reading a playing video's index ahead of its card
 
     @Test
-    fun `a video that starts playing is said to the peer, who may read it from then on`() = runTest {
+    fun `a video that starts playing is said to the peer, who may read its header and index from then on`() = runTest {
         loaded()
 
         viewModel.onAction(ShelfAction.OnPreviewClick("1"))
 
         assertThat(peer.transport.sentHints).containsExactly(SlideMessage.PlaybackHint("1", sizeBytes = 16_000))
-        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        // Its header and index only: its pictures and sound stay here until its card is lifted.
+        assertThat(media.sharedIndex).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(media.shared).isEqualTo(emptyMap())
     }
 
     @Test
@@ -620,6 +623,20 @@ class ShelfViewModelLiveVideoTest {
         media.isFast = true
 
         assertThat(peer.transport.sentHints).containsExactly(SlideMessage.PlaybackHint("1", sizeBytes = 16_000))
+    }
+
+    @Test
+    fun `a lifted video stays readable in full when the link speed is reported again`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+        lift("1")
+
+        media.isFast = false
+        media.isFast = true
+
+        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(media.sharedIndex).isEqualTo(emptyMap())
+        viewModel.onAction(ShelfAction.OnSlideReturned("1"))
     }
 
     @Test
@@ -649,6 +666,69 @@ class ShelfViewModelLiveVideoTest {
         receiveOffer()
 
         assertThat(media.forgotten).isEmpty()
+    }
+
+    @Test
+    fun `what was read of a video that still plays on the peer is kept when its card is pulled back`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+        receiveOffer()
+
+        assertThat(media.forgotten).isEmpty()
+    }
+
+    @Test
+    fun `a video lifted again after a pull-back aims closer, as what was read of it is still here`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        receiveOffer()
+
+        // 0.6 s ahead of the frame the peer reports, not the 2 s of a first load.
+        assertThat(engine.loadedAtMs).isEqualTo(5_600)
+    }
+
+    @Test
+    fun `a video lifted again without having been said to play aims as a first load does`() = runTest {
+        loaded()
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        receiveOffer()
+
+        assertThat(engine.loadedAtMs).isEqualTo(7_000)
+    }
+
+    @Test
+    fun `what was kept of a pulled-back video is let go once another video plays on the peer`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        peer.transport.deliver(SlideMessage.PlaybackHint("4", sizeBytes = 1_000))
+
+        assertThat(media.forgotten).containsExactly("9")
+    }
+
+    @Test
+    fun `a video lifted again and pulled back is not let go twice`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        peer.transport.deliver(SlideMessage.PlaybackHint("4", sizeBytes = 1_000))
+        peer.transport.deliver(SlideMessage.PlaybackHint("5", sizeBytes = 1_000))
+
+        assertThat(media.forgotten).containsExactly("9")
     }
 
     @Test

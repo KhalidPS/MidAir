@@ -28,6 +28,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrection
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SecondLiftLeadMs
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
@@ -162,6 +163,9 @@ class ShelfViewModel(
 
     /** The video the peer said is playing on it: its index is read ahead, for the moment its card is lifted. */
     private var hinted: SlideMessage.PlaybackHint? = null
+
+    /** The peer's video whose card was pulled back while it still plays there: what was read of it is kept meanwhile. */
+    private var keptForRelift: String? = null
 
     /** A received item whose video is still read from the peer: it moves to its own file once the shelf has it. */
     private var streamedFromPeer: String? = null
@@ -393,7 +397,7 @@ class ShelfViewModel(
     }
 
     /**
-     * Tells the peer which of this shelf's videos plays here, and lets it read the file: it reads the header and index
+     * Tells the peer which of this shelf's videos plays here, and lets it read that file's header and index: it reads them
      * ahead, so its half of the card shows a frame sooner when the card is lifted (they cost 1.2 to 3.2 s of round
      * trips at the lift otherwise). Only once the link is on Wi-Fi.
      */
@@ -403,7 +407,10 @@ class ShelfViewModel(
         if (!media.isFast || following != null) return
         val id = _state.value.playing?.itemId ?: return
         val item = shelfItems.firstOrNull { it.id == id } ?: return
-        media.share(item.id, item.uri)
+        // Lifted or held: all of it is readable already, and offered.
+        if (outgoing?.id == id || held?.id == id) return
+        // Only its header and index: its pictures and sound stay here until its card is lifted.
+        media.shareIndex(item.id, item.uri, item.sizeBytes)
         post(SlideMessage.PlaybackHint(item.id, item.sizeBytes))
     }
 
@@ -816,8 +823,9 @@ class ShelfViewModel(
                     else -> return
                 }
                 if (following?.itemId == id || _state.value.playing?.itemId == id) stopVideo()
-                // What was read of its video is no longer wanted.
-                peer.media?.forget(id)
+                // What was read of its video is no longer wanted, unless it still plays over there: its card may be
+                // lifted again any moment, and reading its index again takes 1.3 to 2.7 s.
+                if (hinted?.itemId == id) keptForRelift = id else peer.media?.forget(id)
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(id))
             }
             is SlideMessage.PlaybackOffer -> {
@@ -843,6 +851,11 @@ class ShelfViewModel(
             }
             is SlideMessage.Released -> onPeerCaught(message.itemId)
             is SlideMessage.PlaybackHint -> {
+                // Another video plays there now: what was kept of the one before, pulled back, is let go.
+                keptForRelift?.takeIf { it != message.itemId }?.let {
+                    peer.media?.forget(it)
+                    keptForRelift = null
+                }
                 hinted = message
                 // Only on Wi-Fi: Bluetooth is too slow to read ahead on, and carries the card messages too.
                 peer.media?.takeIf { it.isFast }?.prefetch(message.itemId, message.sizeBytes)
@@ -1003,9 +1016,13 @@ class ShelfViewModel(
         val media = peer.media ?: return
         if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
+        // Lifted again: from here on it is let go as any card's video is.
+        val liftedAgain = keptForRelift == offer.itemId
+        if (liftedAgain) keptForRelift = null
         // Unless it is the video the peer said was playing: its index, read ahead since, is what makes it start sooner.
         if (hinted?.let { it.itemId == offer.itemId && it.sizeBytes == offer.sizeBytes } != true) media.forget(offer.itemId)
-        val follower = PlaybackFollower()
+        // What was read of it is still here then: it starts in a fraction of the time, so it aims closer.
+        val follower = if (liftedAgain) PlaybackFollower(SecondLiftLeadMs) else PlaybackFollower()
         follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = nowMillis(), oneWayMs = oneWayMillis())
         val video = FollowedVideo(offer.itemId, offer.sizeBytes, follower)
         following = video

@@ -10,10 +10,12 @@ private const val ToleranceMs = 25L
 private const val SlowDownWithinMs = 300L
 
 /**
- * Behind, it speeds up; further behind, it jumps ahead. A jump costs a frozen frame (it overshoots, then waits), so
+ * Behind, it speeds up; further behind, it jumps ahead. A jump costs a frozen frame of about 2 s on the phones (it
+ * loads again, 1.2 to 3.4 s measured), so
  * speed does as much as it can: the video is muted while following, so a faster pace has no pitch to give it away.
+ * A second and a half behind is made up in 3 s at 1.5×, still sooner than a jump shows a moving picture.
  */
-private const val SpeedUpWithinMs = 1_000L
+private const val SpeedUpWithinMs = 1_500L
 
 /** At the speed limits, a gap closes this fast: 1 s behind is made up in 2 s at 1.5×. */
 private const val CatchUpWindowMs = 2_000f
@@ -27,12 +29,20 @@ private const val MaxSpeed = 1.5f
 private const val StartLeadMs = 2_000L
 
 /**
- * How far ahead a jump aims before anything is known. Then it is learnt from how long jumps really take, and whatever
+ * How far ahead the load aims when the card is lifted again after a pull-back: what was read of the video is still
+ * here, and such a load took 0.33 to 0.43 s on the phones (ten in a row). Aimed 2 s ahead it showed its first frame
+ * and then stood still on it for about 1.5 s; a load that takes longer after all is made up by playing faster.
+ */
+const val SecondLiftLeadMs = 600L
+
+/**
+ * How far ahead a jump aims before anything is known: jumps took about 2 s on the phones, and one aimed 1 s ahead
+ * landed behind again and had to jump twice. Then it is learnt from how long jumps really take, and whatever
  * is left over is held: never more than a couple of seconds, which would show as a frozen frame.
  */
-private const val InitialLeadMs = 1_000L
+private const val InitialLeadMs = 2_000L
 private const val MinLeadMs = 300L
-private const val MaxLeadMs = 2_000L
+private const val MaxLeadMs = 3_000L
 
 /** A report this far from where the others say the sender is means it stalled or jumped: start over from it. */
 private const val DiscontinuityMs = 300L
@@ -64,7 +74,10 @@ sealed interface PlaybackCorrection {
  * is: it jumps ahead, by how long its starts take, and holds its frame for whatever is left over. Being early is
  * cheap and exact; being late would mean another jump. All times are this device's, in milliseconds.
  */
-class PlaybackFollower {
+class PlaybackFollower(
+    /** How far ahead of the peer's frame the first load aims: how long that load is expected to take. */
+    private val startLeadMs: Long = StartLeadMs,
+) {
 
     private class Report(val positionMs: Long, val receivedAtMs: Long)
 
@@ -105,7 +118,7 @@ class PlaybackFollower {
     fun startAt(nowMs: Long): Long? {
         val target = targetAt(nowMs) ?: return null
         if (!isPlaying) return target
-        return target + StartLeadMs
+        return target + startLeadMs
     }
 
     /** This device's video is moving, seen at [nowMs]: if a start or jump was loading, it learns how long that took. */
