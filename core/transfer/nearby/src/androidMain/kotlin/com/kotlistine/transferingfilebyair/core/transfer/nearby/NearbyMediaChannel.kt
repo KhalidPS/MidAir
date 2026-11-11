@@ -155,6 +155,12 @@ internal class NearbyMediaChannel(
     /** The other phone's files that are on this one now, by file id: read from here instead of over the link. */
     private val local = ConcurrentHashMap<String, LocalCopy>()
 
+    /**
+     * Files of this phone the other may read only the header and index of (see [shareIndex]): for each, the parts kept
+     * closed (its pictures and sound), once found. Null: not MP4 as far as can be told, so nothing of it is read.
+     */
+    private val closedParts = ConcurrentHashMap<String, Deferred<List<ByteSpan>?>>()
+
     /** How long the other phone's files are, by file id, where it said so ahead of a card (see [prefetch]). */
     private val sizes = ConcurrentHashMap<String, Long>()
 
@@ -184,12 +190,38 @@ internal class NearbyMediaChannel(
 
     override fun share(fileId: String, uri: String): String? {
         shared[fileId] = uri
+        closedParts.remove(fileId)
         served[fileId] = AtomicLong(0)
         return lan.share(fileId, uri)
     }
 
+    override fun shareIndex(fileId: String, uri: String, sizeBytes: Long) {
+        // Readable in full already (its card is in the air): it stays so.
+        if (shared.containsKey(fileId) && !closedParts.containsKey(fileId)) return
+        // Found off the main thread; a piece asked for meanwhile waits for it.
+        closedParts[fileId] = scope.async(Dispatchers.IO) { mp4MediaSpans(sizeBytes) { headerOf(uri, it) } }
+        shared[fileId] = uri
+    }
+
+    /** Up to [Mp4BoxHeaderBytes] bytes of the file at [uri] from [offset]; null when it can't be read there. */
+    private fun headerOf(uri: String, offset: Long): ByteArray? = try {
+        openAt(uri, offset, Mp4BoxHeaderBytes.toLong())?.use { input ->
+            val bytes = ByteArray(Mp4BoxHeaderBytes)
+            var read = 0
+            while (read < bytes.size) {
+                val more = input.read(bytes, read, bytes.size - read)
+                if (more < 0) break
+                read += more
+            }
+            if (read == 0) null else bytes.copyOf(read)
+        }
+    } catch (_: IOException) {
+        null
+    }
+
     override fun unshare(fileId: String) {
         shared.remove(fileId)
+        closedParts.remove(fileId)
         served.remove(fileId)
         lan.unshare(fileId)
     }
@@ -618,6 +650,7 @@ internal class NearbyMediaChannel(
         origins.clear()
         digests.values.forEach { it.complete(null) }
         shared.clear()
+        closedParts.clear()
         lan.unshareAll()
         // What is kept, or on this phone already, stays: a received video plays on without the link.
     }
@@ -638,8 +671,16 @@ internal class NearbyMediaChannel(
             client.sendPayload(endpoint, Payload.fromBytes(LinkFrame.RangeRefused(request.requestId).encode()))
             return
         }
+        val closed = closedParts[request.fileId]
         scope.launch {
-            val input = withContext(Dispatchers.IO) { openAt(uri, request.offset, request.length) }
+            // Before its card is lifted, only what isn't pictures and sound is read: cut short where those start.
+            val span = if (closed == null) {
+                ByteSpan(request.offset, request.offset + request.length)
+            } else {
+                closed.await()?.let { openSpan(request.offset, request.length, it) }
+            }
+            if (span == null) Log.w(Tag, "Piece of ${request.fileId} at ${request.offset} refused: its card isn't lifted")
+            val input = span?.let { withContext(Dispatchers.IO) { openAt(uri, it.start, it.length) } }
             if (input == null || endpoint() != endpoint) {
                 input?.closeQuietly()
                 client.sendPayload(endpoint, Payload.fromBytes(LinkFrame.RangeRefused(request.requestId).encode()))

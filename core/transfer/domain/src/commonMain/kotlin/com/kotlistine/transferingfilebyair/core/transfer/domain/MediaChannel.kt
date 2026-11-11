@@ -30,6 +30,13 @@ interface MediaChannel {
      */
     fun share(fileId: String, uri: String): String?
 
+    /**
+     * Lets the peer read only the header and index of the video at [uri] ([sizeBytes] long) as [fileId], not its
+     * pictures and sound: enough for [prefetch] on the other side, before its card is lifted. [share] opens all of it;
+     * a file already shared in full stays so. Until [unshare].
+     */
+    fun shareIndex(fileId: String, uri: String, sizeBytes: Long) = Unit
+
     fun unshare(fileId: String)
 
     /** Whether the peer's address [url] (from its [share]) answers from here: both phones are on the same Wi-Fi. */

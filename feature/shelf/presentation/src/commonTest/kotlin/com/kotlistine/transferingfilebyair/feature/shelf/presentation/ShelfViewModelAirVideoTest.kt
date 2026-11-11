@@ -142,7 +142,7 @@ class ShelfViewModelAirVideoTest {
     }
 
     @Test
-    fun `a held video put back plays on here, its reports stop, and the peer may read its index ahead again`() = runTest {
+    fun `a held video put back stops being readable in full by the peer, and its reports stop`() = runTest {
         shelfOnScreen()
         grabPlayingVideo()
 
@@ -150,7 +150,9 @@ class ShelfViewModelAirVideoTest {
         val sentBefore = peer.transport.sentSlides.size
         advanceTimeBy(1_000)
 
-        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        // All of it stops being readable; its header and index stay, for the next time it is lifted.
+        assertThat(media.shared).isEqualTo(emptyMap())
+        assertThat(media.sharedIndex).isEqualTo(mapOf("1" to "content://videos/1"))
         assertThat(peer.transport.sentSlides.size).isEqualTo(sentBefore)
         assertThat(peer.transport.sentSlides.last()).isEqualTo(SlideMessage.DragCancel("1"))
     }

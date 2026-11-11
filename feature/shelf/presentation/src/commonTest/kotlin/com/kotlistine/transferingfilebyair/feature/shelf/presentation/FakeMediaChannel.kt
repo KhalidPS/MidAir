@@ -28,6 +28,13 @@ class FakeMediaChannel(
     /** Shared files by id. */
     val shared = mutableMapOf<String, String>()
 
+    /** Files shared for their header and index only, by id. */
+    val sharedIndex = mutableMapOf<String, String>()
+
+    override fun shareIndex(fileId: String, uri: String, sizeBytes: Long) {
+        if (fileId !in shared) sharedIndex[fileId] = uri
+    }
+
     /** Every hold asked for (true: a card is in the air). */
     val holds = mutableListOf<Boolean>()
 
@@ -40,11 +47,13 @@ class FakeMediaChannel(
 
     override fun share(fileId: String, uri: String): String? {
         shared[fileId] = uri
+        sharedIndex.remove(fileId)
         return wifiUrl?.invoke(fileId)
     }
 
     override fun unshare(fileId: String) {
         shared.remove(fileId)
+        sharedIndex.remove(fileId)
     }
 
     override suspend fun canReach(url: String): Boolean = reachable

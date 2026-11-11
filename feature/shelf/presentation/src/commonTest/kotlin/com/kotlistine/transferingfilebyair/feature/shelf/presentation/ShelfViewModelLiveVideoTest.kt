@@ -209,14 +209,15 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
-    fun `a video that springs back plays on here, so the peer may read its index ahead again`() = runTest {
+    fun `a video that springs back stops being readable in full, and the peer may read its index ahead again`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnPreviewClick("1"))
         lift("1")
 
         viewModel.onAction(ShelfAction.OnSlideReturned("1"))
 
-        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(media.shared).isEqualTo(emptyMap())
+        assertThat(media.sharedIndex).isEqualTo(mapOf("1" to "content://videos/1"))
         assertThat(peer.transport.sentHints.size).isEqualTo(2)
     }
 
@@ -591,13 +592,15 @@ class ShelfViewModelLiveVideoTest {
     // region Reading a playing video's index ahead of its card
 
     @Test
-    fun `a video that starts playing is said to the peer, who may read it from then on`() = runTest {
+    fun `a video that starts playing is said to the peer, who may read its header and index from then on`() = runTest {
         loaded()
 
         viewModel.onAction(ShelfAction.OnPreviewClick("1"))
 
         assertThat(peer.transport.sentHints).containsExactly(SlideMessage.PlaybackHint("1", sizeBytes = 16_000))
-        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        // Its header and index only: its pictures and sound stay here until its card is lifted.
+        assertThat(media.sharedIndex).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(media.shared).isEqualTo(emptyMap())
     }
 
     @Test
@@ -620,6 +623,20 @@ class ShelfViewModelLiveVideoTest {
         media.isFast = true
 
         assertThat(peer.transport.sentHints).containsExactly(SlideMessage.PlaybackHint("1", sizeBytes = 16_000))
+    }
+
+    @Test
+    fun `a lifted video stays readable in full when the link speed is reported again`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+        lift("1")
+
+        media.isFast = false
+        media.isFast = true
+
+        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(media.sharedIndex).isEqualTo(emptyMap())
+        viewModel.onAction(ShelfAction.OnSlideReturned("1"))
     }
 
     @Test

@@ -393,7 +393,7 @@ class ShelfViewModel(
     }
 
     /**
-     * Tells the peer which of this shelf's videos plays here, and lets it read the file: it reads the header and index
+     * Tells the peer which of this shelf's videos plays here, and lets it read that file's header and index: it reads them
      * ahead, so its half of the card shows a frame sooner when the card is lifted (they cost 1.2 to 3.2 s of round
      * trips at the lift otherwise). Only once the link is on Wi-Fi.
      */
@@ -403,7 +403,10 @@ class ShelfViewModel(
         if (!media.isFast || following != null) return
         val id = _state.value.playing?.itemId ?: return
         val item = shelfItems.firstOrNull { it.id == id } ?: return
-        media.share(item.id, item.uri)
+        // Lifted or held: all of it is readable already, and offered.
+        if (outgoing?.id == id || held?.id == id) return
+        // Only its header and index: its pictures and sound stay here until its card is lifted.
+        media.shareIndex(item.id, item.uri, item.sizeBytes)
         post(SlideMessage.PlaybackHint(item.id, item.sizeBytes))
     }
 
