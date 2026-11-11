@@ -1,13 +1,13 @@
 # 2026-11-11: Catch up by playing faster before jumping, and aim a jump further ahead
 
 This report puts the old catch-up rule next to the fix, explains **what went wrong**, **what we did instead**, and
-**what it should bring**.
+**what it brings**.
 
 - Branch: `fix/2026-11-11/1740-catch-up-before-jumping`. One commit: `94c829d`, "fix: catch up by playing faster up
   to 1.5 s behind, and aim a jump 2 s ahead". Built on `fix/2026-11-11/1645-keep-index-on-pull-back`.
 - Phones: A = M2101K6G (sender), B = Redmi Note 8 (receiver). Video "2": a 676 MB phone recording, about 2.5 MB/s.
-- **Phone result: pending.** Installed on both phones, not tested yet. Everything below about its effect is expected,
-  not measured. All unit tests pass.
+- **Phone result: confirmed.** Test Q, 18:10 to 18:12, on this build: 0 jumps in 12 loads. Owner: "it's good, not
+  like the build before". No double jump since, in Tests P and R either (Section 4). All unit tests pass.
 
 ---
 
@@ -55,41 +55,53 @@ those 3 s the picture moves. A jump shows a still frame for 1.2 to 3.4 s, then s
 
 ## 3. Before and after
 
-| | Before | After (expected, not measured) |
+| | Before | After |
 |---|---|---|
-| 17:07:45 start, 1.01 s behind | jumped | catches up by playing faster |
-| A first jump, about 2 s long | aimed 1 s ahead, lands behind, jumps again | aimed 2 s ahead, lands close |
-| Jumps in the 17:07:45 slide | 2 | 0 |
-| In step with A, 17:07:45 slide | 8.3 s | about 2.6 s plus the time to catch up |
+| A start up to 1.5 s late, like 17:07:45 (1.01 s) | jumped | catches up by playing faster |
+| A first jump, about 2 s long | aimed 1 s ahead, landed behind, jumped again | aimed 2 s ahead, lands once |
+| In step with A, a load that jumped | 8.3 s (17:07:45, two jumps) | 4.7 to 6.1 s (one jump each) |
+| Jumps on the Nearby path | 1 of 6 (17:06 test) | 0 of 12 (Test Q) |
 | First frame on B | unchanged | unchanged |
-
-Measured before, in the 17:06 to 17:09 test: jumps 1 of 6 slides, in step 1.2 to 8.3 s.
 
 ---
 
-## 4. What it brings
+## 4. Measured
+
+- **Test Q, 18:10 to 18:12, this build, Nearby path:** 0 jumps in 12 loads. Two first lifts played straight on
+  (first frame 2.5 s and 1.7 s). Ten second lifts after a pull-back held their frame, then were in step after 1.8
+  to 2.1 s. The hold comes from the 2 s aim, not from this fix; see the aim-closer report.
+- **Test P, 17:58 to 18:01, direct-path build that includes this fix:** two loads fell behind, with a first frame
+  after 3.4 s. Each jumped once, not twice, and was in step after 5.7 s and 6.1 s, against 8.3 s for the double
+  jump at 17:07:45.
+- **Test R, 18:17 to 18:20, aim-closer build that includes this fix:** one jump in 18 loads, single, in step after
+  4.7 s. Its cause was the closer aim, not this rule.
+
+No double jump in 37 loads across the three tests.
+
+---
+
+## 5. What it brings
 
 - **Fewer jumps.** A start up to 1.5 s late is made up by playing faster, with a moving picture all along.
 - **One jump instead of two** when a jump does happen. The first aim now matches how long jumps took on these
-  phones, so it should land close instead of behind.
+  phones, and the three jumps measured since each landed in one go.
 - **Room for slow jumps.** The learnt aim may now go to 3.0 s, which covers most of the 1.2 to 3.4 s measured.
 
 **What it does not do:** make the first frame come sooner. That is the loading, not the aim.
 
 ---
 
-## 5. Limits
+## 6. Limits
 
-1. **Not tested on the phones yet.** The effect above is expected from the 17:07:45 log, not measured.
-2. **A visible speed-up.** Up to 3 s at 1.5 times speed instead of up to 2 s. It is muted, but a faster picture may
+1. **A visible speed-up.** Up to 3 s at 1.5 times speed instead of up to 2 s. It is muted, but a faster picture may
    be noticed.
-3. **An early jump holds longer.** When a jump is quicker than 2 s, B now holds its frame for the difference.
-4. **A jump slower than 3.4 s** would still land behind. None was measured.
-5. **The one case behind it is a single slide.** Other slides of the test played straight on or held.
+2. **An early jump holds longer.** When a jump is quicker than 2 s, B now holds its frame for the difference.
+3. **A jump slower than 3.4 s** would still land behind. None was measured.
+4. **Small samples.** 37 loads over three builds, one afternoon, one pair of phones.
 
 ---
 
-## 6. Tests
+## 7. Tests
 
 `PlaybackFollowerTest.kt`, in `feature/shelf/domain`:
 
@@ -98,11 +110,6 @@ Measured before, in the 17:06 to 17:09 test: jumps 1 of 6 slides, in step 1.2 to
 - New: a second and a half behind, it still catches up by playing faster.
 
 All unit tests pass.
-
-### What to look for in the phone test
-
-- A start 1.0 to 1.5 s late: B should play faster for a few seconds, not jump.
-- A jump: B should land in step or hold briefly, not jump a second time.
 
 ### Lesson
 

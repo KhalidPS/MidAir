@@ -57,6 +57,10 @@ messages, in ms. It is independent of the video columns.
 **"Landed during load":** the card was dropped on B before B's first frame was ready, so the full file transfer
 started alongside the player. These slides are slower to start, and are marked.
 
+**First lift and second lift (after a pull-back):** a first lift is a card lifted when B has read nothing of its
+video yet, beyond the index read ahead. A second lift is the same card lifted again after a pull-back, while its
+video still plays on A. From Stage 6 on, B keeps what it read for that case, so a second lift can start much sooner.
+
 **In short:** the first column shows how good the loading is, the second how good the aim is, and the third the
 result of both.
 
@@ -204,7 +208,68 @@ yet.
 
 ---
 
-## 10. Comparison
+## 10. Stage 7: Video over the Wi-Fi Direct group (experiment, parked)
+
+- Branch: `feature/2026-11-11/1747-video-over-wifi-direct`, built on every fix up to the jump rule (Stage 8).
+- Fix: "Play a followed video over the Wi-Fi Direct group, on a connection of its own". B's player reads the video
+  from A's file server on the group, not over Nearby.
+- Status: works, not faster, parked, not merged. Test from 17:58 to 18:01. Every load used the direct path.
+- Card lag typical: 39 to 56 ms across the test.
+
+| Slide time | First frame after | Then | In step with A after |
+|---|---|---|---|
+| 17:58:48 | 2.6 s | played straight on | 2.6 s |
+| 17:59:00 | 1.9 s | played straight on | 1.9 s |
+| 17:59:12 | 1.6 s | played straight on | 1.6 s |
+| 17:59:21 | 3.4 s | jumped once | 5.7 s |
+| 18:00:16 | 3.0 s | played straight on | 3.0 s |
+| 18:00:52 | 3.4 s | jumped once | 6.1 s |
+| 18:01:40 | 1.9 s | played straight on | 1.9 s |
+
+Note: most of these were second lifts after a pull-back. Nothing is kept between lifts on this path, so each was a
+fresh load: B's half showed the video's thumbnail first, then played.
+
+---
+
+## 11. Stage 8: Catch up before jumping
+
+- Branch: `fix/2026-11-11/1740-catch-up-before-jumping`, built on Stage 6. Nearby path, no direct path.
+- Fix: "Catch up by playing faster up to 1.5 s behind, and aim a jump 2 s ahead".
+- Test from 18:10 to 18:12. Card lag typical: 37 to 48 ms across the test.
+
+| Slide | First frame after | Then | In step with A after |
+|---|---|---|---|
+| First lift of video 2 | 2.5 s | played straight on | 2.5 s |
+| First lift of video 14 | 1.7 s | played straight on | 1.7 s |
+| Ten second lifts after a pull-back | 0.33 to 0.43 s | held its frame 1.3 to 1.6 s, every one | 1.8 to 2.1 s |
+
+Note: after each pull-back B logged the index "fetched ahead" in 10 to 114 ms: all of it was still kept. The second
+lifts held because they still aimed 2 s ahead, as a first lift does.
+
+---
+
+## 12. Stage 9: Aim closer on a second lift
+
+- Branch: `fix/2026-11-11/1814-aim-closer-on-second-lift`, built on Stage 8.
+- Fix: "Aim a video lifted again after a pull-back 0.6 s ahead, not 2 s".
+- Test from 18:17 to 18:20. Nineteen loads, eighteen reached a first frame (one card was pulled back before it did).
+  Card lag typical: 26 to 46 ms across the test.
+
+| Slide | First frame after | Then | In step with A after |
+|---|---|---|---|
+| First lift | 2.8 s | played straight on | 2.8 s |
+| Second lifts after a pull-back: 0.59, 0.86, 0.34, 0.53, 0.39, 0.97, 1.49, 1.44, 0.76, 0.85, 0.35, 0.44, 0.34, 0.30 s | 0.30 to 1.5 s | played straight on, no holds | 0.30 to 1.5 s |
+| A lift after a drop | 1.86 s | played straight on | 1.86 s |
+| One more lift in the series | 1.67 s | played straight on | 1.67 s |
+| 18:19:46, lifted 3 s after a pull-back that came before its first frame | 1.88 s | jumped once | 4.7 s |
+
+Note: at 18:19:46 nothing of the video's pictures had been kept, only its index, but it counted as a second lift and
+aimed 0.6 s ahead. A follow-up (`fix/2026-11-11/1840-aim-closer-only-after-playing`) aims closer only when the
+video had played on B before the pull-back. It awaits its phone test.
+
+---
+
+## 13. Comparison
 
 The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only the slides where it was recorded.
 
@@ -218,6 +283,9 @@ The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only
 | 4b. Aim-ahead, tuned | 3 | 3.6 to 6.1 s | 3.6 to 13.0 s | 2 of 3 | 42 to 62 ms |
 | 5. Index read-ahead | 4 | 1.1 to 2.4 s | 1.8 to 2.4 s | 0 of 4 | 39 to 43 ms |
 | 6. Exact index, index-only, keep on pull-back | 6 | 0.4 to 2.6 s (1.4 to 2.6 s without the second lift) | 1.2 to 8.3 s | 1 of 6 | 36 to 48 ms |
+| 7. Video over Wi-Fi Direct (parked) | 7 | 1.6 to 3.4 s | 1.6 to 6.1 s | 2 of 7 (once each) | 39 to 56 ms |
+| 8. Catch up before jumping | 12 | 1.7 to 2.5 s on first lifts, 0.33 to 0.43 s on second lifts | 1.7 to 2.5 s | 0 of 12 | 37 to 48 ms |
+| 9. Aim closer on a second lift | 18 | 2.8 s on the first lift, 0.30 to 1.9 s after | 0.30 to 4.7 s | 1 of 18 | 26 to 46 ms |
 
 ### What each fix changed
 
@@ -236,11 +304,21 @@ The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only
   17 s later, had its first frame after 0.4 s, the fastest of the day.
 - **The jump at 17:07:45** does not come from these three fixes. B was 1.01 s behind, just over the 1.0 s limit of
   the jump rule, and its reload, aimed 1 s ahead, landed behind again. The catch-up fix
-  (`fix/2026-11-11/1740-catch-up-before-jumping`, pending) addresses this.
+  (`fix/2026-11-11/1740-catch-up-before-jumping`, Stage 8) addresses this.
+- **Video over Wi-Fi Direct (Stage 7):** not faster. First frame 1.6 to 3.4 s on every lift, second lifts included.
+  Even the tiny reachability check on that connection took 83 to 261 ms to answer: the delay per request comes from
+  the Wi-Fi Direct link itself, not from Nearby. And nothing is kept between lifts on that path, so a second lift
+  loads from scratch. Parked.
+- **Catch up before jumping (Stage 8):** no double jumps since. 0 jumps in 12 loads on the Nearby path. In Stages 7
+  and 9 the three loads that fell behind jumped once each (in step after 4.7 to 6.1 s, against 8.3 s for the double
+  jump at 17:07:45).
+- **Aim closer on a second lift (Stage 9):** no frozen frame on second lifts. In Stage 8 every second lift held its
+  frame 1.3 to 1.6 s; in Stage 9 none did, and most were in step in under 0.9 s.
 
 ### How far to trust these numbers
 
-- **Small samples.** 2 to 6 slides per stage, one pair of phones, one video (two in Stage 6).
+- **Small samples.** 2 to 6 slides per stage up to Stage 6, 7 to 18 in Stages 7 to 9. One pair of phones, one video
+  (two from Stage 6 on).
 - **Measured in sequence.** The stages ran one after another on one afternoon. Loading speed varied between rounds
   for reasons not explained. Compare Stage 4a and 4b: the loading code is the same, but the first frame ranges
   differ.
@@ -254,5 +332,5 @@ The lifted-on-Bluetooth slide (13:04:39) is left out. Card lag ranges cover only
 3. **The remaining 1.1 to 2.4 s start:** picture data and the player's start-up buffer.
 4. **The extra request caused by the index-only rule:** B's player needs bytes just inside the picture data at every
    start, no longer read ahead. One request at the lift, 213 ms measured.
-5. **The catch-up fix** (`fix/2026-11-11/1740-catch-up-before-jumping`) is installed on both phones and awaits its
-   phone test.
+5. **The follow-up for the closer aim** (`fix/2026-11-11/1840-aim-closer-only-after-playing`): a card pulled back
+   before its first frame aims as a first lift does when lifted again. Unit tests only; it awaits its phone test.
