@@ -36,9 +36,12 @@ class FakeTransport : Transport {
         return Result.Success(Unit)
     }
 
-    /** What was sent, minus the round-trip probes that run in the background. */
+    /** What was sent, minus the round-trip probes that run in the background and the hints of what plays here. */
     val sentSlides: List<SlideMessage>
-        get() = sent.filterNot { it is SlideMessage.Ping || it is SlideMessage.Pong }
+        get() = sent.filterNot { it is SlideMessage.Ping || it is SlideMessage.Pong || it is SlideMessage.PlaybackHint }
+
+    /** Each video said to be playing here, for the peer to read its index ahead. */
+    val sentHints: List<SlideMessage.PlaybackHint> get() = sent.filterIsInstance<SlideMessage.PlaybackHint>()
 
     suspend fun deliver(message: SlideMessage) = inbound.emit(message)
 }

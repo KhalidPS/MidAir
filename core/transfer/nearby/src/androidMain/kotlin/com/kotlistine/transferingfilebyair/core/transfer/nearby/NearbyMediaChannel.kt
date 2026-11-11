@@ -16,6 +16,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -74,6 +75,12 @@ private const val DigestTimeoutMillis = 60_000L
  * 12 s); this only keeps a fetch from waiting forever on a hold that was never let go.
  */
 private const val CardHoldMaxMillis = 15_000L
+
+/**
+ * How much of a file's end is fetched ahead of its card, with its first piece. A phone's recording keeps its index
+ * there: about 1.5 MB for a 676 MB one. A player starts by reading both, which cost 1.2 to 3.2 s of round trips.
+ */
+private const val IndexTailBytes = 4L * 1024 * 1024
 
 /** Room left on this phone after a fetch, on top of the fetched file and the copy kept of it. */
 private const val SpareBytes = 64L * 1024 * 1024
@@ -154,6 +161,12 @@ internal class NearbyMediaChannel(
     /** The other phone's files that are on this one now, by file id: read from here instead of over the link. */
     private val local = ConcurrentHashMap<String, LocalCopy>()
 
+    /** How long the other phone's files are, by file id, where it said so ahead of a card (see [prefetch]). */
+    private val sizes = ConcurrentHashMap<String, Long>()
+
+    /** Fetches of a file's index running ahead of its card, by file id. */
+    private val prefetching = ConcurrentHashMap<String, Job>()
+
     /** Digests this phone asked for, by request id, completed with the SHA-256 (null: refused or the link went). */
     private val digests = ConcurrentHashMap<Long, CompletableDeferred<ByteArray?>>()
 
@@ -196,9 +209,45 @@ internal class NearbyMediaChannel(
 
     override suspend fun open(fileId: String, offset: Long): Result<ByteStream, DataError.Network> {
         openLocal(fileId, offset)?.let { return Result.Success(LocalStream(it)) }
+        // Fetched ahead of the card (the file's index, see prefetch) or read before: no round trip.
+        keptPart(fileId, offset)?.let { return Result.Success(PiecedStream(fileId, offset, it, offset + it.size)) }
         val first = openPiece(fileId, offset, PieceBytes, forPlayer = true)
             ?: return Result.Failure(DataError.Network.DISCONNECTED)
-        return Result.Success(PiecedStream(fileId, offset, first))
+        return Result.Success(PiecedStream(fileId, offset, first, offset + PieceBytes))
+    }
+
+    /**
+     * The kept bytes of [fileId] from [offset] to the end of the kept piece they are in; null when none are kept there,
+     * or the file's size isn't known (without it nothing says where a kept piece ends the file).
+     */
+    private fun keptPart(fileId: String, offset: Long): PiecePart? {
+        if (!sizes.containsKey(fileId)) return null
+        val piece = keptOf(fileId).firstOrNull { offset >= it.span.start && offset < it.span.end } ?: return null
+        return try {
+            KeptPart(piece.file, skip = offset - piece.span.start, size = piece.span.end - offset)
+        } catch (_: IOException) {
+            // Let go of meanwhile.
+            null
+        }
+    }
+
+    override fun prefetch(fileId: String, sizeBytes: Long) {
+        sizes[fileId] = sizeBytes
+        if (local.containsKey(fileId) || prefetching[fileId]?.isActive == true) return
+        prefetching[fileId] = scope.launch {
+            val startedAt = System.currentTimeMillis()
+            for (span in indexSpans(sizeBytes, PieceBytes, IndexTailBytes)) {
+                // Never in the way of a card's moves or of a video that plays now.
+                withTimeoutOrNull(CardHoldMaxMillis) { cardInAir.first { !it } }
+                withTimeoutOrNull(PlayerFirstMillis) { playerPieces.first { it <= 0 } }
+                if (keptOf(fileId).any { it.span.start <= span.start && it.span.end >= span.end }) continue
+                val piece = openPiece(fileId, span.start, span.length, forPlayer = false) ?: return@launch
+                // Kept as it ends (claimed when it arrived).
+                piece.ended.await()
+                piece.close()
+            }
+            Log.i(Tag, "Index of $fileId fetched ahead in ${System.currentTimeMillis() - startedAt} ms")
+        }
     }
 
     /**
@@ -379,6 +428,8 @@ internal class NearbyMediaChannel(
     }
 
     override fun forget(fileId: String) {
+        prefetching.remove(fileId)?.cancel()
+        sizes.remove(fileId)
         local.remove(fileId)?.owned?.delete()
         dropKept(fileId)
     }
@@ -595,7 +646,9 @@ internal class NearbyMediaChannel(
     private inner class PiecedStream(
         private val fileId: String,
         start: Long,
-        first: DrainedPiece,
+        first: PiecePart,
+        /** Where [first] ends in the file. */
+        firstEnd: Long,
     ) : ByteStream {
         private var current = first
 
@@ -605,22 +658,32 @@ internal class NearbyMediaChannel(
         /** The rest of the file from this phone's copy, once there is one. */
         private var fromHere: InputStream? = null
 
-        /** Pieces asked for after [current], in file order. */
-        private val ahead = ArrayDeque<Deferred<DrainedPiece?>>()
+        /** Parts after [current], in file order: pieces asked for, and ones kept from before. */
+        private val ahead = ArrayDeque<Deferred<PiecePart?>>()
 
-        /** Where the next piece to ask for starts. */
-        private var nextOffset = start + PieceBytes
+        /** Where the next part to line up starts. */
+        private var nextOffset = firstEnd
 
         @Volatile
         private var isClosed = false
+
+        /** Whether [position] is at or past the file's end, when its size is known (see [prefetch]). */
+        private fun isPastEnd(position: Long): Boolean = sizes[fileId]?.let { position >= it } == true
 
         private fun fillAhead() {
             // On this phone already: the next piece comes from here.
             if (local.containsKey(fileId)) return
             while (ahead.size < PiecesAhead) {
                 val offset = nextOffset
-                ahead.addLast(scope.async { openPiece(fileId, offset, PieceBytes, forPlayer = true) })
-                nextOffset += PieceBytes
+                if (isPastEnd(offset)) return
+                val here = keptPart(fileId, offset)
+                if (here != null) {
+                    ahead.addLast(CompletableDeferred<PiecePart?>(here))
+                    nextOffset = offset + here.size
+                } else {
+                    ahead.addLast(scope.async { openPiece(fileId, offset, PieceBytes, forPlayer = true) })
+                    nextOffset += PieceBytes
+                }
             }
         }
 
@@ -631,8 +694,8 @@ internal class NearbyMediaChannel(
                 val read = current.read(buffer, offset, length)
                 if (current.position >= PieceBytes / 2) fillAhead()
                 if (read >= 0) return read
-                if (current.size < PieceBytes) return -1
-                val next = currentStart + PieceBytes
+                val next = currentStart + current.size
+                if (current.isLast || isPastEnd(next)) return -1
                 if (goOnFromHere(next)) continue
                 if (ahead.isEmpty()) fillAhead()
                 // Interrupted (the player gave up on this range): runBlocking throws, and the read with it.
@@ -702,7 +765,7 @@ private class DrainedPiece(
     private val file: File,
     scope: CoroutineScope,
     private val keep: (fileId: String, piece: KeptPiece) -> Unit,
-) {
+) : PiecePart {
     private val lock = ReentrantLock()
     private val arrived = lock.newCondition()
     private val writer = FileOutputStream(file)
@@ -718,11 +781,14 @@ private class DrainedPiece(
     private var isDeleted = false
 
     /** How far it has been read. Read by the player's loader thread only. */
-    var position = 0L
+    override var position = 0L
         private set
 
     /** How many bytes the piece had, once it has all arrived. */
-    val size: Long get() = lock.withLock { written }
+    override val size: Long get() = lock.withLock { written }
+
+    /** A player's piece is always asked for whole: one that came shorter is the file's last. */
+    override val isLast: Boolean get() = size < PieceBytes
 
     /** Completed once the stream has ended: true if it arrived whole. */
     val ended = CompletableDeferred<Boolean>()
@@ -786,7 +852,7 @@ private class DrainedPiece(
     }
 
     /** Like [InputStream.read]: waits for bytes, -1 once the piece has all been read. Throws if the piece broke. */
-    fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         val available = lock.withLock {
             while (position >= written && !isEnded) arrived.await()
             if (position >= written) {
@@ -801,12 +867,55 @@ private class DrainedPiece(
         return read
     }
 
-    fun close() {
+    override fun close() {
         lock.withLock {
             if (isClosed) return
             isClosed = true
             deleteIfUnwanted()
         }
+        try {
+            reader.close()
+        } catch (_: IOException) {
+        }
+    }
+}
+
+/** A part of a file a player reads through: a piece arriving over the link, or one kept from before. */
+private interface PiecePart {
+    /** How far it has been read. */
+    val position: Long
+
+    /** How many bytes it has in all; known once it has been read to its end. */
+    val size: Long
+
+    /** Whether the file ends with it, as far as the part itself can tell. */
+    val isLast: Boolean
+
+    /** Like [InputStream.read]. */
+    fun read(buffer: ByteArray, offset: Int, length: Int): Int
+
+    fun close()
+}
+
+/** The [size] bytes at [skip] of a piece kept in [file]: here already, so reading them never waits on the link. */
+private class KeptPart(file: File, skip: Long, override val size: Long) : PiecePart {
+    private val reader = RandomAccessFile(file, "r").apply { seek(skip) }
+
+    override var position = 0L
+        private set
+
+    // A kept piece can be any length (a gap a fetch filled): only the file's size says where it ends.
+    override val isLast: Boolean get() = false
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val left = size - position
+        if (left <= 0) return -1
+        val read = reader.read(buffer, offset, minOf(length.toLong(), left).toInt())
+        if (read > 0) position += read
+        return read
+    }
+
+    override fun close() {
         try {
             reader.close()
         } catch (_: IOException) {

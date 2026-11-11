@@ -209,14 +209,15 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
-    fun `a video that springs back stops being readable by the peer`() = runTest {
+    fun `a video that springs back plays on here, so the peer may read its index ahead again`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnPreviewClick("1"))
         lift("1")
 
         viewModel.onAction(ShelfAction.OnSlideReturned("1"))
 
-        assertThat(media.shared).isEqualTo(emptyMap())
+        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+        assertThat(peer.transport.sentHints.size).isEqualTo(2)
     }
 
     // endregion
@@ -586,6 +587,81 @@ class ShelfViewModelLiveVideoTest {
         while (state.isLoading) state = awaitItem()
         return state
     }
+
+    // region Reading a playing video's index ahead of its card
+
+    @Test
+    fun `a video that starts playing is said to the peer, who may read it from then on`() = runTest {
+        loaded()
+
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+
+        assertThat(peer.transport.sentHints).containsExactly(SlideMessage.PlaybackHint("1", sizeBytes = 16_000))
+        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
+    }
+
+    @Test
+    fun `while the link is still slow a playing video is not said to the peer`() = runTest {
+        media.isFast = false
+        loaded()
+
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+
+        assertThat(peer.transport.sentHints).isEmpty()
+        assertThat(media.shared).isEqualTo(emptyMap())
+    }
+
+    @Test
+    fun `a video already playing is said to the peer once the link gets fast`() = runTest {
+        media.isFast = false
+        loaded()
+        viewModel.onAction(ShelfAction.OnPreviewClick("1"))
+
+        media.isFast = true
+
+        assertThat(peer.transport.sentHints).containsExactly(SlideMessage.PlaybackHint("1", sizeBytes = 16_000))
+    }
+
+    @Test
+    fun `the index of a video playing on the peer is read ahead`() = runTest {
+        loaded()
+
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+
+        assertThat(media.prefetched).containsExactly("9" to 24_000_000L)
+    }
+
+    @Test
+    fun `nothing is read ahead while the link is still slow`() = runTest {
+        media.isFast = false
+        loaded()
+
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+
+        assertThat(media.prefetched).isEmpty()
+    }
+
+    @Test
+    fun `what was read ahead of a video is kept when its card is lifted`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+
+        receiveOffer()
+
+        assertThat(media.forgotten).isEmpty()
+    }
+
+    @Test
+    fun `what is kept under the id of another file is let go when a card is lifted`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 1_000))
+
+        receiveOffer()
+
+        assertThat(media.forgotten).containsExactly("9")
+    }
+
+    // endregion
 
     private class MutableClock : Clock {
         var nowMillis = 0L

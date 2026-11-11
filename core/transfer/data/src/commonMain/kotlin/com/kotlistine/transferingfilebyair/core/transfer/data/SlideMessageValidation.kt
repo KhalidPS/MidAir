@@ -46,6 +46,7 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
         sizeBytes > 0 &&
             positionMs >= 0 &&
             httpUrl.let { it == null || (it.startsWith("http://") && it.length <= MaxUrlLength) }
+    is SlideMessage.PlaybackHint -> sizeBytes > 0
     is SlideMessage.PlaybackClock -> positionMs >= 0
     is SlideMessage.Grabbed -> handSize.isFinite() && handSize in 0f..1f
     is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong,

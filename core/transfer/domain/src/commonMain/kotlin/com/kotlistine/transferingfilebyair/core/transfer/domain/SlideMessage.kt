@@ -129,6 +129,12 @@ sealed interface SlideMessage {
         val httpUrl: String? = null,
     ) : SlideMessage
 
+    /**
+     * A video started playing on the sender, readable over the media channel as [itemId]: its card may be lifted any
+     * moment. The receiver reads its header and index ahead, so its half of the card shows a frame sooner then.
+     */
+    data class PlaybackHint(val itemId: String, val sizeBytes: Long) : SlideMessage
+
     /** Where the sender's video is, reported a few times a second while its card is in the air (or held in a fist). */
     data class PlaybackClock(val itemId: String, val positionMs: Long, val isPlaying: Boolean) : SlideMessage
 

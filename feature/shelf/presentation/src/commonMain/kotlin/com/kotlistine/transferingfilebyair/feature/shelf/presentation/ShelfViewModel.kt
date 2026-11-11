@@ -160,6 +160,9 @@ class ShelfViewModel(
     /** The peer's video this device plays along with, while the peer's card is in the air. */
     private var following: FollowedVideo? = null
 
+    /** The video the peer said is playing on it: its index is read ahead, for the moment its card is lifted. */
+    private var hinted: SlideMessage.PlaybackHint? = null
+
     /** A received item whose video is still read from the peer: it moves to its own file once the shelf has it. */
     private var streamedFromPeer: String? = null
     private var viewportWidthPx = 0
@@ -362,6 +365,7 @@ class ShelfViewModel(
                 // Another video playing stops: the engine plays one at a time.
                 engine.load(VideoSource.Local(item.uri))
                 _state.update { it.copy(playing = PlayingVideoUi(id, isPaused = !engine.playWhenReady.value)) }
+                hintPlaying()
             }
             playing.isPaused -> engine.play()
             else -> engine.pause()
@@ -386,6 +390,21 @@ class ShelfViewModel(
                 }
             }
             .launchIn(viewModelScope)
+    }
+
+    /**
+     * Tells the peer which of this shelf's videos plays here, and lets it read the file: it reads the header and index
+     * ahead, so its half of the card shows a frame sooner when the card is lifted (they cost 1.2 to 3.2 s of round
+     * trips at the lift otherwise). Only once the link is on Wi-Fi.
+     */
+    private fun hintPlaying() {
+        val media = peer?.media ?: return
+        // A video followed from the peer is the peer's to announce.
+        if (!media.isFast || following != null) return
+        val id = _state.value.playing?.itemId ?: return
+        val item = shelfItems.firstOrNull { it.id == id } ?: return
+        media.share(item.id, item.uri)
+        post(SlideMessage.PlaybackHint(item.id, item.sizeBytes))
     }
 
     /** The card goes back to its still picture, and the decoder is freed. */
@@ -666,6 +685,8 @@ class ShelfViewModel(
         // Back on this shelf: the peer stops reading its video. (A sent card's video stays readable: the peer plays on.)
         peer?.media?.unshare(id)
         post(SlideMessage.DragCancel(id))
+        // Its video plays on here: the peer let go of what it read, so it reads the index ahead again.
+        hintPlaying()
     }
 
     /**
@@ -727,6 +748,8 @@ class ShelfViewModel(
                 if (!linked) dropAirCards()
                 // The link just got onto Wi-Fi Direct: a video still read over the shared Wi-Fi moves onto it.
                 if (linked && fast) following?.let { readOverLink(peer, it) }
+                // And the peer reads ahead the index of a video playing here: its card may be lifted any moment.
+                if (linked && fast) hintPlaying()
                 updateWatching()
             }
             .launchIn(viewModelScope)
@@ -819,6 +842,11 @@ class ShelfViewModel(
                 updateWatching()
             }
             is SlideMessage.Released -> onPeerCaught(message.itemId)
+            is SlideMessage.PlaybackHint -> {
+                hinted = message
+                // Only on Wi-Fi: Bluetooth is too slow to read ahead on, and carries the card messages too.
+                peer.media?.takeIf { it.isFast }?.prefetch(message.itemId, message.sizeBytes)
+            }
             is SlideMessage.PlaybackClock ->
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
@@ -975,7 +1003,8 @@ class ShelfViewModel(
         val media = peer.media ?: return
         if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
-        media.forget(offer.itemId)
+        // Unless it is the video the peer said was playing: its index, read ahead since, is what makes it start sooner.
+        if (hinted?.let { it.itemId == offer.itemId && it.sizeBytes == offer.sizeBytes } != true) media.forget(offer.itemId)
         val follower = PlaybackFollower()
         follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = nowMillis(), oneWayMs = oneWayMillis())
         val video = FollowedVideo(offer.itemId, offer.sizeBytes, follower)
@@ -1276,6 +1305,7 @@ class ShelfViewModel(
         // Back on this shelf: the peer stops reading its video.
         peer?.media?.unshare(card.id)
         if (tellPeer) post(SlideMessage.DragCancel(card.id))
+        if (tellPeer) hintPlaying()
         viewModelScope.launch { eventChannel.send(ShelfEvent.HeldCardPutBack(card.id)) }
     }
 

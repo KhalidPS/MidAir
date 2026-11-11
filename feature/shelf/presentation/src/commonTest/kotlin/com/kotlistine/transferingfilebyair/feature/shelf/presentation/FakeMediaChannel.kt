@@ -54,6 +54,13 @@ class FakeMediaChannel(
         return Result.Failure(DataError.Network.DISCONNECTED)
     }
 
+    /** Every file whose index was asked to be read ahead: file id and size. */
+    val prefetched = mutableListOf<Pair<String, Long>>()
+
+    override fun prefetch(fileId: String, sizeBytes: Long) {
+        prefetched += fileId to sizeBytes
+    }
+
     /** Every file let go of, in order. */
     val forgotten = mutableListOf<String>()
 
