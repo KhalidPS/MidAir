@@ -264,6 +264,7 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         moveTimings.stop()
         clockSamples.clear()
         lan.close()
+        lanAddress = null
         media.onLinkDropped()
         _state.value = LinkState.Idle
         if (wantsReconnect) scope.launch { reconnect() }
@@ -389,17 +390,26 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         received.tryEmit(message)
     }
 
+    /** The address the card messages are listened for on now; null while they have no way of their own. */
+    @Volatile
+    private var lanAddress: String? = null
+
     /**
-     * Once the link counts: listens on the shared Wi-Fi for the card messages, and tells the other phone where. Nothing
-     * happens when this phone isn't on a Wi-Fi network: the messages stay on Nearby.
+     * Once the link counts, and again each time its speed changes: listens for the card messages on a connection of
+     * their own, and tells the other phone where. On the Wi-Fi Direct group between the two phones once Nearby has
+     * opened it (no router needed); until then on the Wi-Fi network both may be on. With neither, the messages stay on
+     * Nearby.
      */
     private fun offerLan(endpointId: String) {
         scope.launch {
-            val offer = withContext(Dispatchers.IO) { wifiAddress()?.let(lan::listen) }
-            if (offer == null) {
-                Log.i("AirLan", "Not on a Wi-Fi network: card messages stay on Nearby")
-                return@launch
-            }
+            val offer = withContext(Dispatchers.IO) {
+                val address = directAddress() ?: wifiAddress()
+                // Listening there already: the other phone has the offer.
+                if (address != null && address == lanAddress) return@withContext null
+                lanAddress = address
+                if (address == null) Log.i("AirLan", "No Wi-Fi Direct group or Wi-Fi network: card messages stay on Nearby")
+                address?.let(lan::listen)
+            } ?: return@launch
             if (connectedEndpoint == endpointId) sendFrame(endpointId, offer)
         }
     }
@@ -603,7 +613,10 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         }
 
         override fun onBandwidthChanged(endpointId: String, info: BandwidthInfo) {
-            if (connectedEndpoint == endpointId) media.onBandwidthChanged(info)
+            if (connectedEndpoint != endpointId) return
+            media.onBandwidthChanged(info)
+            // On Wi-Fi Direct now (or off it): the card messages move to where the two phones reach each other.
+            if (_state.value is LinkState.Connected) offerLan(endpointId)
         }
     }
 

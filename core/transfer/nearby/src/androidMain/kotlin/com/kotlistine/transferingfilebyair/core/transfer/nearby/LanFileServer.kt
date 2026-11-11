@@ -218,3 +218,17 @@ internal fun wifiAddress(): String? = try {
 } catch (_: Exception) {
     null
 }
+
+/**
+ * This phone's address in the Wi-Fi Direct group Nearby opened between the two phones, or null while there is none
+ * (the link is still on Bluetooth). It needs no router: the group is the two phones.
+ */
+internal fun directAddress(): String? = try {
+    NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+        .filter { it.isUp && !it.isLoopback && it.name.startsWith("p2p") }
+        .flatMap { it.inetAddresses.toList() }
+        .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
+        ?.hostAddress
+} catch (_: Exception) {
+    null
+}
