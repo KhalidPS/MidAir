@@ -195,7 +195,7 @@ internal fun answersFromHere(url: String): Boolean {
     }
 }
 
-private fun isLocalAddress(host: String): Boolean {
+internal fun isLocalAddress(host: String): Boolean {
     // A literal address: no lookup happens.
     if (!host.all { it.isDigit() || it == '.' }) return false
     val address = try {
@@ -207,11 +207,25 @@ private fun isLocalAddress(host: String): Boolean {
 }
 
 /** This phone's address on the Wi-Fi network it is joined to (not a Wi-Fi Direct group), or null. */
-private fun wifiAddress(): String? = try {
+internal fun wifiAddress(): String? = try {
     NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
         .filter { it.isUp && !it.isLoopback && it.name.startsWith("wlan") }
         // wlan0 is the network the phone joined; another wlan can be a hotspot Nearby opened.
         .sortedBy { it.name != "wlan0" }
+        .flatMap { it.inetAddresses.toList() }
+        .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
+        ?.hostAddress
+} catch (_: Exception) {
+    null
+}
+
+/**
+ * This phone's address in the Wi-Fi Direct group Nearby opened between the two phones, or null while there is none
+ * (the link is still on Bluetooth). It needs no router: the group is the two phones.
+ */
+internal fun directAddress(): String? = try {
+    NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+        .filter { it.isUp && !it.isLoopback && it.name.startsWith("p2p") }
         .flatMap { it.inetAddresses.toList() }
         .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
         ?.hostAddress

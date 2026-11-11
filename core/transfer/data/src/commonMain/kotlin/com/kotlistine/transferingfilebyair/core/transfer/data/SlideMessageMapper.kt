@@ -44,6 +44,7 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
         alongEdgeMmPerS = crossing.alongEdgeMmPerS,
     )
     is SlideMessage.PlaybackOffer -> SlideMessageDto.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
+    is SlideMessage.PlaybackHint -> SlideMessageDto.PlaybackHint(itemId, sizeBytes)
     is SlideMessage.PlaybackClock -> SlideMessageDto.PlaybackClock(itemId, positionMs, isPlaying)
     is SlideMessage.FileRoute -> SlideMessageDto.FileRoute(itemId, route.toDto())
     is SlideMessage.Grabbed -> SlideMessageDto.Grabbed(itemId, handSize)
@@ -91,6 +92,7 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
         ),
     )
     is SlideMessageDto.PlaybackOffer -> SlideMessage.PlaybackOffer(itemId, sizeBytes, positionMs, isPlaying, httpUrl)
+    is SlideMessageDto.PlaybackHint -> SlideMessage.PlaybackHint(itemId, sizeBytes)
     is SlideMessageDto.PlaybackClock -> SlideMessage.PlaybackClock(itemId, positionMs, isPlaying)
     is SlideMessageDto.FileRoute -> SlideMessage.FileRoute(itemId, route.toDomain())
     is SlideMessageDto.Grabbed -> SlideMessage.Grabbed(itemId, handSize)

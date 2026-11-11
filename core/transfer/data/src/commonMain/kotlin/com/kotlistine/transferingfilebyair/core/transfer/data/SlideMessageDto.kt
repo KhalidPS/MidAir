@@ -98,6 +98,10 @@ internal sealed interface SlideMessageDto {
         @SerialName("url") val httpUrl: String? = null,
     ) : SlideMessageDto
 
+    @Serializable
+    @SerialName("hint")
+    data class PlaybackHint(val itemId: String, val sizeBytes: Long) : SlideMessageDto
+
     /** Sent a few times a second, so its field names are one letter on the wire. */
     @Serializable
     @SerialName("clock")

@@ -59,6 +59,13 @@ interface MediaChannel {
      */
     fun settle(fileId: String, uri: String) = Unit
 
+    /**
+     * Reads ahead the parts of the peer's file [fileId] ([sizeBytes] long) a video player needs before it can show a
+     * frame (its header and its index), over the pairing link, so [open] finds them here when its card comes. Kept
+     * until [forget]. Never in the way of a card in the air or of a video playing now.
+     */
+    fun prefetch(fileId: String, sizeBytes: Long) = Unit
+
     /** Lets go of everything kept of the peer's file [fileId]: it is no longer wanted, or is about to be read anew. */
     fun forget(fileId: String) = Unit
 

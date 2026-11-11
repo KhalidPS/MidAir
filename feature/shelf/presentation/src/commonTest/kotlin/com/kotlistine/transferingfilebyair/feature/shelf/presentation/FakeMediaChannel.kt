@@ -4,14 +4,27 @@ import com.kotlistine.transferingfilebyair.core.domain.util.ByteStream
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class FakeMediaChannel(
-    override var isFast: Boolean = true,
+    isFast: Boolean = true,
     /** The Wi-Fi address a share hands out; null: this phone isn't on a Wi-Fi network. */
     var wifiUrl: ((fileId: String) -> String)? = null,
     /** Whether a peer's Wi-Fi address answers from here. */
     var reachable: Boolean = true,
 ) : MediaChannel {
+    private val fast = MutableStateFlow(isFast)
+
+    /** Setting it tells whoever watches the link's speed, as the real link does once it is on Wi-Fi Direct. */
+    override var isFast: Boolean
+        get() = fast.value
+        set(value) {
+            fast.value = value
+        }
+
+    override val isFastUpdates: Flow<Boolean> = fast
+
     /** Shared files by id. */
     val shared = mutableMapOf<String, String>()
 
@@ -39,6 +52,13 @@ class FakeMediaChannel(
     override suspend fun open(fileId: String, offset: Long): Result<ByteStream, DataError.Network> {
         opened += fileId to offset
         return Result.Failure(DataError.Network.DISCONNECTED)
+    }
+
+    /** Every file whose index was asked to be read ahead: file id and size. */
+    val prefetched = mutableListOf<Pair<String, Long>>()
+
+    override fun prefetch(fileId: String, sizeBytes: Long) {
+        prefetched += fileId to sizeBytes
     }
 
     /** Every file let go of, in order. */

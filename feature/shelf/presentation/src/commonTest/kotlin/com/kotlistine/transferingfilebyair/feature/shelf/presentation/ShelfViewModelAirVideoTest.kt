@@ -142,7 +142,7 @@ class ShelfViewModelAirVideoTest {
     }
 
     @Test
-    fun `a held video put back stops being readable by the peer, and its reports stop`() = runTest {
+    fun `a held video put back plays on here, its reports stop, and the peer may read its index ahead again`() = runTest {
         shelfOnScreen()
         grabPlayingVideo()
 
@@ -150,7 +150,7 @@ class ShelfViewModelAirVideoTest {
         val sentBefore = peer.transport.sentSlides.size
         advanceTimeBy(1_000)
 
-        assertThat(media.shared).isEqualTo(emptyMap())
+        assertThat(media.shared).isEqualTo(mapOf("1" to "content://videos/1"))
         assertThat(peer.transport.sentSlides.size).isEqualTo(sentBefore)
         assertThat(peer.transport.sentSlides.last()).isEqualTo(SlideMessage.DragCancel("1"))
     }

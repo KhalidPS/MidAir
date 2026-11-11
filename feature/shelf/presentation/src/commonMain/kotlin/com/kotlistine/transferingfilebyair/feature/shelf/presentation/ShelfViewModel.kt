@@ -160,6 +160,9 @@ class ShelfViewModel(
     /** The peer's video this device plays along with, while the peer's card is in the air. */
     private var following: FollowedVideo? = null
 
+    /** The video the peer said is playing on it: its index is read ahead, for the moment its card is lifted. */
+    private var hinted: SlideMessage.PlaybackHint? = null
+
     /** A received item whose video is still read from the peer: it moves to its own file once the shelf has it. */
     private var streamedFromPeer: String? = null
     private var viewportWidthPx = 0
@@ -362,6 +365,7 @@ class ShelfViewModel(
                 // Another video playing stops: the engine plays one at a time.
                 engine.load(VideoSource.Local(item.uri))
                 _state.update { it.copy(playing = PlayingVideoUi(id, isPaused = !engine.playWhenReady.value)) }
+                hintPlaying()
             }
             playing.isPaused -> engine.play()
             else -> engine.pause()
@@ -386,6 +390,21 @@ class ShelfViewModel(
                 }
             }
             .launchIn(viewModelScope)
+    }
+
+    /**
+     * Tells the peer which of this shelf's videos plays here, and lets it read the file: it reads the header and index
+     * ahead, so its half of the card shows a frame sooner when the card is lifted (they cost 1.2 to 3.2 s of round
+     * trips at the lift otherwise). Only once the link is on Wi-Fi.
+     */
+    private fun hintPlaying() {
+        val media = peer?.media ?: return
+        // A video followed from the peer is the peer's to announce.
+        if (!media.isFast || following != null) return
+        val id = _state.value.playing?.itemId ?: return
+        val item = shelfItems.firstOrNull { it.id == id } ?: return
+        media.share(item.id, item.uri)
+        post(SlideMessage.PlaybackHint(item.id, item.sizeBytes))
     }
 
     /** The card goes back to its still picture, and the decoder is freed. */
@@ -666,6 +685,8 @@ class ShelfViewModel(
         // Back on this shelf: the peer stops reading its video. (A sent card's video stays readable: the peer plays on.)
         peer?.media?.unshare(id)
         post(SlideMessage.DragCancel(id))
+        // Its video plays on here: the peer let go of what it read, so it reads the index ahead again.
+        hintPlaying()
     }
 
     /**
@@ -725,6 +746,10 @@ class ShelfViewModel(
             .onEach { (linked, fast) ->
                 _state.update { it.copy(isPaired = linked, isLinkSlow = linked && !fast) }
                 if (!linked) dropAirCards()
+                // The link just got onto Wi-Fi Direct: a video still read over the shared Wi-Fi moves onto it.
+                if (linked && fast) following?.let { readOverLink(peer, it) }
+                // And the peer reads ahead the index of a video playing here: its card may be lifted any moment.
+                if (linked && fast) hintPlaying()
                 updateWatching()
             }
             .launchIn(viewModelScope)
@@ -817,6 +842,11 @@ class ShelfViewModel(
                 updateWatching()
             }
             is SlideMessage.Released -> onPeerCaught(message.itemId)
+            is SlideMessage.PlaybackHint -> {
+                hinted = message
+                // Only on Wi-Fi: Bluetooth is too slow to read ahead on, and carries the card messages too.
+                peer.media?.takeIf { it.isFast }?.prefetch(message.itemId, message.sizeBytes)
+            }
             is SlideMessage.PlaybackClock ->
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
@@ -901,6 +931,8 @@ class ShelfViewModel(
         arriving.add(0, ArrivingItemUi(start.itemId, start.name, aspectRatio = start.aspectRatio()))
         publishItems()
         val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
+        // Lifted while the link was on Bluetooth, let go once it is on Wi-Fi Direct: read over it from here on.
+        if (video != null) readOverLink(peer, video)
         val delivery = when {
             video?.viaLink == true -> Delivery.FETCH
             // On Wi-Fi, pulled in pieces that make way for the cards' moves.
@@ -971,10 +1003,11 @@ class ShelfViewModel(
         val media = peer.media ?: return
         if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
-        media.forget(offer.itemId)
+        // Unless it is the video the peer said was playing: its index, read ahead since, is what makes it start sooner.
+        if (hinted?.let { it.itemId == offer.itemId && it.sizeBytes == offer.sizeBytes } != true) media.forget(offer.itemId)
         val follower = PlaybackFollower()
         follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = nowMillis(), oneWayMs = oneWayMillis())
-        val video = FollowedVideo(offer.itemId, follower)
+        val video = FollowedVideo(offer.itemId, offer.sizeBytes, follower)
         following = video
         viewModelScope.launch {
             // Over the pairing link once it is on Wi-Fi Direct: tried on phones, the shared Wi-Fi was far slower then
@@ -1001,6 +1034,23 @@ class ShelfViewModel(
             video.isLoaded = true
             _state.update { it.copy(playing = PlayingVideoUi(offer.itemId, isPaused = !offer.isPlaying)) }
         }
+    }
+
+    /**
+     * Moves a followed video read over the shared Wi-Fi onto the pairing link, once that is on Wi-Fi Direct, on the
+     * frame the peer is at. Left on the shared Wi-Fi it starves: the one radio hops between the two networks, and the
+     * file's own transfer takes the link (measured: 1.5 s of play for every 10 to 30 s of buffering).
+     */
+    private fun readOverLink(peer: SlidePeer, video: FollowedVideo) {
+        val engine = videoEngine ?: return
+        val media = peer.media ?: return
+        if (!video.isLoaded || video.viaLink || !media.isFast) return
+        video.viaLink = true
+        val source = VideoSource.Remote(video.itemId, video.sizeBytes) { media.open(video.itemId, it) }
+        val startAtMs = video.follower.startAt(nowMillis()) ?: engine.positionMs
+        engine.load(source, startAtMs = startAtMs, playWhenReady = engine.playWhenReady.value)
+        // A load starts at full volume: the peer's speaker still plays it while the card is over there.
+        engine.setVolume(0f)
     }
 
     /** Keeps this half of the card on the frame the peer's half shows. */
@@ -1255,6 +1305,7 @@ class ShelfViewModel(
         // Back on this shelf: the peer stops reading its video.
         peer?.media?.unshare(card.id)
         if (tellPeer) post(SlideMessage.DragCancel(card.id))
+        if (tellPeer) hintPlaying()
         viewModelScope.launch { eventChannel.send(ShelfEvent.HeldCardPutBack(card.id)) }
     }
 
@@ -1379,7 +1430,7 @@ class ShelfViewModel(
         var videoOffered = false
     }
 
-    private class FollowedVideo(val itemId: String, val follower: PlaybackFollower) {
+    private class FollowedVideo(val itemId: String, val sizeBytes: Long, val follower: PlaybackFollower) {
         /** Loaded into the engine: until then (finding out which way to read it) nothing is steered. */
         var isLoaded = false
 

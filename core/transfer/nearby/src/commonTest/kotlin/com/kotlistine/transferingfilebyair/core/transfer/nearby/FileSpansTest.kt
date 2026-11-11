@@ -74,4 +74,26 @@ class FileSpansTest {
 
         assertThat(assemblyPlan(size = 20, have = have)).isNull()
     }
+
+    @Test
+    fun `a file's index is its first piece and its end`() {
+        assertThat(indexSpans(size = 100, pieceBytes = 10, tailBytes = 25))
+            .containsExactly(ByteSpan(0, 10), ByteSpan(75, 85), ByteSpan(85, 95), ByteSpan(95, 100))
+    }
+
+    @Test
+    fun `a file shorter than its first piece and its end together is read whole, once`() {
+        assertThat(indexSpans(size = 25, pieceBytes = 10, tailBytes = 40))
+            .containsExactly(ByteSpan(0, 10), ByteSpan(10, 20), ByteSpan(20, 25))
+    }
+
+    @Test
+    fun `a file smaller than a piece is one span`() {
+        assertThat(indexSpans(size = 7, pieceBytes = 10, tailBytes = 40)).containsExactly(ByteSpan(0, 7))
+    }
+
+    @Test
+    fun `an empty file has no index to fetch`() {
+        assertThat(indexSpans(size = 0, pieceBytes = 10, tailBytes = 40)).isEmpty()
+    }
 }
