@@ -28,6 +28,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrection
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SecondLiftLeadMs
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
@@ -1016,10 +1017,12 @@ class ShelfViewModel(
         if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
         // Lifted again: from here on it is let go as any card's video is.
-        if (keptForRelift == offer.itemId) keptForRelift = null
+        val liftedAgain = keptForRelift == offer.itemId
+        if (liftedAgain) keptForRelift = null
         // Unless it is the video the peer said was playing: its index, read ahead since, is what makes it start sooner.
         if (hinted?.let { it.itemId == offer.itemId && it.sizeBytes == offer.sizeBytes } != true) media.forget(offer.itemId)
-        val follower = PlaybackFollower()
+        // What was read of it is still here then: it starts in a fraction of the time, so it aims closer.
+        val follower = if (liftedAgain) PlaybackFollower(SecondLiftLeadMs) else PlaybackFollower()
         follower.report(offer.positionMs, offer.isPlaying, receivedAtMs = nowMillis(), oneWayMs = oneWayMillis())
         val video = FollowedVideo(offer.itemId, offer.sizeBytes, follower)
         following = video

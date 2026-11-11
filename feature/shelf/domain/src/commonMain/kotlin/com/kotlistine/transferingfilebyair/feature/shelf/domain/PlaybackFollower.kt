@@ -29,6 +29,13 @@ private const val MaxSpeed = 1.5f
 private const val StartLeadMs = 2_000L
 
 /**
+ * How far ahead the load aims when the card is lifted again after a pull-back: what was read of the video is still
+ * here, and such a load took 0.33 to 0.43 s on the phones (ten in a row). Aimed 2 s ahead it showed its first frame
+ * and then stood still on it for about 1.5 s; a load that takes longer after all is made up by playing faster.
+ */
+const val SecondLiftLeadMs = 600L
+
+/**
  * How far ahead a jump aims before anything is known: jumps took about 2 s on the phones, and one aimed 1 s ahead
  * landed behind again and had to jump twice. Then it is learnt from how long jumps really take, and whatever
  * is left over is held: never more than a couple of seconds, which would show as a frozen frame.
@@ -67,7 +74,10 @@ sealed interface PlaybackCorrection {
  * is: it jumps ahead, by how long its starts take, and holds its frame for whatever is left over. Being early is
  * cheap and exact; being late would mean another jump. All times are this device's, in milliseconds.
  */
-class PlaybackFollower {
+class PlaybackFollower(
+    /** How far ahead of the peer's frame the first load aims: how long that load is expected to take. */
+    private val startLeadMs: Long = StartLeadMs,
+) {
 
     private class Report(val positionMs: Long, val receivedAtMs: Long)
 
@@ -108,7 +118,7 @@ class PlaybackFollower {
     fun startAt(nowMs: Long): Long? {
         val target = targetAt(nowMs) ?: return null
         if (!isPlaying) return target
-        return target + StartLeadMs
+        return target + startLeadMs
     }
 
     /** This device's video is moving, seen at [nowMs]: if a start or jump was loading, it learns how long that took. */

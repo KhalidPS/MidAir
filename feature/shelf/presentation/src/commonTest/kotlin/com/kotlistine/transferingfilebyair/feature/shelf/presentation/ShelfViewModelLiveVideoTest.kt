@@ -681,6 +681,30 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
+    fun `a video lifted again after a pull-back aims closer, as what was read of it is still here`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        receiveOffer()
+
+        // 0.6 s ahead of the frame the peer reports, not the 2 s of a first load.
+        assertThat(engine.loadedAtMs).isEqualTo(5_600)
+    }
+
+    @Test
+    fun `a video lifted again without having been said to play aims as a first load does`() = runTest {
+        loaded()
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        receiveOffer()
+
+        assertThat(engine.loadedAtMs).isEqualTo(7_000)
+    }
+
+    @Test
     fun `what was kept of a pulled-back video is let go once another video plays on the peer`() = runTest {
         loaded()
         peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
