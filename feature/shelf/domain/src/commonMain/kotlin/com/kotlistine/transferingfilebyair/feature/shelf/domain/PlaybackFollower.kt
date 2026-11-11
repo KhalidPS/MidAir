@@ -10,10 +10,12 @@ private const val ToleranceMs = 25L
 private const val SlowDownWithinMs = 300L
 
 /**
- * Behind, it speeds up; further behind, it jumps ahead. A jump costs a frozen frame (it overshoots, then waits), so
+ * Behind, it speeds up; further behind, it jumps ahead. A jump costs a frozen frame of about 2 s on the phones (it
+ * loads again, 1.2 to 3.4 s measured), so
  * speed does as much as it can: the video is muted while following, so a faster pace has no pitch to give it away.
+ * A second and a half behind is made up in 3 s at 1.5×, still sooner than a jump shows a moving picture.
  */
-private const val SpeedUpWithinMs = 1_000L
+private const val SpeedUpWithinMs = 1_500L
 
 /** At the speed limits, a gap closes this fast: 1 s behind is made up in 2 s at 1.5×. */
 private const val CatchUpWindowMs = 2_000f
@@ -27,12 +29,13 @@ private const val MaxSpeed = 1.5f
 private const val StartLeadMs = 2_000L
 
 /**
- * How far ahead a jump aims before anything is known. Then it is learnt from how long jumps really take, and whatever
+ * How far ahead a jump aims before anything is known: jumps took about 2 s on the phones, and one aimed 1 s ahead
+ * landed behind again and had to jump twice. Then it is learnt from how long jumps really take, and whatever
  * is left over is held: never more than a couple of seconds, which would show as a frozen frame.
  */
-private const val InitialLeadMs = 1_000L
+private const val InitialLeadMs = 2_000L
 private const val MinLeadMs = 300L
-private const val MaxLeadMs = 2_000L
+private const val MaxLeadMs = 3_000L
 
 /** A report this far from where the others say the sender is means it stalled or jumped: start over from it. */
 private const val DiscontinuityMs = 300L
