@@ -457,13 +457,40 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
-    fun `a card without a video has its file sent as usual`() = runTest {
+    fun `on Wi-Fi a card without a video has its file pulled in pieces`() = runTest {
+        loaded()
+        peer.transport.deliver(peerStart)
+
+        peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
+
+        assertThat(peer.received.single().delivery).isEqualTo(Delivery.PULL)
+    }
+
+    @Test
+    fun `on Bluetooth a card without a video has its file sent as usual`() = runTest {
+        media.isFast = false
         loaded()
         peer.transport.deliver(peerStart)
 
         peer.transport.deliver(SlideMessage.DragCommit("9", outwardMmPerS = 200f, alongEdgeMmPerS = 0f))
 
         assertThat(peer.received.single().delivery).isEqualTo(Delivery.SENT)
+    }
+
+    @Test
+    fun `pulled files make way while a card is in the air, either way`() = runTest {
+        loaded()
+        assertThat(media.holds).isEmpty()
+
+        peer.transport.deliver(peerStart)
+        assertThat(media.holds.last()).isEqualTo(true)
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+        assertThat(media.holds.last()).isEqualTo(false)
+
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        assertThat(media.holds.last()).isEqualTo(true)
+        viewModel.onAction(ShelfAction.OnSlideReturned("1"))
+        assertThat(media.holds.last()).isEqualTo(false)
     }
 
     @Test

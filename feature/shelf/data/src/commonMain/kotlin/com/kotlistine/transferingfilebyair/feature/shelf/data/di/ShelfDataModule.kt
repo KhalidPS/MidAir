@@ -3,6 +3,7 @@ package com.kotlistine.transferingfilebyair.feature.shelf.data.di
 import com.kotlistine.transferingfilebyair.feature.shelf.data.LinkedSlidePeer
 import com.kotlistine.transferingfilebyair.feature.shelf.data.RoomShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.data.database.ShelfDatabase
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +22,8 @@ val shelfDataModule = module {
     includes(platformShelfDataModule)
     single { get<ShelfDatabase>().shelfItemDao() }
     single<ShelfRepository> { RoomShelfRepository(dao = get(), files = get()) }
+    // App-wide, so a screen opened while a send goes on still hides its item.
+    single { SentItems() }
     // The paired device. Needs a PeerLink, which the platform shell provides (Nearby on Android).
     single<SlidePeer> {
         LinkedSlidePeer(

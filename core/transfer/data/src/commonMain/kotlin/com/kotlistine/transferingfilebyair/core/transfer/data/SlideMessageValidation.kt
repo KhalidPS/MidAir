@@ -6,6 +6,9 @@ import kotlin.math.abs
 /** No phone or laptop screen is a metre across: anything past this is not a real position or card size. */
 private const val MaxDistanceMm = 1_000f
 
+/** Moves in one batch, at most: a second of frames, far more than the sender ever batches. */
+private const val MaxBatchedMoves = 120
+
 /** Far beyond any flick a hand can make. */
 private const val MaxSpeedMmPerS = 100_000f
 private const val MaxNameLength = 1_024
@@ -30,6 +33,9 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
             tiltDegrees.isFinite() &&
             abs(tiltDegrees) <= 90f &&
             atMillis >= 0L
+    is SlideMessage.DragMoves ->
+        moves.size in 1..MaxBatchedMoves &&
+            moves.all { it.isPlausible() && it.itemId == moves.first().itemId }
     is SlideMessage.DragCommit -> outwardMmPerS.isSpeed() && alongEdgeMmPerS.isSpeed()
     is SlideMessage.SwipeCrossed ->
         crossing.alongEdgeMm.isDistance() &&
@@ -44,6 +50,7 @@ internal fun SlideMessage.isPlausible(): Boolean = when (this) {
     is SlideMessage.Grabbed -> handSize.isFinite() && handSize in 0f..1f
     is SlideMessage.DragCancel, is SlideMessage.FileOffer, is SlideMessage.Ping, is SlideMessage.Pong,
     is SlideMessage.FileRoute, is SlideMessage.Released, is SlideMessage.FileQueued, is SlideMessage.FileCancelled,
+    is SlideMessage.FileKept,
     -> true
 }
 

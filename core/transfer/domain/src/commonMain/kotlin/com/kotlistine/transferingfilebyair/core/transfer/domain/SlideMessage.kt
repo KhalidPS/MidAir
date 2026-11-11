@@ -64,6 +64,13 @@ sealed interface SlideMessage {
         val atMillis: Long = 0L,
     ) : SlideMessage
 
+    /**
+     * Several [DragMove]s of one card, oldest first, sent together because the link was busy while they were made
+     * (a file or a video's pieces held it). The peer plays each back as if it had come alone: it needs every one to
+     * draw the card's path evenly, so they are batched rather than dropped.
+     */
+    data class DragMoves(val moves: List<DragMove>) : SlideMessage
+
     /** The card was let go short of the edge and sprang back: the peer withdraws whatever it showed. */
     data class DragCancel(val itemId: String) : SlideMessage
 
@@ -92,6 +99,12 @@ sealed interface SlideMessage {
      * same id can be moving both ways at once).
      */
     data class FileCancelled(val itemId: String, val bySender: Boolean) : SlideMessage
+
+    /**
+     * The receiver kept the file of the sender's card [itemId] for good: saved, and on its shelf. Only then is a sent
+     * file done; until it hears this, the sender keeps the item, so a file the receiver couldn't keep is never lost.
+     */
+    data class FileKept(val itemId: String) : SlideMessage
 
     /** Round-trip time probe; answered with [Pong] carrying the same timestamp. */
     data class Ping(val sentAtMillis: Long) : SlideMessage

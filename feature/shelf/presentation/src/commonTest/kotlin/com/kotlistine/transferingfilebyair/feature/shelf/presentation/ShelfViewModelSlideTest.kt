@@ -27,9 +27,14 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.FakeShelfRepository.Companion.item
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideFrame
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.UnattendedReceiver
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -176,7 +181,7 @@ class ShelfViewModelSlideTest {
     }
 
     @Test
-    fun `while a move is still going out, only the newest one waits, and none goes after the let-go`() = runTest {
+    fun `moves made while one goes out all go together in the next message, and none after the let-go`() = runTest {
         loaded()
         viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
         viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -100f)))
@@ -190,9 +195,11 @@ class ShelfViewModelSlideTest {
         peer.transport.gate = null
         busy.complete(Unit)
 
-        val moves = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMove>()
-        // The first, the one that was going out when the link got busy, and the newest; the one in between is gone.
-        assertThat(moves.map { it.seq }).containsExactly(1, 2, 4)
+        // The first alone, the one going out when the link got busy alone, then the two made meanwhile together.
+        val sent = peer.transport.sentSlides
+        assertThat(sent.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2)
+        assertThat(sent.filterIsInstance<SlideMessage.DragMoves>().map { batch -> batch.moves.map { it.seq } })
+            .containsExactly(listOf(3, 4))
 
         peer.transport.gate = CompletableDeferred()
         viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
@@ -201,9 +208,28 @@ class ShelfViewModelSlideTest {
         peer.transport.gate?.complete(Unit)
         peer.transport.gate = null
 
-        val sent = peer.transport.sentSlides
-        assertThat(sent.last()).isInstanceOf(SlideMessage.DragCommit::class)
-        assertThat(sent.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2, 4, 5)
+        val afterLetGo = peer.transport.sentSlides
+        assertThat(afterLetGo.last()).isInstanceOf(SlideMessage.DragCommit::class)
+        // The move made after the one going out was let go with its card: the commit says where it went.
+        assertThat(afterLetGo.filterIsInstance<SlideMessage.DragMove>().map { it.seq }).containsExactly(1, 2, 5)
+        assertThat(afterLetGo.filterIsInstance<SlideMessage.DragMoves>().size).isEqualTo(1)
+    }
+
+    @Test
+    fun `a batch keeps only the last half second of moves`() = runTest {
+        loaded()
+        viewModel.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -100f)))
+        val busy = CompletableDeferred<Unit>()
+        peer.transport.gate = busy
+
+        repeat(41) { viewModel.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = -99f + it))) }
+        peer.transport.gate = null
+        busy.complete(Unit)
+
+        // Move 2 was going out; of the 40 made meanwhile, the newest 30 follow together.
+        val batch = peer.transport.sentSlides.filterIsInstance<SlideMessage.DragMoves>().single()
+        assertThat(batch.moves.map { it.seq }).isEqualTo((13..42).toList())
     }
 
     @Test
@@ -444,9 +470,96 @@ class ShelfViewModelSlideTest {
         assertThat(peer.transport.sent.last()).isEqualTo(SlideMessage.Pong(pingSentAtMillis = 42))
     }
 
+    @Test
+    fun `a screen opened while a file is still sent keeps its item hidden, and it goes once the send ends`() = runTest {
+        val transfers = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val sent = SentItems()
+        peer.sendGate = CompletableDeferred()
+        sendFromAnEarlierScreen(transfers, sent)
+
+        val reopened = screenSharing(transfers, sent)
+        reopened.state.test {
+            assertThat(awaitLoaded().items).isEmpty()
+
+            peer.sendGate?.complete(Unit)
+
+            assertThat(repository.items.value).isEmpty()
+            assertThat(reopened.state.value.items).isEmpty()
+            assertThat(sent.ids.value).isEmpty()
+        }
+        transfers.cancel()
+    }
+
+    @Test
+    fun `a screen opened while a file is still sent shows its item again when the send fails`() = runTest {
+        val transfers = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val sent = SentItems()
+        peer.sendGate = CompletableDeferred()
+        peer.sendResult = Result.Failure(DataError.Network.DISCONNECTED)
+        sendFromAnEarlierScreen(transfers, sent)
+
+        val reopened = screenSharing(transfers, sent)
+        reopened.state.test {
+            assertThat(awaitLoaded().items).isEmpty()
+
+            peer.sendGate?.complete(Unit)
+
+            assertThat(expectMostRecentItem().items.map { it.id }).containsExactly("1")
+            assertThat(repository.items.value.map { it.id }).containsExactly("1")
+        }
+        transfers.cancel()
+    }
+
+    /** A screen whose sends run in [transfers] and whose sent items are kept in [sent], as in the app. */
+    private fun screenSharing(transfers: CoroutineScope, sent: SentItems) = ShelfViewModel(
+        repository = repository,
+        density = density,
+        peer = peer,
+        transfers = transfers,
+        keepAlive = keepAlive,
+        board = board,
+        sentIds = sent,
+        clock = clock,
+        timeZone = TimeZone.UTC,
+    )
+
+    /** Item "1" is slid to the peer from a screen that is then left; its file is still on its way. */
+    private suspend fun sendFromAnEarlierScreen(transfers: CoroutineScope, sent: SentItems) {
+        val earlier = screenSharing(transfers, sent)
+        earlier.state.test { awaitLoaded() }
+        earlier.onAction(ShelfAction.OnSlideLifted("1", 300f, 400f, null))
+        earlier.onAction(ShelfAction.OnSlideMoved(frame(penetrationPx = 200f)))
+        earlier.onAction(ShelfAction.OnItemSent("1", ExitEdge.RIGHT))
+        assertThat(peer.sentFiles.map { it.itemId }).containsExactly("1")
+    }
+
     // endregion
 
     // region Receiving
+
+    @Test
+    fun `while this screen is open, the peer's file is received once, here, not by the unattended receiver`() = runTest {
+        val transfers = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        // A peer of its own: the screen made in setUp listens to the shared one.
+        peer = FakePeer()
+        val unattended = UnattendedReceiver(peer, board, keepAlive, transfers)
+        viewModel = ShelfViewModel(
+            repository = repository,
+            density = density,
+            peer = peer,
+            keepAlive = keepAlive,
+            board = board,
+            unattended = unattended,
+            clock = clock,
+            timeZone = TimeZone.UTC,
+        )
+
+        peer.transport.deliver(peerStart)
+        peer.transport.deliver(commit("9"))
+
+        assertThat(peer.received.map { it.peerItemId }).containsExactly("9")
+        transfers.cancel()
+    }
 
     @Test
     fun `a card lifted on the peer is announced at the same physical size`() = runTest {
@@ -528,6 +641,20 @@ class ShelfViewModelSlideTest {
             // 200 mm/s out of the peer's right edge: 2 000 px/s rightward on this screen.
             assertThat(arrived.velocityXPxPerS).isCloseTo(2_000f, Tolerance)
             cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `moves that came together are played back one by one`() = runTest {
+        viewModel.events.test {
+            peer.transport.deliver(peerStart)
+            skipItems(1)
+
+            peer.transport.deliver(SlideMessage.DragMoves(listOf(move(seq = 1), move(seq = 2), move(seq = 3))))
+
+            val moved = listOf(awaitItem(), awaitItem(), awaitItem())
+            assertThat(moved.all { it is ShelfEvent.PeerCardMoved }).isEqualTo(true)
+            expectNoEvents()
         }
     }
 

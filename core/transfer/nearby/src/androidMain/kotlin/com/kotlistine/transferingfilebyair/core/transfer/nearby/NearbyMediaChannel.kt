@@ -69,6 +69,12 @@ private const val PlayerFirstMillis = 2_000L
 /** How long the other phone has to hash its whole file (about 5 s for 1 GB on a mid-range phone). */
 private const val DigestTimeoutMillis = 60_000L
 
+/**
+ * The longest a fetch holds back for a card in the air. A card is in the air for a second or two (a held one at most
+ * 12 s); this only keeps a fetch from waiting forever on a hold that was never let go.
+ */
+private const val CardHoldMaxMillis = 15_000L
+
 /** Room left on this phone after a fetch, on top of the fetched file and the copy kept of it. */
 private const val SpareBytes = 64L * 1024 * 1024
 
@@ -154,6 +160,15 @@ internal class NearbyMediaChannel(
     /** Pieces asked for by open streams (players) that haven't all arrived yet: a fetch holds back while there are. */
     private val playerPieces = MutableStateFlow(0)
 
+    /** A card is in the air: fetches ask for no new pieces (see [holdFetches]). */
+    private val cardInAir = MutableStateFlow(false)
+
+    /** Which shared file each piece being sent belongs to, by payload id. */
+    private val sendingFile = ConcurrentHashMap<Long, String>()
+
+    /** Bytes of each shared file sent in whole pieces, by file id. */
+    private val served = ConcurrentHashMap<String, AtomicLong>()
+
     // Bluetooth is LOW (BLE) or MEDIUM (classic): far too slow for a phone's video. Wi-Fi is HIGH.
     override val isFast: Boolean get() = quality >= BandwidthInfo.Quality.HIGH
 
@@ -162,11 +177,13 @@ internal class NearbyMediaChannel(
 
     override fun share(fileId: String, uri: String): String? {
         shared[fileId] = uri
+        served[fileId] = AtomicLong(0)
         return lan.share(fileId, uri)
     }
 
     override fun unshare(fileId: String) {
         shared.remove(fileId)
+        served.remove(fileId)
         lan.unshare(fileId)
     }
 
@@ -286,6 +303,12 @@ internal class NearbyMediaChannel(
             }
             // The player's pieces go first: it plays now, the file can wait.
             withTimeoutOrNull(PlayerFirstMillis) { playerPieces.first { it <= 0 } }
+            // So does a card in the air: its moves share the connection.
+            if (cardInAir.value) {
+                val heldAt = System.currentTimeMillis()
+                withTimeoutOrNull(CardHoldMaxMillis) { cardInAir.first { !it } }
+                Log.i(Tag, "Fetching $fileId: held ${System.currentTimeMillis() - heldAt} ms for a card in the air")
+            }
             val pieces = coroutineScope {
                 missing.take(FetchPiecesAhead)
                     .map { span -> async { openPiece(fileId, span.start, span.length, forPlayer = false) } }
@@ -381,6 +404,12 @@ internal class NearbyMediaChannel(
         pieces?.forEach { it.file.delete() }
     }
 
+    override fun holdFetches(hold: Boolean) {
+        cardInAir.value = hold
+    }
+
+    override fun servedBytes(fileId: String): Long = served[fileId]?.get() ?: 0L
+
     fun onBandwidthChanged(info: BandwidthInfo) {
         quality = info.quality
         fastUpdates.value = isFast
@@ -442,6 +471,10 @@ internal class NearbyMediaChannel(
                 if (update.status != PayloadTransferUpdate.Status.SUCCESS) {
                     Log.w(Tag, "Piece ${update.payloadId} ended: ${update.status} after ${update.bytesTransferred} bytes")
                 }
+                val fileId = sendingFile.remove(update.payloadId)
+                if (fileId != null && update.status == PayloadTransferUpdate.Status.SUCCESS) {
+                    served[fileId]?.addAndGet(update.bytesTransferred)
+                }
                 sending.remove(update.payloadId)
                 input.closeQuietly()
             }
@@ -460,6 +493,9 @@ internal class NearbyMediaChannel(
         early.clear()
         sending.values.forEach { it.closeQuietly() }
         sending.clear()
+        sendingFile.clear()
+        served.clear()
+        cardInAir.value = false
         origins.clear()
         digests.values.forEach { it.complete(null) }
         shared.clear()
@@ -492,10 +528,12 @@ internal class NearbyMediaChannel(
             }
             val payload = Payload.fromStream(input)
             sending[payload.id] = input
+            sendingFile[payload.id] = request.fileId
             client.sendPayload(endpoint, Payload.fromBytes(LinkFrame.RangeOpened(request.requestId, payload.id).encode()))
             client.sendPayload(endpoint, payload).addOnFailureListener { e ->
                 Log.w(Tag, "Piece ${payload.id} couldn't be sent", e)
                 sending.remove(payload.id)
+                sendingFile.remove(payload.id)
                 input.closeQuietly()
             }
         }

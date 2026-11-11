@@ -5,6 +5,7 @@ import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import com.kotlistine.transferingfilebyair.core.domain.shelf.ShelfItem
 import com.kotlistine.transferingfilebyair.core.domain.util.ByteStream
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
@@ -27,6 +28,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferProgress
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,6 +38,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.test.Test
 
@@ -247,6 +250,7 @@ class LinkedSlidePeerTest {
         assertThat(link.sent).containsExactly(
             SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.FETCHING),
             SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.SEND),
+            SlideMessage.FileKept("9"),
         )
         assertThat(media.forgotten).containsExactly("9")
         // The video was read from the peer: it goes on from the kept file.
@@ -293,8 +297,108 @@ class LinkedSlidePeerTest {
         val result = peer.receive(incoming.copy(delivery = Delivery.ASK_TO_SEND))
 
         assertThat(result).isEqualTo(Result.Success("kept-1"))
-        assertThat(link.sent).containsExactly(SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.SEND))
+        assertThat(link.sent).containsExactly(
+            SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.SEND),
+            SlideMessage.FileKept("9"),
+        )
         assertThat(media.settled).isEmpty()
+    }
+
+    // endregion
+
+    // region The receiver says it kept the file
+
+    @Test
+    fun `a sent file is done only once the peer says it kept it`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        link.peerKeeps = false
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val progress = RecordingProgress()
+
+        val send = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4"), progress) }
+
+        assertThat(send.isCompleted).isEqualTo(false)
+        assertThat(progress.isSaving).isEqualTo(true)
+        link.inbound.emit(SlideMessage.FileKept("4"))
+        assertThat(send.await()).isEqualTo(Result.Success(Unit))
+    }
+
+    @Test
+    fun `a file the peer couldn't keep fails the send`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        link.peerKeeps = false
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+
+        val send = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+        link.inbound.emit(SlideMessage.FileCancelled("4", bySender = false))
+
+        assertThat(send.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+    }
+
+    @Test
+    fun `the link going before the peer says it kept the file fails the send`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        link.peerKeeps = false
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+
+        val send = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+        link.state.value = LinkState.Idle
+
+        assertThat(send.await()).isEqualTo(Result.Failure(DataError.Network.DISCONNECTED))
+    }
+
+    @Test
+    fun `a peer that never says it kept the file fails the send in the end`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        link.peerKeeps = false
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+
+        val send = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+        advanceTimeBy(2.minutes)
+        assertThat(send.isCompleted).isEqualTo(false)
+        advanceTimeBy(2.minutes)
+
+        assertThat(send.await()).isEqualTo(Result.Failure(DataError.Network.DISCONNECTED))
+    }
+
+    @Test
+    fun `a word that the file was kept, heard before its send, doesn't end a later send`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        link.peerKeeps = false
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        link.inbound.emit(SlideMessage.FileKept("4"))
+
+        val send = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4")) }
+
+        assertThat(send.isCompleted).isEqualTo(false)
+        send.cancel()
+    }
+
+    @Test
+    fun `a received file is reported kept to the sender`() = runTest(UnconfinedTestDispatcher()) {
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
+        link.arrived[5] = "content://nearby/5"
+
+        peer.receive(incoming)
+
+        assertThat(link.sent).containsExactly(SlideMessage.FileKept("9"))
+    }
+
+    @Test
+    fun `a received file that can't be kept is reported to the sender as stopped`() = runTest(UnconfinedTestDispatcher()) {
+        val full = object : ReceivedFileStore {
+            override suspend fun keep(location: String, name: String, mimeType: String): Result<String, DataError.Local> =
+                Result.Failure(DataError.Local.DISK_FULL)
+        }
+        val peer = LinkedSlidePeer(link, shelf, full, geometry, backgroundScope)
+        link.inbound.emit(SlideMessage.FileOffer(itemId = "9", transferId = 5))
+        link.arrived[5] = "content://nearby/5"
+
+        val result = peer.receive(incoming)
+
+        assertThat(result).isEqualTo(Result.Failure(DataError.Local.DISK_FULL))
+        assertThat(link.sent).containsExactly(SlideMessage.FileCancelled("9", bySender = false))
     }
 
     // endregion
@@ -447,6 +551,99 @@ class LinkedSlidePeerTest {
 
     // endregion
 
+    // region On Wi-Fi the receiver pulls files in pieces, making way for the cards.
+
+    @Test
+    fun `on Wi-Fi a file is shared for the peer to pull, and done once the peer has it`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        media.isFast = true
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val progress = RecordingProgress()
+
+        val sending = async { peer.send(OutgoingFile(itemId = "4", uri = "content://file/4"), progress) }
+        assertThat(media.shared).isEqualTo(mapOf("4" to "content://file/4"))
+        link.inbound.emit(route(SlideMessage.FileRoute.Route.FETCHING))
+        media.served = 1_048_576
+        advanceTimeBy(600.milliseconds)
+        link.inbound.emit(route(SlideMessage.FileRoute.Route.FETCHED))
+
+        assertThat(sending.await()).isEqualTo(Result.Success(Unit))
+        assertThat(link.sentFiles).isEmpty()
+        assertThat(progress.bytes).containsExactly(1_048_576L)
+        assertThat(media.unshared).containsExactly("4")
+    }
+
+    @Test
+    fun `on Wi-Fi a peer that doesn't pull gets the file sent, and it is shared no more`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        media.isFast = true
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+
+        val result = peer.send(OutgoingFile(itemId = "4", uri = "content://file/4"))
+
+        assertThat(result).isEqualTo(Result.Success(Unit))
+        assertThat(link.sentFiles).containsExactly("content://file/4")
+        assertThat(media.shared).isEmpty()
+    }
+
+    private val pulled = incoming.copy(delivery = Delivery.PULL)
+
+    @Test
+    fun `a pulled file is fetched afresh, kept and put on the shelf`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+
+        val result = peer.receive(pulled)
+
+        assertThat(result).isEqualTo(Result.Success("kept-1"))
+        // Anything kept under its id is from an earlier file.
+        assertThat(media.forgotten.first()).isEqualTo("9")
+        assertThat(link.sent).containsExactly(
+            SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.FETCHING),
+            SlideMessage.FileRoute("9", SlideMessage.FileRoute.Route.FETCHED),
+        )
+    }
+
+    @Test
+    fun `pulled files come one at a time`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        val first = CompletableDeferred<Result<String, DataError>>()
+        var fetches = 0
+        media.fetchResult = {
+            fetches++
+            if (fetches == 1) first.await() else Result.Success("file:///cache/fetched-2")
+        }
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        val secondProgress = RecordingProgress()
+
+        val one = async { peer.receive(pulled) }
+        val two = async { peer.receive(pulled.copy(peerItemId = "10", name = "Notes.md"), secondProgress) }
+
+        assertThat(fetches).isEqualTo(1)
+        assertThat(secondProgress.isQueued).isEqualTo(true)
+        first.complete(Result.Success("file:///cache/fetched-1"))
+
+        assertThat(one.await()).isEqualTo(Result.Success("kept-1"))
+        assertThat(two.await()).isInstanceOf(Result.Success::class)
+        assertThat(fetches).isEqualTo(2)
+    }
+
+    @Test
+    fun `a pulled file waiting its turn can be stopped`() = runTest(UnconfinedTestDispatcher()) {
+        link.state.value = connected
+        media.fetchResult = { CompletableDeferred<Nothing>().await() }
+        val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
+        backgroundScope.launch { peer.receive(pulled) }
+        val waiting = async { peer.receive(pulled.copy(peerItemId = "10", name = "Notes.md")) }
+
+        peer.cancelReceive("10")
+
+        assertThat(waiting.await()).isEqualTo(Result.Failure(DataError.Network.CANCELLED))
+        assertThat(link.sent).contains(SlideMessage.FileRoute("10", SlideMessage.FileRoute.Route.CANCELLED))
+    }
+
+    // endregion
+
     @Test
     fun `the peer counts as linked only while connected`() = runTest(UnconfinedTestDispatcher()) {
         val peer = LinkedSlidePeer(link, shelf, store, geometry, backgroundScope)
@@ -519,8 +716,16 @@ private class FakeLink(override val media: MediaChannel? = null) : PeerLink {
             }
         }
         if (outcome.isCompleted) return outcome.await()
+        if (peerKeeps) {
+            // The peer took the bytes in and kept the file, and says so.
+            val offer = sent.filterIsInstance<SlideMessage.FileOffer>().last { it.transferId == transferId }
+            inbound.emit(SlideMessage.FileKept(offer.itemId))
+        }
         return Result.Success(Unit)
     }
+
+    /** Whether the peer says it kept each file sent to it, as soon as its bytes are through. */
+    var peerKeeps = true
 
     /** Sends under way, by transfer id: cancelling one completes it as cancelled. */
     private val sending = mutableMapOf<Long, CompletableDeferred<EmptyResult<DataError.Network>>>()
@@ -567,15 +772,28 @@ private class InMemoryShelf : ShelfRepository {
 }
 
 private class FakeMedia : MediaChannel {
-    override val isFast = true
+    /** On Bluetooth unless a test says otherwise: files are then sent, not pulled. */
+    override var isFast = false
+    val shared = mutableMapOf<String, String>()
+    val unshared = mutableListOf<String>()
+    var served = 0L
 
     /** What fetching a file returns. */
     var fetchResult: suspend () -> Result<String, DataError> = { Result.Success("file:///cache/fetched-1") }
     val settled = mutableListOf<Pair<String, String>>()
     val forgotten = mutableListOf<String>()
 
-    override fun share(fileId: String, uri: String): String? = null
-    override fun unshare(fileId: String) = Unit
+    override fun share(fileId: String, uri: String): String? {
+        shared[fileId] = uri
+        return null
+    }
+
+    override fun unshare(fileId: String) {
+        shared.remove(fileId)
+        unshared += fileId
+    }
+
+    override fun servedBytes(fileId: String): Long = served
     override suspend fun canReach(url: String): Boolean = false
     override suspend fun open(fileId: String, offset: Long): Result<ByteStream, DataError.Network> =
         Result.Failure(DataError.Network.DISCONNECTED)

@@ -25,11 +25,14 @@ internal fun SlideMessage.toDto(): SlideMessageDto = when (this) {
         tiltDegrees = tiltDegrees,
         atMillis = atMillis,
     )
+    // Each move as it would go alone.
+    is SlideMessage.DragMoves -> SlideMessageDto.DragMoves(moves.map { it.toDto() as SlideMessageDto.DragMove })
     is SlideMessage.DragCancel -> SlideMessageDto.DragCancel(itemId)
     is SlideMessage.DragCommit -> SlideMessageDto.DragCommit(itemId, outwardMmPerS, alongEdgeMmPerS)
     is SlideMessage.FileOffer -> SlideMessageDto.FileOffer(itemId, transferId)
     is SlideMessage.FileQueued -> SlideMessageDto.FileQueued(itemId)
     is SlideMessage.FileCancelled -> SlideMessageDto.FileCancelled(itemId, bySender)
+    is SlideMessage.FileKept -> SlideMessageDto.FileKept(itemId)
     is SlideMessage.Ping -> SlideMessageDto.Ping(sentAtMillis)
     is SlideMessage.Pong -> SlideMessageDto.Pong(pingSentAtMillis, answeredAtMillis)
     is SlideMessage.SwipeCrossed -> SlideMessageDto.SwipeCrossed(
@@ -68,11 +71,13 @@ internal fun SlideMessageDto.toDomain(): SlideMessage = when (this) {
         tiltDegrees = tiltDegrees,
         atMillis = atMillis,
     )
+    is SlideMessageDto.DragMoves -> SlideMessage.DragMoves(moves.map { it.toDomain() as SlideMessage.DragMove })
     is SlideMessageDto.DragCancel -> SlideMessage.DragCancel(itemId)
     is SlideMessageDto.DragCommit -> SlideMessage.DragCommit(itemId, outwardMmPerS, alongEdgeMmPerS)
     is SlideMessageDto.FileOffer -> SlideMessage.FileOffer(itemId, transferId)
     is SlideMessageDto.FileQueued -> SlideMessage.FileQueued(itemId)
     is SlideMessageDto.FileCancelled -> SlideMessage.FileCancelled(itemId, bySender)
+    is SlideMessageDto.FileKept -> SlideMessage.FileKept(itemId)
     is SlideMessageDto.Ping -> SlideMessage.Ping(sentAtMillis)
     is SlideMessageDto.Pong -> SlideMessage.Pong(pingSentAtMillis, answeredAtMillis)
     is SlideMessageDto.SwipeCrossed -> SlideMessage.SwipeCrossed(

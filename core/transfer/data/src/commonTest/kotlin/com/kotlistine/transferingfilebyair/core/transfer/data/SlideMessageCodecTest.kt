@@ -46,11 +46,18 @@ class SlideMessageCodecTest {
             start.copy(thumbnail = null),
             move,
             SlideMessage.DragCancel("7"),
+            SlideMessage.DragMoves(
+                listOf(
+                    SlideMessage.DragMove("7", 3, ExitEdge.RIGHT, 12f, -4f, 300f, 0f, 2f, atMillis = 1_700_000_000_000),
+                    SlideMessage.DragMove("7", 4, ExitEdge.RIGHT, 12.5f, -2f, 310f, 1f, 2f, atMillis = 1_700_000_000_016),
+                ),
+            ),
             SlideMessage.DragCommit("7", outwardMmPerS = 300f, alongEdgeMmPerS = 5f),
             SlideMessage.FileOffer("7", transferId = -4_611_686_018_427_387_904),
             SlideMessage.FileQueued("7"),
             SlideMessage.FileCancelled("7", bySender = true),
             SlideMessage.FileCancelled("7", bySender = false),
+            SlideMessage.FileKept("7"),
             SlideMessage.Ping(sentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000, answeredAtMillis = 1_700_000_000_321),

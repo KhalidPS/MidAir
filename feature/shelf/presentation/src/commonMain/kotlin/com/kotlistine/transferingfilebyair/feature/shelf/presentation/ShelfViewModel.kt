@@ -12,6 +12,7 @@ import com.kotlistine.transferingfilebyair.core.media.VideoEngineEvent
 import com.kotlistine.transferingfilebyair.core.media.VideoSource
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ApproachRangeMm
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferBoard
@@ -27,8 +28,10 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.IncomingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.OutgoingFile
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackCorrection
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.PlaybackFollower
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.SentItems
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.ShelfRepository
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.SlidePeer
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.UnattendedReceiver
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGesture
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.AirGestureDetector
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandFrame
@@ -77,6 +80,9 @@ private fun Result<*, DataError>?.errorOr(whenMissing: DataError): DataError? = 
     is Result.Success -> null
 }
 
+/** Moves kept for the next message at most: half a second of frames, plenty to draw the card's path evenly. */
+private const val MaxBatchedMoves = 30
+
 /** A card sent again after a failure has no slide to measure; the peer draws it this wide. */
 private const val RetryCardWidthMm = 40f
 
@@ -109,6 +115,13 @@ class ShelfViewModel(
     private val keepAlive: TransferKeepAlive = TransferKeepAlive.None,
     /** Every file moving either way, app-wide (the notification shows it too). */
     private val board: TransferBoard = TransferBoard(),
+    /**
+     * Sent items, hidden from the shelf until they are removed for good (or brought back). App-wide: a send goes on
+     * after its screen is closed, so the next screen must hide its item too.
+     */
+    private val sentIds: SentItems = SentItems(),
+    /** Takes in the peer's files while no shelf screen is open; this screen takes them itself while it lives. */
+    unattended: UnattendedReceiver? = null,
     /** Plays videos in their cards; the screen draws its picture. Without one, a tapped video opens in another app. */
     val videoEngine: VideoEngine? = null,
     /** Watches for a fist and an open hand in front of the screen (the front camera). Without one, no air gestures. */
@@ -119,13 +132,14 @@ class ShelfViewModel(
 
     private var isObservingItems = false
 
+    /** Hands the peer's cards back to the unattended receiver once this screen is gone. */
+    private val stopAttending: () -> Unit = unattended?.attend() ?: {}
+
     private val transferScope: CoroutineScope get() = transfers ?: viewModelScope
 
     /** Everything in the repository, including items that were just sent and are waiting out the undo window. */
     private var shelfItems: List<ShelfItemUi> = emptyList()
 
-    /** Sent items, hidden from the shelf until they are removed for good (or brought back). */
-    private val sentIds = mutableSetOf<String>()
     private var isClearing = false
 
     /**
@@ -155,13 +169,14 @@ class ShelfViewModel(
     private val sendLock = Mutex()
 
     /**
-     * The newest move of the card in the air that hasn't gone out yet. Moves are made every frame, but while a file
-     * moves over the same link one message can take hundreds of milliseconds to go: queued, they piled up by the
-     * thousand, the peer played the backlog back in slow motion, and the let-go waited behind all of it. So a move
-     * waiting while another goes out is replaced by the next one, never queued: only where the card is now matters
-     * (the peer fills in between).
+     * Moves of the card in the air that haven't gone out yet, oldest first. Moves are made every frame, but while a
+     * file or a video's pieces share the link, one message can take hundreds of milliseconds to go. One message per
+     * move then piled up by the thousand (the peer played the backlog back in slow motion, and the let-go waited
+     * behind all of it); dropping all but the newest left the peer too few points to draw the card's path evenly.
+     * So the moves made while one message goes out all go together in the next ([SlideMessage.DragMoves]): every
+     * point arrives, and never more than one message waits. At most [MaxBatchedMoves] are kept.
      */
-    private var pendingMove: SlideMessage.DragMove? = null
+    private val pendingMoves = ArrayDeque<SlideMessage.DragMove>()
     private var moveSender: Job? = null
 
     private var air = AirGestureUi(isAvailable = hands != null)
@@ -224,6 +239,7 @@ class ShelfViewModel(
     }
 
     override fun onCleared() {
+        stopAttending()
         videoEngine?.release()
     }
 
@@ -276,6 +292,10 @@ class ShelfViewModel(
                 publishItems()
                 playLocalCopy()
             }
+            .launchIn(viewModelScope)
+        // A send begun by an earlier screen ends while this one is open: its item goes, or comes back.
+        sentIds.ids
+            .onEach { if (!_state.value.isLoading) publishItems() }
             .launchIn(viewModelScope)
     }
 
@@ -396,6 +416,7 @@ class ShelfViewModel(
         publishItems()
         val slide = outgoing?.takeIf { it.id == id }
         outgoing = null
+        syncCardInAir()
         transferScope.launch {
             if (!handOver(slide, edge)) {
                 eventChannel.send(ShelfEvent.ShowSent(id = id, name = item.name))
@@ -506,6 +527,7 @@ class ShelfViewModel(
         val item = shelfItems.firstOrNull { it.id == action.id } ?: return
         val slide = OutgoingSlide(action.id)
         outgoing = slide
+        syncCardInAir()
         val start = SlideMessage.DragStart(
             itemId = item.id,
             name = item.name,
@@ -640,6 +662,7 @@ class ShelfViewModel(
     private fun stopMirroring(id: String) {
         if (outgoing?.id != id) return
         outgoing = null
+        syncCardInAir()
         // Back on this shelf: the peer stops reading its video. (A sent card's video stays readable: the peer plays on.)
         peer?.media?.unshare(id)
         post(SlideMessage.DragCancel(id))
@@ -663,18 +686,22 @@ class ShelfViewModel(
         return false
     }
 
-    /** Sends [move] as soon as the link is free, in place of any older move still waiting (see [pendingMove]). */
+    /** Sends [move] as soon as the link is free, with any others made meanwhile (see [pendingMoves]). */
     private fun postMove(move: SlideMessage.DragMove) {
         val peer = peer ?: return
-        pendingMove = move
+        pendingMoves.addLast(move)
+        while (pendingMoves.size > MaxBatchedMoves) pendingMoves.removeFirst()
         if (moveSender?.isActive == true) return
         moveSender = transferScope.launch {
-            while (true) {
-                val next = pendingMove ?: break
-                pendingMove = null
+            while (pendingMoves.isNotEmpty()) {
                 // Let go or put back meanwhile: its commit or cancel says where it went, and no move may follow it.
-                if (outgoing?.id != next.itemId) continue
-                deliver(peer, next)
+                val batch = pendingMoves.filter { it.itemId == outgoing?.id }
+                pendingMoves.clear()
+                when (batch.size) {
+                    0 -> Unit
+                    1 -> deliver(peer, batch.single())
+                    else -> deliver(peer, SlideMessage.DragMoves(batch))
+                }
             }
         }
     }
@@ -706,7 +733,24 @@ class ShelfViewModel(
             .launchIn(viewModelScope)
     }
 
+    /**
+     * Whether a card is in the air between the phones, either way: slid, held in a fist, or coming from the peer. Files
+     * pulled from the peer make way for it meanwhile (see [MediaChannel.holdFetches]).
+     */
+    private fun syncCardInAir() {
+        val inAir = outgoing != null || incoming != null || held != null || catchable != null
+        peer?.media?.holdFetches(inAir)
+    }
+
     private suspend fun onPeerMessage(peer: SlidePeer, message: SlideMessage) {
+        try {
+            handlePeerMessage(peer, message)
+        } finally {
+            syncCardInAir()
+        }
+    }
+
+    private suspend fun handlePeerMessage(peer: SlidePeer, message: SlideMessage) {
         when (message) {
             // Answered here for the whole app (the shelf is always under the other screens), with this clock's time
             // so the line-up can compare the two phones' clocks.
@@ -731,35 +775,9 @@ class ShelfViewModel(
                     ),
                 )
             }
-            is SlideMessage.DragMove -> {
-                val slide = incoming?.takeIf { it.start.itemId == message.itemId && message.seq > it.lastSeq } ?: return
-                slide.lastSeq = message.seq
-                slide.exitEdge = message.exitEdge
-                // Where the card was when the move left the peer; the screen plays the moves back evenly and draws
-                // the card where it is by now.
-                val link = peer.link
-                val position = incomingCardPosition(
-                    move = message,
-                    cardWidthMm = slide.start.cardWidthMm,
-                    receiverWidthMm = density.xPxToMm(viewportWidthPx.toFloat()),
-                    link = link,
-                )
-                val velocity = incomingCardVelocity(message, link)
-                eventChannel.send(
-                    ShelfEvent.PeerCardMoved(
-                        id = message.itemId,
-                        leftPx = density.xMmToPx(position.leftMm),
-                        topPx = density.yMmToPx(position.topMm),
-                        velocityXPxPerS = density.xMmToPx(velocity.leftMm),
-                        velocityYPxPerS = density.yMmToPx(velocity.topMm),
-                        tiltDegrees = message.tiltDegrees,
-                        arrival = message.arrival(link),
-                        entryEdge = message.exitEdge.opposite,
-                        sentAtMillis = message.atMillis,
-                        leadMillis = roundTripMillis / 2f,
-                    ),
-                )
-            }
+            is SlideMessage.DragMove -> onPeerMove(peer, message)
+            // Sent together while the link was busy: played back exactly as if each had come alone.
+            is SlideMessage.DragMoves -> message.moves.forEach { onPeerMove(peer, it) }
             is SlideMessage.DragCancel -> {
                 val id = message.itemId
                 when {
@@ -803,7 +821,7 @@ class ShelfViewModel(
                 following?.takeIf { it.itemId == message.itemId }?.let { onPeerClock(it, message) }
             // Matched to their card by the peer link, which waits for them; line-up swipes are pairing's.
             is SlideMessage.FileOffer, is SlideMessage.FileRoute, is SlideMessage.FileQueued, is SlideMessage.FileCancelled,
-            is SlideMessage.SwipeCrossed,
+            is SlideMessage.FileKept, is SlideMessage.SwipeCrossed,
             -> Unit
             is SlideMessage.DragCommit -> {
                 val slide = incoming?.takeIf { it.start.itemId == message.itemId } ?: return
@@ -837,6 +855,37 @@ class ShelfViewModel(
         }
     }
 
+    /** One move of the peer's card in the air. */
+    private suspend fun onPeerMove(peer: SlidePeer, message: SlideMessage.DragMove) {
+        val slide = incoming?.takeIf { it.start.itemId == message.itemId && message.seq > it.lastSeq } ?: return
+        slide.lastSeq = message.seq
+        slide.exitEdge = message.exitEdge
+        // Where the card was when the move left the peer; the screen plays the moves back evenly and draws
+        // the card where it is by now.
+        val link = peer.link
+        val position = incomingCardPosition(
+            move = message,
+            cardWidthMm = slide.start.cardWidthMm,
+            receiverWidthMm = density.xPxToMm(viewportWidthPx.toFloat()),
+            link = link,
+        )
+        val velocity = incomingCardVelocity(message, link)
+        eventChannel.send(
+            ShelfEvent.PeerCardMoved(
+                id = message.itemId,
+                leftPx = density.xMmToPx(position.leftMm),
+                topPx = density.yMmToPx(position.topMm),
+                velocityXPxPerS = density.xMmToPx(velocity.leftMm),
+                velocityYPxPerS = density.yMmToPx(velocity.topMm),
+                tiltDegrees = message.tiltDegrees,
+                arrival = message.arrival(link),
+                entryEdge = message.exitEdge.opposite,
+                sentAtMillis = message.atMillis,
+                leadMillis = roundTripMillis / 2f,
+            ),
+        )
+    }
+
     /** The peer's card with [id], slid in or held over, while it is still coming. */
     private fun peerCard(id: String): IncomingSlide? =
         incoming?.takeIf { it.start.itemId == id } ?: catchable?.takeIf { it.start.itemId == id }
@@ -854,6 +903,8 @@ class ShelfViewModel(
         val video = following?.takeIf { it.itemId == start.itemId && it.isLoaded }
         val delivery = when {
             video?.viaLink == true -> Delivery.FETCH
+            // On Wi-Fi, pulled in pieces that make way for the cards' moves.
+            peer.media?.isFast == true -> Delivery.PULL
             slide.videoOffered -> Delivery.ASK_TO_SEND
             else -> Delivery.SENT
         }
@@ -1155,6 +1206,7 @@ class ShelfViewModel(
         val card = HeldCard(item.id, handSize = pendingGrab?.size ?: 0f)
         pendingGrab = null
         held = card
+        syncCardInAir()
         air = air.copy(heldId = item.id, heldName = item.name)
         publishAir()
         val start = SlideMessage.DragStart(
@@ -1195,6 +1247,7 @@ class ShelfViewModel(
     private fun putBack(card: HeldCard, tellPeer: Boolean) {
         if (held !== card) return
         held = null
+        syncCardInAir()
         card.expiry?.cancel()
         card.putBackJob?.cancel()
         air = air.copy(heldId = null, heldName = null)
@@ -1219,6 +1272,7 @@ class ShelfViewModel(
             return
         }
         held = null
+        syncCardInAir()
         card.expiry?.cancel()
         card.putBackJob?.cancel()
         air = air.copy(heldId = null, heldName = null)
@@ -1259,6 +1313,7 @@ class ShelfViewModel(
 
     private fun clearCatchable() {
         catchable = null
+        syncCardInAir()
         air = air.copy(catchable = null)
         publishAir()
         updateWatching()

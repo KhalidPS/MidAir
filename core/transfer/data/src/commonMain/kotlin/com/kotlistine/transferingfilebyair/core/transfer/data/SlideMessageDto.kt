@@ -42,6 +42,10 @@ internal sealed interface SlideMessageDto {
     ) : SlideMessageDto
 
     @Serializable
+    @SerialName("moves")
+    data class DragMoves(@SerialName("m") val moves: List<DragMove>) : SlideMessageDto
+
+    @Serializable
     @SerialName("cancel")
     data class DragCancel(val itemId: String) : SlideMessageDto
 
@@ -60,6 +64,10 @@ internal sealed interface SlideMessageDto {
     @Serializable
     @SerialName("file_cancelled")
     data class FileCancelled(val itemId: String, val bySender: Boolean) : SlideMessageDto
+
+    @Serializable
+    @SerialName("file_kept")
+    data class FileKept(val itemId: String) : SlideMessageDto
 
     @Serializable
     @SerialName("ping")
