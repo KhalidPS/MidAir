@@ -44,7 +44,7 @@ After, 14:59 to 15:01, four full slides:
 | Slide | First frame | Hold, waiting for A | Second load | In step after |
 |---|---|---|---|---|
 | 14:59:49 | 2.4 s | none | no | 2.4 s |
-| 15:00:25 | 1.1 s | 0.55 s | no | 1.65 s |
+| 15:00:25 | 1.1 s | 0.55 s | no | 1.8 s |
 | 15:00:46 | 2.3 s | none | no | not measured |
 | 15:01:04 | 1.5 s | 0.4 s | no | 1.95 s |
 
@@ -54,7 +54,7 @@ That read finished 0.15 s after the lift (see Limit 2).
 | | Before | After |
 |---|---|---|
 | First frame on B | 2.4 to 6.1 s | 1.1 to 2.4 s |
-| In step with A | 2.9 to 13 s | 1.65 to 2.4 s |
+| In step with A | 2.9 to 13 s | 1.8 to 2.4 s |
 | Second loads (jumps) | 3 of 5, then 2 of 3 (earlier the same afternoon) | 0 of 4 |
 | Card lateness, p50 | 41 to 66 ms (card-lag fix) | 39 to 43 ms |
 
