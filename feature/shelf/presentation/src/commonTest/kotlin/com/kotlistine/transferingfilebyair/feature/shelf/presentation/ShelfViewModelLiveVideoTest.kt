@@ -669,6 +669,45 @@ class ShelfViewModelLiveVideoTest {
     }
 
     @Test
+    fun `what was read of a video that still plays on the peer is kept when its card is pulled back`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+        receiveOffer()
+
+        assertThat(media.forgotten).isEmpty()
+    }
+
+    @Test
+    fun `what was kept of a pulled-back video is let go once another video plays on the peer`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        peer.transport.deliver(SlideMessage.PlaybackHint("4", sizeBytes = 1_000))
+
+        assertThat(media.forgotten).containsExactly("9")
+    }
+
+    @Test
+    fun `a video lifted again and pulled back is not let go twice`() = runTest {
+        loaded()
+        peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 24_000_000))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+        receiveOffer()
+        peer.transport.deliver(SlideMessage.DragCancel("9"))
+
+        peer.transport.deliver(SlideMessage.PlaybackHint("4", sizeBytes = 1_000))
+        peer.transport.deliver(SlideMessage.PlaybackHint("5", sizeBytes = 1_000))
+
+        assertThat(media.forgotten).containsExactly("9")
+    }
+
+    @Test
     fun `what is kept under the id of another file is let go when a card is lifted`() = runTest {
         loaded()
         peer.transport.deliver(SlideMessage.PlaybackHint("9", sizeBytes = 1_000))

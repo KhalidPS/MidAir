@@ -163,6 +163,9 @@ class ShelfViewModel(
     /** The video the peer said is playing on it: its index is read ahead, for the moment its card is lifted. */
     private var hinted: SlideMessage.PlaybackHint? = null
 
+    /** The peer's video whose card was pulled back while it still plays there: what was read of it is kept meanwhile. */
+    private var keptForRelift: String? = null
+
     /** A received item whose video is still read from the peer: it moves to its own file once the shelf has it. */
     private var streamedFromPeer: String? = null
     private var viewportWidthPx = 0
@@ -819,8 +822,9 @@ class ShelfViewModel(
                     else -> return
                 }
                 if (following?.itemId == id || _state.value.playing?.itemId == id) stopVideo()
-                // What was read of its video is no longer wanted.
-                peer.media?.forget(id)
+                // What was read of its video is no longer wanted, unless it still plays over there: its card may be
+                // lifted again any moment, and reading its index again takes 1.3 to 2.7 s.
+                if (hinted?.itemId == id) keptForRelift = id else peer.media?.forget(id)
                 eventChannel.send(ShelfEvent.PeerCardWithdrawn(id))
             }
             is SlideMessage.PlaybackOffer -> {
@@ -846,6 +850,11 @@ class ShelfViewModel(
             }
             is SlideMessage.Released -> onPeerCaught(message.itemId)
             is SlideMessage.PlaybackHint -> {
+                // Another video plays there now: what was kept of the one before, pulled back, is let go.
+                keptForRelift?.takeIf { it != message.itemId }?.let {
+                    peer.media?.forget(it)
+                    keptForRelift = null
+                }
                 hinted = message
                 // Only on Wi-Fi: Bluetooth is too slow to read ahead on, and carries the card messages too.
                 peer.media?.takeIf { it.isFast }?.prefetch(message.itemId, message.sizeBytes)
@@ -1006,6 +1015,8 @@ class ShelfViewModel(
         val media = peer.media ?: return
         if (peerCard(offer.itemId) == null) return
         // Anything kept from an earlier file with this id (ids come back once an item is gone) is not this one.
+        // Lifted again: from here on it is let go as any card's video is.
+        if (keptForRelift == offer.itemId) keptForRelift = null
         // Unless it is the video the peer said was playing: its index, read ahead since, is what makes it start sooner.
         if (hinted?.let { it.itemId == offer.itemId && it.sizeBytes == offer.sizeBytes } != true) media.forget(offer.itemId)
         val follower = PlaybackFollower()
