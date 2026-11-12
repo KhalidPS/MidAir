@@ -58,6 +58,14 @@ private const val CopyBufferBytes = 64 * 1024
 /** Pieces a [NearbyMediaChannel.fetch] asks for at once, to keep the link busy despite each request's round trip. */
 private const val FetchPiecesAhead = 3
 
+/**
+ * The first piece a player asks for where it starts reading, when pieces travel over Wi-Fi on connections of their own
+ * ([LanPieceLink]). A player starting a video looks at several places before it settles (12 to 13 pieces before its
+ * first frame, seen on the phones), and every piece is sent whole: a small first one costs a glance a quarter of the
+ * bytes. Over Nearby a piece's round trip costs more than its bytes, so there the first piece is a whole one.
+ */
+private const val FirstWifiPieceBytes = 256L * 1024
+
 /** Rounds of pieces in a row that may bring nothing new before a fetch gives up. */
 private const val FetchRetries = 3
 
@@ -111,6 +119,16 @@ internal class NearbyMediaChannel(
 
     /** The way that doesn't go through Nearby, when both phones are on one Wi-Fi network. */
     private val lan = LanFileServer(context)
+
+    /**
+     * The pieces' own way over the Wi-Fi network both phones are on (the Wi-Fi Direct group, or a shared network),
+     * apart from Nearby: asked there first, once the other phone said where it listens (see [connectPieces]).
+     */
+    private val pieces = LanPieceLink(
+        scope,
+        serve = ::servePiece,
+        onServed = { fileId, bytes -> served[fileId]?.addAndGet(bytes) },
+    )
 
     /** Where arriving pieces are drained to; emptied of anything a previous run left behind on first use. */
     private val piecesDir by lazy {
@@ -237,9 +255,10 @@ internal class NearbyMediaChannel(
         openLocal(fileId, offset)?.let { return Result.Success(LocalStream(it)) }
         // Fetched ahead of the card (the file's index, see prefetch) or read before: no round trip.
         keptPart(fileId, offset)?.let { return Result.Success(PiecedStream(fileId, offset, it, offset + it.size)) }
-        val first = openPiece(fileId, offset, PieceBytes, forPlayer = true)
+        val firstBytes = if (pieces.isUp) FirstWifiPieceBytes else PieceBytes
+        val first = openPiece(fileId, offset, firstBytes, forPlayer = true)
             ?: return Result.Failure(DataError.Network.DISCONNECTED)
-        return Result.Success(PiecedStream(fileId, offset, first, offset + PieceBytes))
+        return Result.Success(PiecedStream(fileId, offset, first, offset + firstBytes, fillAfter = firstBytes / 2))
     }
 
     /**
@@ -355,17 +374,38 @@ internal class NearbyMediaChannel(
      * do. [forPlayer] pieces count in [playerPieces] until they have all arrived.
      */
     private suspend fun openPiece(fileId: String, offset: Long, length: Long, forPlayer: Boolean): DrainedPiece? {
-        val requestId = nextRequestId.getAndIncrement()
-        val answer = CompletableDeferred<DrainedPiece?>()
-        requests[requestId] = answer
-        origins[requestId] = PieceOrigin(fileId, offset)
         if (forPlayer) playerPieces.update { it + 1 }
         var piece: DrainedPiece? = null
+        var requestId: Long? = null
         try {
             val askedAt = System.currentTimeMillis()
+            // Over Wi-Fi first, on a connection of its own; over Nearby when that way isn't there (or just broke).
+            when (val overWifi = if (pieces.isUp) withContext(Dispatchers.IO) { pieces.open(fileId, offset, length) } else PieceAnswer.Broken) {
+                is PieceAnswer.Coming -> {
+                    piece = try {
+                        DrainedPiece(overWifi.input, File(piecesDir, "piece-w${nextRequestId.getAndIncrement()}.part"), scope, ::keepPiece)
+                    } catch (_: IOException) {
+                        overWifi.input.closeQuietly()
+                        null
+                    }
+                    piece?.claim(PieceOrigin(fileId, offset, length))
+                    Log.i(Tag, "Piece of $fileId at $offset opened in ${System.currentTimeMillis() - askedAt} ms over Wi-Fi")
+                    return piece
+                }
+                PieceAnswer.Refused -> {
+                    Log.w(Tag, "Piece of $fileId at $offset refused by the other phone")
+                    return null
+                }
+                PieceAnswer.Broken -> Unit
+            }
+            val id = nextRequestId.getAndIncrement()
+            requestId = id
+            val answer = CompletableDeferred<DrainedPiece?>()
+            requests[id] = answer
+            origins[id] = PieceOrigin(fileId, offset, length)
             val asked = withContext(Dispatchers.Main.immediate) {
                 val endpoint = endpoint() ?: return@withContext false
-                val request = LinkFrame.RangeRequest(requestId, offset, length, fileId)
+                val request = LinkFrame.RangeRequest(id, offset, length, fileId)
                 client.sendPayload(endpoint, Payload.fromBytes(request.encode()))
                 true
             }
@@ -373,13 +413,13 @@ internal class NearbyMediaChannel(
             if (piece == null) {
                 // It may still turn up after the wait: it is kept then, but nobody reads it (see deliver).
                 Log.w(Tag, "Piece of $fileId at $offset: no answer (asked: $asked)")
-                if (!asked) origins.remove(requestId)
+                if (!asked) origins.remove(id)
                 return null
             }
             Log.i(Tag, "Piece of $fileId at $offset opened in ${System.currentTimeMillis() - askedAt} ms")
             return piece
         } finally {
-            requests.remove(requestId)
+            requestId?.let(requests::remove)
             if (forPlayer) {
                 val arriving = piece
                 if (arriving == null) {
@@ -652,6 +692,7 @@ internal class NearbyMediaChannel(
         shared.clear()
         closedParts.clear()
         lan.unshareAll()
+        pieces.close()
         // What is kept, or on this phone already, stays: a received video plays on without the link.
     }
 
@@ -696,6 +737,57 @@ internal class NearbyMediaChannel(
                 sendingFile.remove(payload.id)
                 input.closeQuietly()
             }
+        }
+    }
+
+    /**
+     * Starts listening for the other phone's piece requests on [address], this phone's address on the network both
+     * are on; returns the offer to hand to it, or null when it couldn't. Blocking: call it off the main thread.
+     */
+    fun listenForPieces(address: String): LinkFrame.PieceOffer? = pieces.listen(address)
+
+    /**
+     * The other phone listens for piece requests at [offer]: asked there from now on, if it answers (false when it
+     * doesn't). Blocking.
+     */
+    fun connectPieces(offer: LinkFrame.PieceOffer): Boolean = pieces.connect(offer)
+
+    /** Whether pieces are asked for over Wi-Fi now. */
+    val arePiecesUp: Boolean get() = pieces.isUp
+
+    /**
+     * What to send of [length] bytes of the shared file [fileId] at [offset], asked for over [pieces]; null to refuse.
+     * The same rule as [serve]: only a shared file, and before its card is lifted only up to its pictures and sound.
+     * Blocking, on the piece connection's thread.
+     */
+    private fun servePiece(fileId: String, offset: Long, length: Long): ServedPiece? {
+        val uri = shared[fileId]
+        if (uri == null) {
+            Log.w(Tag, "Piece of $fileId refused: not shared")
+            return null
+        }
+        val closed = closedParts[fileId]
+        val span = if (closed == null) {
+            ByteSpan(offset, offset + length)
+        } else {
+            runBlocking { closed.await() }?.let { openSpan(offset, length, it) }
+        }
+        if (span == null) {
+            Log.w(Tag, "Piece of $fileId at $offset refused: its card isn't lifted")
+            return null
+        }
+        return try {
+            val descriptor = appContext.contentResolver.openFileDescriptor(Uri.parse(uri), "r") ?: return null
+            // Its length goes ahead of its bytes: only as much as the file has there.
+            val end = minOf(span.end, descriptor.statSize)
+            if (end <= span.start) {
+                descriptor.close()
+                return null
+            }
+            val input = ParcelFileDescriptor.AutoCloseInputStream(descriptor).apply { channel.position(span.start) }
+            ServedPiece(LimitedInputStream(input, end - span.start), end - span.start)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -758,6 +850,8 @@ internal class NearbyMediaChannel(
         first: PiecePart,
         /** Where [first] ends in the file. */
         firstEnd: Long,
+        /** How far into the current piece the pieces ahead are asked for: half of it. */
+        private var fillAfter: Long = PieceBytes / 2,
     ) : ByteStream {
         private var current = first
 
@@ -801,7 +895,7 @@ internal class NearbyMediaChannel(
                 if (isClosed) throw IOException("Range closed")
                 fromHere?.let { return it.read(buffer, offset, length) }
                 val read = current.read(buffer, offset, length)
-                if (current.position >= PieceBytes / 2) fillAhead()
+                if (current.position >= fillAfter) fillAhead()
                 if (read >= 0) return read
                 val next = currentStart + current.size
                 if (current.isLast || isPastEnd(next)) return -1
@@ -817,6 +911,7 @@ internal class NearbyMediaChannel(
                 current.close()
                 current = following
                 currentStart = next
+                fillAfter = PieceBytes / 2
             }
         }
 
@@ -846,8 +941,8 @@ internal class NearbyMediaChannel(
     }
 }
 
-/** Which file a piece belongs to, and where in it it starts. */
-private class PieceOrigin(val fileId: String, val offset: Long)
+/** Which file a piece belongs to, where in it it starts, and how many bytes were asked for. */
+private class PieceOrigin(val fileId: String, val offset: Long, val length: Long)
 
 /** A piece that arrived whole: the bytes [span] of its file, in [file]. */
 private class KeptPiece(val span: ByteSpan, val file: File)
@@ -896,8 +991,8 @@ private class DrainedPiece(
     /** How many bytes the piece had, once it has all arrived. */
     override val size: Long get() = lock.withLock { written }
 
-    /** A player's piece is always asked for whole: one that came shorter is the file's last. */
-    override val isLast: Boolean get() = size < PieceBytes
+    /** One that came shorter than was asked for is the file's last. */
+    override val isLast: Boolean get() = lock.withLock { written < (origin?.length ?: PieceBytes) }
 
     /** Completed once the stream has ended: true if it arrived whole. */
     val ended = CompletableDeferred<Boolean>()

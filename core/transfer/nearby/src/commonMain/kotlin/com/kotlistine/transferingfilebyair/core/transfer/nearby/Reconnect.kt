@@ -80,6 +80,18 @@ internal sealed interface LinkFrame {
 
         override fun hashCode(): Int = (31 * address.hashCode() + port) * 31 + token.contentHashCode()
     }
+
+    /**
+     * Where this phone listens for the pieces of its shared files the other asks for (see LanPieceLink), on the same
+     * network as its [LanOffer]: [address], [port], and the [token] a connection must open with. Sent over the
+     * (encrypted) Nearby link only. A build that doesn't know it drops it, and goes on asking over Nearby.
+     */
+    class PieceOffer(val address: String, val port: Int, val token: ByteArray) : LinkFrame {
+        override fun equals(other: Any?): Boolean =
+            other is PieceOffer && address == other.address && port == other.port && token.contentEquals(other.token)
+
+        override fun hashCode(): Int = (31 * address.hashCode() + port) * 31 + token.contentHashCode()
+    }
 }
 
 internal fun LinkFrame.encode(): ByteArray = when (this) {
@@ -94,6 +106,7 @@ internal fun LinkFrame.encode(): ByteArray = when (this) {
     is LinkFrame.DigestRequest -> byteArrayOf(FrameMarker, 8) + requestId.toBytes() + fileId.encodeToByteArray()
     is LinkFrame.Digest -> byteArrayOf(FrameMarker, 9) + requestId.toBytes() + sha256
     is LinkFrame.LanOffer -> byteArrayOf(FrameMarker, 10) + port.toLong().toBytes() + token + address.encodeToByteArray()
+    is LinkFrame.PieceOffer -> byteArrayOf(FrameMarker, 11) + port.toLong().toBytes() + token + address.encodeToByteArray()
 }
 
 /** Whether [bytes] are a link frame (and not a slide message). */
@@ -140,22 +153,22 @@ internal fun decodeLinkFrame(bytes: ByteArray): LinkFrame? {
         } else {
             null
         }
-        10 -> {
-            val head = Long.SIZE_BYTES + LanTokenBytes
-            val port = if (body.size > head) body.longAt(0) else return null
-            val address = body.copyOfRange(head, body.size).decodeToString()
-            // A dotted IPv4 literal, never a name to look up.
-            val isIpv4 = address.length <= 15 && address.split('.').let { parts ->
-                parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.all(Char::isDigit) && part.toInt() <= 255 }
-            }
-            if (port in 1..65_535 && isIpv4) {
-                LinkFrame.LanOffer(address, port.toInt(), body.copyOfRange(Long.SIZE_BYTES, head))
-            } else {
-                null
-            }
-        }
+        10 -> decodeOffer(body, LinkFrame::LanOffer)
+        11 -> decodeOffer(body, LinkFrame::PieceOffer)
         else -> null
     }
+}
+
+/** The body of a [LinkFrame.LanOffer] or [LinkFrame.PieceOffer]: a port, a token, and an IPv4 literal. */
+private fun <T : LinkFrame> decodeOffer(body: ByteArray, offer: (address: String, port: Int, token: ByteArray) -> T): T? {
+    val head = Long.SIZE_BYTES + LanTokenBytes
+    val port = if (body.size > head) body.longAt(0) else return null
+    val address = body.copyOfRange(head, body.size).decodeToString()
+    // A dotted IPv4 literal, never a name to look up.
+    val isIpv4 = address.length <= 15 && address.split('.').let { parts ->
+        parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.all(Char::isDigit) && part.toInt() <= 255 }
+    }
+    return if (port in 1..65_535 && isIpv4) offer(address, port.toInt(), body.copyOfRange(Long.SIZE_BYTES, head)) else null
 }
 
 /** Big-endian. */

@@ -33,6 +33,19 @@ class LanOfferFrameTest {
         assertThat(decodeLinkFrame(short)).isNull()
     }
 
+    @Test
+    fun `a piece offer survives a round trip, and is not taken for a card-message offer`() {
+        val pieces = LinkFrame.PieceOffer(offer.address, offer.port, offer.token)
+
+        assertThat(decodeLinkFrame(pieces.encode())).isEqualTo(pieces)
+        assertThat(decodeLinkFrame(pieces.encode()) == offer).isEqualTo(false)
+    }
+
+    @Test
+    fun `a piece offer of a name instead of an address is dropped`() {
+        assertThat(decodeLinkFrame(LinkFrame.PieceOffer("evil.example", 80, offer.token).encode())).isNull()
+    }
+
     private fun LinkFrame.LanOffer.copyWith(address: String = this.address, port: Int = this.port) =
         LinkFrame.LanOffer(address, port, token)
 }
