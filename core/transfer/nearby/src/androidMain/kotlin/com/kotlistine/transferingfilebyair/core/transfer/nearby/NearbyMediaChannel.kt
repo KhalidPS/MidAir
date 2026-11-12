@@ -737,10 +737,11 @@ internal class NearbyMediaChannel(
      */
     fun listenForPieces(address: String): LinkFrame.PieceOffer? = pieces.listen(address)
 
-    /** The other phone listens for piece requests at [offer]: asked there from now on, if it answers. Blocking. */
-    fun connectPieces(offer: LinkFrame.PieceOffer) {
-        pieces.connect(offer)
-    }
+    /**
+     * The other phone listens for piece requests at [offer]: asked there from now on, if it answers (false when it
+     * doesn't). Blocking.
+     */
+    fun connectPieces(offer: LinkFrame.PieceOffer): Boolean = pieces.connect(offer)
 
     /**
      * What to send of [length] bytes of the shared file [fileId] at [offset], asked for over [pieces]; null to refuse.

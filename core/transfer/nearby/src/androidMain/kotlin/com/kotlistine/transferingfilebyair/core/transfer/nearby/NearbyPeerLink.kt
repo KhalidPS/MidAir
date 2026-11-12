@@ -64,6 +64,9 @@ private const val MaxClockSamples = 8
 /** How long a link that came up by itself has to prove it is the remembered phone. */
 private const val ProofTimeoutMillis = 8_000L
 
+/** How long to wait before each try at connecting to a listener the other phone offered. */
+private val OfferRetryWaitsMillis = listOf(0L, 700L, 1_500L, 3_000L, 6_000L)
+
 /**
  * [PeerLink] on Nearby Connections: Bluetooth to find the other phone and connect, then an automatic upgrade to
  * Wi-Fi Direct or a hotspot for bandwidth. No shared Wi-Fi network is needed. Point-to-point, since a slide goes to
@@ -265,6 +268,8 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         clockSamples.clear()
         lan.close()
         lanAddress = null
+        peerLanOffer = null
+        peerPieceOffer = null
         media.onLinkDropped()
         _state.value = LinkState.Idle
         if (wantsReconnect) scope.launch { reconnect() }
@@ -322,11 +327,13 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             // The other phone listens on the shared Wi-Fi: card messages go there from now on, if it answers.
             // Only to a device on the local network, never somewhere else the offer might point.
             is LinkFrame.LanOffer -> if ((shake.isConfirmed || shake.isProven) && isLocalAddress(frame.address)) {
-                scope.launch(Dispatchers.IO) { lan.connect(frame) }
+                peerLanOffer = frame
+                connectWithRetries(endpointId, isLatest = { peerLanOffer === frame }) { lan.connect(frame) }
             }
             // And for the pieces of its shared files: asked there from now on, if it answers.
             is LinkFrame.PieceOffer -> if ((shake.isConfirmed || shake.isProven) && isLocalAddress(frame.address)) {
-                scope.launch(Dispatchers.IO) { media.connectPieces(frame) }
+                peerPieceOffer = frame
+                connectWithRetries(endpointId, isLatest = { peerPieceOffer === frame }) { media.connectPieces(frame) }
             }
             // The media channel's; routed there before this.
             is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused,
@@ -397,6 +404,28 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
     /** The address the card messages are listened for on now; null while they have no way of their own. */
     @Volatile
     private var lanAddress: String? = null
+
+    /** The other phone's latest offers: an older one is no longer tried once a newer one came. */
+    @Volatile
+    private var peerLanOffer: LinkFrame.LanOffer? = null
+
+    @Volatile
+    private var peerPieceOffer: LinkFrame.PieceOffer? = null
+
+    /**
+     * Tries [connect] (blocking) now and, while it fails, a few more times over the next seconds. The other phone's
+     * offer can arrive before this phone has joined the Wi-Fi Direct group it points into (seen on the phones: the
+     * group's owner offers 0.3 s before the other is in), and the offer is sent only once.
+     */
+    private fun connectWithRetries(endpointId: String, isLatest: () -> Boolean, connect: () -> Boolean) {
+        scope.launch(Dispatchers.IO) {
+            for (waitMillis in OfferRetryWaitsMillis) {
+                delay(waitMillis)
+                if (connectedEndpoint != endpointId || !isLatest()) return@launch
+                if (connect()) return@launch
+            }
+        }
+    }
 
     /**
      * Once the link counts, and again each time its speed changes: listens for the card messages on a connection of
