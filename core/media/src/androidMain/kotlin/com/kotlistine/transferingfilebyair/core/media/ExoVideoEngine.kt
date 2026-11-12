@@ -121,7 +121,8 @@ internal class ExoVideoEngine(private val context: Context) : VideoEngine {
         val from = when (source) {
             is VideoSource.Local -> "this phone"
             is VideoSource.Url -> "the other phone over Wi-Fi"
-            is VideoSource.Remote -> "the other phone over Nearby"
+            // Read through the media channel: its pieces go over Wi-Fi or Nearby, as its AirLink lines say.
+            is VideoSource.Remote -> "the other phone in pieces"
         }
         Log.i(Tag, "Load from $from at $startAtMs ms")
         player.playWhenReady = playWhenReady

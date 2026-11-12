@@ -850,15 +850,14 @@ To get "a piece, typical time to open", collect the `opened in N ms` numbers of 
 | `Index of <file> fetched ahead in N ms` (`AirLink`) | B | The read-ahead found and kept the index. |
 | `Index of <file> not found ahead (…)` (`AirLink`) | B | Not an MP4, or A stopped sharing it. |
 | `<item> lifted on the peer, link quality N (3 is Wi-Fi)` (`AirSlide`) | B | A card was lifted on A. |
-| `Load from the other phone over Nearby at N ms` (`AirVideo`) | B | B's player starts loading the peer's video, aimed at N ms. |
+| `Load from the other phone in pieces at N ms` (`AirVideo`) | B | B's player starts loading the peer's video, aimed at N ms. Builds before 12 Nov wrote "over Nearby" here. |
 | `State buffering at N ms` / `State ready at N ms` (`AirVideo`) | B | The player waits for data / can show a frame. |
 | `Speed X at N ms` (`AirVideo`) | B | The follower is catching up or slowing down. |
 | `Pause at N ms` / `Play at N ms` (`AirVideo`) | B | A hold starts or ends. |
 | `Seek from X to Y ms` (`AirVideo`) | B | A seek; while following, a jump. |
 
-- **Careful:** `Load from the other phone over Nearby` is printed for every `VideoSource.Remote`, also on the direct
-  path. It means "read through `MediaChannel`", not "the pieces go over Nearby". Look at the `AirLink` piece lines to
-  see the path.
+- **Which path:** `Load from the other phone in pieces` means "read through `MediaChannel`". Whether the pieces go over
+  Wi-Fi or over Nearby shows on the `AirLink` piece lines. (Until 12 Nov this line said "over Nearby" for both paths.)
 - **First frame:** report 00 defines it as the time from B starting to load until it can show a frame. To measure it
   from the log, take the time from the `Load from` line to the first `State ready` line after it. (Report 00 does not
   say which log lines it used; this is the closest match in the code.)
