@@ -324,6 +324,10 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             is LinkFrame.LanOffer -> if ((shake.isConfirmed || shake.isProven) && isLocalAddress(frame.address)) {
                 scope.launch(Dispatchers.IO) { lan.connect(frame) }
             }
+            // And for the pieces of its shared files: asked there from now on, if it answers.
+            is LinkFrame.PieceOffer -> if ((shake.isConfirmed || shake.isProven) && isLocalAddress(frame.address)) {
+                scope.launch(Dispatchers.IO) { media.connectPieces(frame) }
+            }
             // The media channel's; routed there before this.
             is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused,
             is LinkFrame.DigestRequest, is LinkFrame.Digest,
@@ -402,15 +406,16 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
      */
     private fun offerLan(endpointId: String) {
         scope.launch {
-            val offer = withContext(Dispatchers.IO) {
+            val offers = withContext(Dispatchers.IO) {
                 val address = directAddress() ?: wifiAddress()
-                // Listening there already: the other phone has the offer.
+                // Listening there already: the other phone has the offers.
                 if (address != null && address == lanAddress) return@withContext null
                 lanAddress = address
                 if (address == null) Log.i("AirLan", "No Wi-Fi Direct group or Wi-Fi network: card messages stay on Nearby")
-                address?.let(lan::listen)
+                // The pieces of a shared file (a playing video's, a fetched file's) get a way of their own there too.
+                address?.let { listOfNotNull<LinkFrame>(lan.listen(it), media.listenForPieces(it)) }
             } ?: return@launch
-            if (connectedEndpoint == endpointId) sendFrame(endpointId, offer)
+            if (connectedEndpoint == endpointId) offers.forEach { sendFrame(endpointId, it) }
         }
     }
 
