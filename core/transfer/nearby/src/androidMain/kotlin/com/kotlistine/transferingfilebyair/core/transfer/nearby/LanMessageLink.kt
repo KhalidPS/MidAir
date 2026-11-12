@@ -33,6 +33,12 @@ private const val MaxMessageBytes = 1024 * 1024
 private const val SlowSendMillis = 100L
 
 /**
+ * The traffic class of the card messages' connection: "expedited forwarding", which Wi-Fi sends from its voice
+ * queue, ahead of a video's bytes waiting in the same phone's radio.
+ */
+private const val CardTrafficClass = 0xB8
+
+/**
  * The cards' messages over the Wi-Fi network both phones are on, apart from Nearby. Nearby carries the files and the
  * card messages on one connection with no priorities, so while a file moved the messages waited behind its bytes for
  * seconds. Here they have a TCP connection of their own.
@@ -100,6 +106,7 @@ internal class LanMessageLink(
     fun connect(offer: LinkFrame.LanOffer): Boolean = try {
         val socket = Socket()
         socket.tcpNoDelay = true
+        socket.trafficClass = CardTrafficClass
         socket.connect(InetSocketAddress(InetAddress.getByName(offer.address), offer.port), ConnectTimeoutMillis)
         val output = DataOutputStream(BufferedOutputStream(socket.getOutputStream()))
         output.write(offer.token)
