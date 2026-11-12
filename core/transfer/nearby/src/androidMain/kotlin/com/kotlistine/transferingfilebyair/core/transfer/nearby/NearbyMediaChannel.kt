@@ -58,6 +58,12 @@ private const val CopyBufferBytes = 64 * 1024
 /** Pieces a [NearbyMediaChannel.fetch] asks for at once, to keep the link busy despite each request's round trip. */
 private const val FetchPiecesAhead = 3
 
+/**
+ * A fetch asks for pieces this big when they travel over Wi-Fi on connections of their own ([LanPieceLink]): nothing
+ * else waits behind them there, and a round of 1 MB pieces spends much of its time on the round trip.
+ */
+private const val WifiFetchPieceBytes = 4L * 1024 * 1024
+
 /** Rounds of pieces in a row that may bring nothing new before a fetch gives up. */
 private const val FetchRetries = 3
 
@@ -475,7 +481,7 @@ internal class NearbyMediaChannel(
             val have = keptOf(fileId).map { it.span }
             val covered = coveredBytes(sizeBytes, have)
             onProgress(if (sizeBytes > 0) covered.toFloat() / sizeBytes else 1f)
-            val missing = missingSpans(sizeBytes, have, PieceBytes)
+            val missing = missingSpans(sizeBytes, have, if (pieces.isUp) WifiFetchPieceBytes else PieceBytes)
             if (missing.isEmpty()) return true
             if (fruitless > FetchRetries) {
                 Log.w(Tag, "Fetching $fileId: gave up with ${sizeBytes - covered} bytes missing")
