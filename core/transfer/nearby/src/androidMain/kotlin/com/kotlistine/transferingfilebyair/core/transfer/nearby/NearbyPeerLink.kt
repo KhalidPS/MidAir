@@ -65,7 +65,7 @@ private const val MaxClockSamples = 8
 private const val ProofTimeoutMillis = 8_000L
 
 /** How long to wait before each try at connecting to a listener the other phone offered. */
-private val OfferRetryWaitsMillis = listOf(0L, 700L, 1_500L, 3_000L, 6_000L)
+private val OfferRetryWaitsMillis = listOf(0L, 700L, 1_500L, 3_000L, 6_000L, 10_000L)
 
 /**
  * [PeerLink] on Nearby Connections: Bluetooth to find the other phone and connect, then an automatic upgrade to
@@ -444,7 +444,18 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                 // The pieces of a shared file (a playing video's, a fetched file's) get a way of their own there too.
                 address?.let { listOfNotNull<LinkFrame>(lan.listen(it), media.listenForPieces(it)) }
             } ?: return@launch
-            if (connectedEndpoint == endpointId) offers.forEach { sendFrame(endpointId, it) }
+            if (connectedEndpoint != endpointId) return@launch
+            offers.forEach { sendFrame(endpointId, it) }
+            // This phone is somewhere new (in the Wi-Fi Direct group now): a listener the other offered that didn't
+            // answer from where it was before may answer from here.
+            peerLanOffer?.let { offer ->
+                if (!lan.isUp) connectWithRetries(endpointId, isLatest = { peerLanOffer === offer }) { lan.isUp || lan.connect(offer) }
+            }
+            peerPieceOffer?.let { offer ->
+                if (!media.arePiecesUp) {
+                    connectWithRetries(endpointId, isLatest = { peerPieceOffer === offer }) { media.arePiecesUp || media.connectPieces(offer) }
+                }
+            }
         }
     }
 

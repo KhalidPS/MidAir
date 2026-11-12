@@ -39,6 +39,9 @@ private const val MaxIdleConnections = 8
 
 private const val CopyBufferBytes = 64 * 1024
 
+/** How many bytes of a piece may wait in its connection to be sent. */
+private const val PieceSendBufferBytes = 128 * 1024
+
 /** What a phone sends of one of its shared files: [length] bytes exactly, read from [input]. */
 internal class ServedPiece(val input: InputStream, val length: Long)
 
@@ -228,6 +231,8 @@ internal class LanPieceLink(
     private fun answer(client: Socket, secret: ByteArray) {
         try {
             client.tcpNoDelay = true
+            // A short queue: what waits here to be sent waits in front of the card messages at the radio too.
+            client.sendBufferSize = PieceSendBufferBytes
             client.soTimeout = HelloTimeoutMillis
             val input = DataInputStream(client.getInputStream().buffered())
             val hello = ByteArray(LanTokenBytes)
