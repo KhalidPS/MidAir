@@ -1,7 +1,7 @@
 # Pieces over Wi-Fi Direct: the full version of the direct path
 
 Written 12 Nov 2026. Branch: `feature/2026-11-12/pieces-over-wifi-direct`, off `main`.
-**Status: built, unit tests pass, two rounds compared with `main` on the phones (Section 7). Round two is promising; not merged.**
+**Status: built, unit tests pass, compared with `main` on the phones in three runs (Section 7). Ready to merge; not merged.**
 
 Read `docs/LIVE_VIDEO_HISTORY.md` first if the words below are new (piece, lift, pull-back, index, Nearby, Wi-Fi
 Direct group).
@@ -243,7 +243,36 @@ Fifteen slides on B, nine of them of a playing video (the 676 MB one this time; 
 - **Before this run the phones did not link for about two minutes** after the install (A was not searching). It did
   not happen on the four installs before. Cause unknown; it may or may not have to do with this build.
 
-**Verdict now: promising, worth one repeat of the side-by-side run on the same video before merging.**
+**Verdict after round two: promising, worth one repeat of the side-by-side run on the same video before merging.**
+
+### The confirming run (17:32 and 17:38, back to back)
+
+`main`, then round two, a few minutes apart, on the same 567 MB video (20), the same phones and roles. Before most
+lifts the other video was played on A for a second and then the big one again, so B had to start it afresh: a
+first lift.
+
+| Measure | `main` (17:32) | Round two (17:38) |
+| --- | --- | --- |
+| First lifts | 14 | 8 |
+| First frame on a first lift | 1.6–3.1 s, middle 2.3 s | 0.79–3.9 s, middle 1.3 s |
+| First lifts under 1.5 s | 0 of 14 | 5 of 8 |
+| First lifts that jumped | 0 of 14 | 1 of 8 (3.9 s, then a jump) |
+| Second lifts | none | 1, after 0.48 s |
+| A piece, typical time to open | 547 ms | 86 ms (896 pieces, none over Nearby) |
+| Card lag, typical per slide | 32–79 ms | 28–50 ms |
+| Card lag, worst 1 in 20 moves per slide | 84–329 ms | 79–210 ms |
+| Pauses of the card messages (over 0.3 s) | 5 in 15 slides | 5 in 10 slides |
+| The file after a drop | not dropped in this run (3.9 MB/s at 14:27) | 6.6 MB/s (517 MB in 79 s) |
+
+- **First lifts are faster on round two:** the middle lift went from 2.3 s to 1.3 s, and five of eight were under
+  1.5 s, against none on `main`. The spread is wider: the two slowest round-two lifts (3.1 and 3.9 s) were as slow
+  as `main`'s slowest, and one of them jumped.
+- **The card is level with `main`:** typical and worst lag a little lower, pauses a little more frequent per slide.
+- **The connect retry worked:** B's first try failed as at 14:08, and the retry 0.7 s later connected both ways.
+- **On `main`, a card pulled back before B's first frame and lifted again at once** (17:34:26, the case of
+  report 14) showed its first frame after 2.5 s, with no jump.
+
+**Verdict: ready to merge**, with the fallbacks below still untested on the phones (they are covered by unit tests).
 
 ### Not tested
 
@@ -254,7 +283,6 @@ Wi-Fi, and what happens when the Wi-Fi connection breaks in the middle of a piec
 
 ## 8. Next, if it pays off
 
-- **Repeat the side-by-side run** on the same video, `main` and round two back to back, with more first lifts.
 - **Test the fallbacks:** a lift on Bluetooth before Wi-Fi Direct is up, one phone on an older build, and the Wi-Fi
   connection breaking in the middle of a piece.
 - **Find out why the phones did not link** for two minutes before the round-two run.
