@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A video playing on the phone next door is read over the Wi-Fi both phones are on, as plain HTTP to that phone's
+    local address (no TLS: it has no certificate). Android has no rule for "local addresses only", so cleartext is
+    allowed app-wide. The app talks to no server: its only HTTP is to the paired phone, which hands out a random token
+    for each file it shares and serves nothing else.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

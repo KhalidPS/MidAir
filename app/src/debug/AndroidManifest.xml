@@ -13,6 +13,17 @@
             android:label="Air Twin Simulator (dev tool)"
             android:taskAffinity=".simulator"
             android:theme="@style/Theme.TransferingFileByAir" />
+
+        <!--
+            Debug builds only: 50 mm lines drawn from the reported screen density, to check it with a ruler.
+            adb shell am start -n com.kotlistine.transferingfilebyair/.RulerActivity
+        -->
+        <activity
+            android:name=".RulerActivity"
+            android:exported="true"
+            android:label="Air Ruler (dev tool)"
+            android:screenOrientation="portrait"
+            android:taskAffinity=".ruler" />
     </application>
 
 </manifest>

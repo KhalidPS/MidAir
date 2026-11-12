@@ -1,6 +1,7 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.presentation.components
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,21 +29,29 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 import com.kotlistine.transferingfilebyair.core.designsystem.icons.AirIcons
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.textSwap
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 
-/** Floating capsule from the reference design: paired device · add · item count · more. */
+/** Floating capsule from the reference design: paired device · air gestures · add · item count · more. */
 @Composable
 internal fun ShelfBottomBar(
     itemCount: Int,
+    isPaired: Boolean,
+    isLinkSlow: Boolean,
     onDevicesClick: () -> Unit,
     onAddClick: () -> Unit,
     onClearClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Whether this device can watch for a hand; the hand button shows only then. */
+    isAirGestureAvailable: Boolean = false,
+    isAirGestureOn: Boolean = false,
+    onAirGestureClick: () -> Unit = {},
 ) {
     Row(
         modifier = modifier
@@ -55,13 +64,21 @@ internal fun ShelfBottomBar(
     ) {
         // Opens pairing with the device next to this one.
         IconButton(onClick = onDevicesClick, modifier = Modifier.size(44.dp)) {
-            Icon(
-                imageVector = AirIcons.Devices,
-                contentDescription = "Pair with a device nearby",
-                tint = AirColors.OnSurfaceMuted,
-                modifier = Modifier.size(22.dp),
-            )
+            Box {
+                Icon(
+                    imageVector = AirIcons.Devices,
+                    contentDescription = when {
+                        isLinkSlow -> "Paired, still on Bluetooth"
+                        isPaired -> "Paired"
+                        else -> "Pair with a device nearby"
+                    },
+                    tint = if (isPaired) AirColors.OnSurface else AirColors.OnSurfaceMuted,
+                    modifier = Modifier.size(22.dp),
+                )
+                LinkMark(isPaired = isPaired, isSlow = isLinkSlow, modifier = Modifier.align(Alignment.TopEnd))
+            }
         }
+        if (isAirGestureAvailable) AirGestureButton(isOn = isAirGestureOn, onClick = onAirGestureClick)
         AddButton(onClick = onAddClick)
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             AnimatedContent(targetState = itemCount, transitionSpec = { textSwap() }) { count ->
@@ -74,6 +91,47 @@ internal fun ShelfBottomBar(
         }
         BarMenu(canClear = itemCount > 0, onClearClick = onClearClick)
     }
+}
+
+/** Turns air gestures on and off: lit while the camera may watch for a fist over the shelf. */
+@Composable
+private fun AirGestureButton(isOn: Boolean, onClick: () -> Unit) {
+    val lit by animateFloatAsState(if (isOn) 1f else 0f, Motion.enter(240), label = "airLit")
+    IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .graphicsLayer { alpha = lit }
+                .clip(CircleShape)
+                .background(AirColors.OnSurface.copy(alpha = 0.14f)),
+        )
+        Icon(
+            imageVector = AirIcons.Hand,
+            contentDescription = if (isOn) "Turn off air gestures" else "Turn on air gestures",
+            tint = lerp(AirColors.OnSurfaceMuted, AirColors.OnSurface, lit),
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/**
+ * A small dot on the devices icon while paired: amber while the link is still on Bluetooth (slides are less smooth
+ * then), cyan once it is on Wi-Fi. It fades between the two.
+ */
+@Composable
+private fun LinkMark(isPaired: Boolean, isSlow: Boolean, modifier: Modifier = Modifier) {
+    val color by animateColorAsState(if (isSlow) AirColors.GlowOrange else AirColors.GlowCyan, label = "linkMark")
+    val shown by animateFloatAsState(if (isPaired) 1f else 0f, Motion.pop(), label = "linkMarkShown")
+    Box(
+        modifier = modifier
+            .size(7.dp)
+            .graphicsLayer {
+                alpha = shown.coerceIn(0f, 1f)
+                scaleX = shown
+                scaleY = shown
+            }
+            .drawBehind { drawCircle(color) },
+    )
 }
 
 @Composable

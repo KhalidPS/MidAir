@@ -44,6 +44,9 @@ interface PeerLink {
     /** Messages to and from the connected peer. Sends fail with [DataError.Network.DISCONNECTED] while unpaired. */
     val transport: Transport
 
+    /** Reading the peer's shared files in ranges, where the link can (null: it can't). */
+    val media: MediaChannel? get() = null
+
     /** Makes this device visible and looks for others, until it connects or [stopSearching] is called. */
     suspend fun startSearching(): EmptyResult<DataError.Network>
 
@@ -72,15 +75,23 @@ interface PeerLink {
 
     /**
      * Streams the file at [uri] (a platform file reference) to the connected peer. [announce] runs once the transfer
-     * has its id, before any bytes go; this returns once the peer has the whole file, or fails.
+     * has its id, before any bytes go; [onProgress] hears how many bytes have gone (from any thread). Returns once
+     * the peer has the whole file, or fails ([DataError.Network.CANCELLED] once [cancelTransfer] stopped it).
      */
-    suspend fun sendFile(uri: String, announce: suspend (transferId: Long) -> Unit): EmptyResult<DataError.Network>
+    suspend fun sendFile(
+        uri: String,
+        announce: suspend (transferId: Long) -> Unit,
+        onProgress: (bytesSent: Long) -> Unit = {},
+    ): EmptyResult<DataError.Network>
 
     /**
-     * Waits for the file the peer sends as [transferId] to arrive in full, reporting how much has arrived (0..1) to
-     * [onProgress] as it comes in. Returns where it was stored locally.
+     * Waits for the file the peer sends as [transferId] to arrive in full, reporting how many bytes have arrived to
+     * [onProgress] as they come in (from any thread). Returns where it was stored locally.
      */
-    suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit = {}): Result<String, DataError.Network>
+    suspend fun receiveFile(
+        transferId: Long,
+        onProgress: (bytesReceived: Long) -> Unit = {},
+    ): Result<String, DataError.Network>
 
     /** Stops transfer [transferId] in either direction; both sides then fail it with [DataError.Network.CANCELLED]. */
     fun cancelTransfer(transferId: Long)

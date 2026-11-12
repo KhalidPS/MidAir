@@ -45,6 +45,8 @@ internal fun LiftedCard(state: SlideState, modifier: Modifier = Modifier) {
     SideEffect { state.cardLayer = recording }
     FilePreview(
         item = item,
+        // A playing video moves into the copy while it is in the air.
+        isVideoActive = state.isAloft,
         modifier = modifier
             .layout { measurable, _ ->
                 val width = rest.width.roundToInt()

@@ -4,9 +4,11 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
+import com.google.android.gms.nearby.connection.BandwidthInfo
 import com.google.android.gms.nearby.connection.ConnectionInfo
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
 import com.google.android.gms.nearby.connection.ConnectionResolution
@@ -22,11 +24,13 @@ import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.data.SlideMessageCodec
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ClockSample
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import com.kotlistine.transferingfilebyair.core.transfer.domain.Transport
+import com.kotlistine.transferingfilebyair.core.transfer.domain.peerClockAheadMillis
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -47,6 +51,15 @@ import kotlin.coroutines.cancellation.CancellationException
 
 /** Only installs of this app find each other. */
 private const val ServiceId = "com.kotlistine.transferingfilebyair.slide"
+
+/** A message taking longer than this to go out is logged. */
+private const val SlowSendMillis = 300L
+
+/** How a card's moves reach this phone, one summary per slide (see [SlideMoveTimings]). */
+private const val SlideTag = "AirSlide"
+
+/** Clock comparisons kept for the moves' one-way delay: the quickest of these is used. */
+private const val MaxClockSamples = 8
 
 /** How long a link that came up by itself has to prove it is the remembered phone. */
 private const val ProofTimeoutMillis = 8_000L
@@ -96,10 +109,22 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
     private val transfers = ConcurrentHashMap<Long, CompletableDeferred<Result<String?, DataError.Network>>>()
     private val incomingFiles = ConcurrentHashMap<Long, Payload>()
 
-    /** Who wants to hear how far an incoming file has got, by transfer id. */
-    private val progressListeners = ConcurrentHashMap<Long, (Float) -> Unit>()
+    /** Who wants to hear how far a file has got (in bytes), by transfer id, either way. */
+    private val progressListeners = ConcurrentHashMap<Long, (Long) -> Unit>()
 
     private fun transfer(id: Long) = transfers.getOrPut(id) { CompletableDeferred() }
+
+    /**
+     * The card messages' own way over the Wi-Fi network both phones are on, when they share one: Nearby carries files
+     * and messages on one connection with no priorities, and a file's bytes held the card's moves up for seconds.
+     * Messages arriving that way are handled exactly like those from Nearby, on the main thread, in order.
+     */
+    private val lan = LanMessageLink(scope, onMessage = { bytes -> scope.launch { onSlideBytes(bytes) } })
+
+    /** Only once the link counts: a remembered phone that hasn't proven itself reads nothing. */
+    override val media = NearbyMediaChannel(context, client, scope) {
+        connectedEndpoint?.takeIf { _state.value is LinkState.Connected }
+    }
 
     override val transport: Transport = object : Transport {
         override val incoming: Flow<SlideMessage> = received
@@ -110,7 +135,17 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                 is Result.Failure -> return encoded
                 is Result.Success -> encoded.data
             }
-            return nearbyCall { client.sendPayload(endpoint, Payload.fromBytes(bytes)).await() }
+            if (message is SlideMessage.DragStart) {
+                Log.i(SlideTag, "${message.itemId} lifted here, link quality ${media.quality} (3 is Wi-Fi)")
+            }
+            // Over Wi-Fi when the phones share one: not stuck behind a file's bytes.
+            if (lan.send(bytes)) return Result.Success(Unit)
+            val startedAt = System.currentTimeMillis()
+            val sent = nearbyCall { client.sendPayload(endpoint, Payload.fromBytes(bytes)).await() }
+            val millis = System.currentTimeMillis() - startedAt
+            // Messages go out one at a time: a slow one holds up everything after it.
+            if (millis > SlowSendMillis) Log.w("AirLink", "Sending ${message::class.simpleName} took $millis ms")
+            return sent
         }
     }
 
@@ -226,6 +261,11 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         handshake?.timeout?.cancel()
         handshake = null
         abandonTransfers()
+        moveTimings.stop()
+        clockSamples.clear()
+        lan.close()
+        lanAddress = null
+        media.onLinkDropped()
         _state.value = LinkState.Idle
         if (wantsReconnect) scope.launch { reconnect() }
     }
@@ -269,6 +309,7 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                 shake.isProven = true
                 shake.timeout?.cancel()
                 _state.value = LinkState.Connected(shake.peer)
+                offerLan(endpointId)
             }
             is LinkFrame.Trust -> {
                 val peerId = shake.peerId ?: return
@@ -278,12 +319,22 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                 memory.trust(TrustedPeer(peerId, shake.peer.name, frame.key))
             }
             LinkFrame.Forget -> memory.forget()
+            // The other phone listens on the shared Wi-Fi: card messages go there from now on, if it answers.
+            // Only to a device on the local network, never somewhere else the offer might point.
+            is LinkFrame.LanOffer -> if ((shake.isConfirmed || shake.isProven) && isLocalAddress(frame.address)) {
+                scope.launch(Dispatchers.IO) { lan.connect(frame) }
+            }
+            // The media channel's; routed there before this.
+            is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused,
+            is LinkFrame.DigestRequest, is LinkFrame.Digest,
+            -> Unit
         }
     }
 
     override suspend fun sendFile(
         uri: String,
         announce: suspend (transferId: Long) -> Unit,
+        onProgress: (bytesSent: Long) -> Unit,
     ): EmptyResult<DataError.Network> {
         val endpoint = connectedEndpoint ?: return Result.Failure(DataError.Network.DISCONNECTED)
         val descriptor = try {
@@ -294,21 +345,29 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
         return descriptor.use {
             val payload = Payload.fromFile(descriptor)
             val outcome = transfer(payload.id)
+            progressListeners[payload.id] = onProgress
             try {
                 announce(payload.id)
+                // Stopped while it was being announced: nothing goes.
+                if (outcome.isCompleted) {
+                    return@use outcome.await() as? Result.Failure ?: Result.Failure(DataError.Network.CANCELLED)
+                }
                 val sent = nearbyCall { client.sendPayload(endpoint, payload).await() }
                 if (sent is Result.Failure) return@use sent
+                // Stopped while it was being handed to Nearby, whose cancel came too early to count: stop it now.
+                if (outcome.isCompleted) client.cancelPayload(payload.id)
                 when (val result = outcome.await()) {
                     is Result.Success -> Result.Success(Unit)
                     is Result.Failure -> result
                 }
             } finally {
+                progressListeners.remove(payload.id)
                 transfers.remove(payload.id)
             }
         }
     }
 
-    override suspend fun receiveFile(transferId: Long, onProgress: (Float) -> Unit): Result<String, DataError.Network> {
+    override suspend fun receiveFile(transferId: Long, onProgress: (Long) -> Unit): Result<String, DataError.Network> {
         progressListeners[transferId] = onProgress
         val result = try {
             transfer(transferId).await()
@@ -320,6 +379,96 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             is Result.Failure -> result
             is Result.Success -> result.data?.let { Result.Success(it) } ?: Result.Failure(DataError.Network.UNKNOWN)
         }
+    }
+
+    /** A slide message arrived, over Nearby or the shared Wi-Fi. Main thread. */
+    private fun onSlideBytes(bytes: ByteArray) {
+        if (_state.value !is LinkState.Connected) return
+        val message = (SlideMessageCodec.decode(bytes) as? Result.Success)?.data ?: return
+        noteGap(message)
+        measure(message)
+        received.tryEmit(message)
+    }
+
+    /** The address the card messages are listened for on now; null while they have no way of their own. */
+    @Volatile
+    private var lanAddress: String? = null
+
+    /**
+     * Once the link counts, and again each time its speed changes: listens for the card messages on a connection of
+     * their own, and tells the other phone where. On the Wi-Fi Direct group between the two phones once Nearby has
+     * opened it (no router needed); until then on the Wi-Fi network both may be on. With neither, the messages stay on
+     * Nearby.
+     */
+    private fun offerLan(endpointId: String) {
+        scope.launch {
+            val offer = withContext(Dispatchers.IO) {
+                val address = directAddress() ?: wifiAddress()
+                // Listening there already: the other phone has the offer.
+                if (address != null && address == lanAddress) return@withContext null
+                lanAddress = address
+                if (address == null) Log.i("AirLan", "No Wi-Fi Direct group or Wi-Fi network: card messages stay on Nearby")
+                address?.let(lan::listen)
+            } ?: return@launch
+            if (connectedEndpoint == endpointId) sendFrame(endpointId, offer)
+        }
+    }
+
+    /** When the last message of a card in the air came in; null when none is in the air. */
+    private var lastSlideMessageAt: Long? = null
+
+    /**
+     * Logs a long pause in the stream of a card's moves (and its video's clock), which come many times a second while
+     * it is in the air: something else on the link held them up.
+     */
+    private fun noteGap(message: SlideMessage) {
+        val now = System.currentTimeMillis()
+        val last = lastSlideMessageAt
+        if (last != null && now - last > SlowSendMillis) {
+            Log.w("AirLink", "Card messages paused ${now - last} ms, then ${message::class.simpleName}")
+        }
+        lastSlideMessageAt = when (message) {
+            is SlideMessage.DragMove, is SlideMessage.DragMoves, is SlideMessage.PlaybackClock, is SlideMessage.DragStart,
+            is SlideMessage.PlaybackOffer,
+            -> now
+            else -> null
+        }
+    }
+
+    private val moveTimings = SlideMoveTimings()
+
+    /** Round trips with the peer's answer time (from any `Ping`), to put its timestamps on this phone's clock. */
+    private val clockSamples = ArrayDeque<ClockSample>()
+
+    /** Logs, per slide of the peer's card, how evenly and how late its moves came in. */
+    private fun measure(message: SlideMessage) {
+        val now = System.currentTimeMillis()
+        when (message) {
+            is SlideMessage.Pong -> if (message.answeredAtMillis > 0L) {
+                clockSamples.addLast(ClockSample(message.pingSentAtMillis, message.answeredAtMillis, now))
+                if (clockSamples.size > MaxClockSamples) clockSamples.removeFirst()
+            }
+            is SlideMessage.DragStart -> {
+                moveTimings.start(message.itemId)
+                Log.i(SlideTag, "${message.itemId} lifted on the peer, link quality ${media.quality} (3 is Wi-Fi)")
+            }
+            is SlideMessage.DragMove ->
+                if (moveTimings.itemId == message.itemId) moveTimings.add(message.seq, now, message.atMillis)
+            // Batched while the link was busy: each came in now.
+            is SlideMessage.DragMoves -> message.moves.forEach { move ->
+                if (moveTimings.itemId == move.itemId) moveTimings.add(move.seq, now, move.atMillis)
+            }
+            is SlideMessage.DragCommit -> endSlide(message.itemId, "landed")
+            is SlideMessage.DragCancel -> endSlide(message.itemId, "withdrawn")
+            else -> Unit
+        }
+    }
+
+    private fun endSlide(itemId: String, how: String) {
+        if (moveTimings.itemId != itemId) return
+        val summary = moveTimings.summary(peerClockAheadMillis(clockSamples))
+        moveTimings.stop()
+        Log.i(SlideTag, "$itemId $how, link quality ${media.quality}. ${summary?.describe() ?: "No moves"}")
     }
 
     override fun cancelTransfer(transferId: Long) {
@@ -445,6 +594,7 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                     }
                 } else {
                     _state.value = LinkState.Connected(peer)
+                    offerLan(endpointId)
                 }
             } else if (isRemembered) {
                 // It didn't work out by itself; nothing to show, keep looking.
@@ -461,33 +611,51 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
             if (connectedEndpoint != endpointId) return
             dropLink()
         }
+
+        override fun onBandwidthChanged(endpointId: String, info: BandwidthInfo) {
+            if (connectedEndpoint != endpointId) return
+            media.onBandwidthChanged(info)
+            // On Wi-Fi Direct now (or off it): the card messages move to where the two phones reach each other.
+            if (_state.value is LinkState.Connected) offerLan(endpointId)
+        }
     }
 
     private val payloads = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             if (endpointId != connectedEndpoint) return
             val bytes = if (payload.type == Payload.Type.BYTES) payload.asBytes() else null
+            val isLinked = _state.value is LinkState.Connected
             if (bytes != null && isLinkFrame(bytes)) {
-                decodeLinkFrame(bytes)?.let { onFrame(endpointId, it) }
+                when (val frame = decodeLinkFrame(bytes)) {
+                    null -> Unit
+                    is LinkFrame.RangeRequest, is LinkFrame.RangeOpened, is LinkFrame.RangeRefused,
+                    is LinkFrame.DigestRequest, is LinkFrame.Digest,
+                    ->
+                        if (isLinked) media.onFrame(frame)
+                    else -> onFrame(endpointId, frame)
+                }
                 return
             }
             // Nothing gets through until the link counts (a remembered phone that hasn't proven itself yet).
-            if (_state.value !is LinkState.Connected) {
-                if (payload.type == Payload.Type.FILE) client.cancelPayload(payload.id)
+            if (!isLinked) {
+                if (payload.type != Payload.Type.BYTES) client.cancelPayload(payload.id)
                 return
             }
             when (payload.type) {
                 Payload.Type.BYTES -> {
                     if (bytes == null) return
-                    (SlideMessageCodec.decode(bytes) as? Result.Success)?.let { received.tryEmit(it.data) }
+                    onSlideBytes(bytes)
                 }
                 // Its bytes are still arriving; it is usable once its transfer reports success.
                 Payload.Type.FILE -> incomingFiles[payload.id] = payload
+                // A range of a shared file, read as it arrives.
+                Payload.Type.STREAM -> media.onStream(payload)
                 else -> Unit
             }
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            if (media.onTransferUpdate(update)) return
             val id = update.payloadId
             val incoming = incomingFiles[id]
             // Message payloads report too; only file transfers are tracked.
@@ -517,10 +685,8 @@ internal class NearbyPeerLink(context: Context, private val memory: PeerMemory) 
                     incomingFiles.remove(id)
                     outcome.complete(Result.Failure(DataError.Network.CANCELLED))
                 }
-                PayloadTransferUpdate.Status.IN_PROGRESS -> {
-                    val total = update.totalBytes
-                    if (total > 0) progressListeners[id]?.invoke((update.bytesTransferred.toFloat() / total).coerceIn(0f, 1f))
-                }
+                // Coalesced by whoever listens (see TransferBoard): Nearby reports every chunk.
+                PayloadTransferUpdate.Status.IN_PROGRESS -> progressListeners[id]?.invoke(update.bytesTransferred)
                 else -> Unit
             }
         }

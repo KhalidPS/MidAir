@@ -31,8 +31,10 @@ import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.stagger
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.ShelfAction
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.air.GrabState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.TransferUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlideState
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotCoordinates
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.slide.SlotRegistry
@@ -70,9 +72,13 @@ internal fun ShelfGrid(
     pictures: Map<String, ImageBitmap>,
     /** The arriving card still in the air: its slot stays empty until it lands. */
     flyingId: String?,
+    /** The receiving transfer of an arriving card, by card id. Read by the card itself, so progress redraws it alone. */
+    transferOf: (String) -> TransferUi?,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
+    /** A card grabbed by an air gesture: its slot is empty while it is in the hand, and no other card lifts. */
+    grabState: GrabState? = null,
 ) {
     // One clock for the whole first-load cascade; every card reads its own slice in the draw phase.
     val intro = remember { Animatable(0f) }
@@ -105,6 +111,8 @@ internal fun ShelfGrid(
                 item = item,
                 picture = pictures[item.id],
                 onTap = { onAction(ShelfAction.OnIncomingCardTap(item.id)) },
+                transfer = { transferOf(item.id) },
+                isVideoActive = !isFlying,
                 previewModifier = Modifier
                     .onPlaced { slot.value = it }
                     .graphicsLayer { alpha = if (isFlying) 0f else 1f },
@@ -116,7 +124,9 @@ internal fun ShelfGrid(
             )
         }
         itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
-            val arrivedAs = remember(item.id) { arrivedFrom[item.id]?.let { pictures[it] } }
+            // A received video still playing needs no cover: the video itself carries on from its arriving card.
+            val isPlaying = LocalCardVideo.current?.itemId == item.id
+            val arrivedAs = remember(item.id) { if (isPlaying) null else arrivedFrom[item.id]?.let { pictures[it] } }
             val isNew = remember(item.id) { seenIds.add(item.id) && item.id !in arrivedFrom }
             val appear = remember(item.id) { Animatable(if (isNew) 0f else 1f) }
             LaunchedEffect(item.id) {
@@ -139,12 +149,17 @@ internal fun ShelfGrid(
 
             ShelfCard(
                 item = item,
+                onPreviewClick = { onAction(ShelfAction.OnPreviewClick(item.id)) },
                 onOpenClick = { onAction(ShelfAction.OnOpenClick(item.id)) },
                 onRemoveClick = { onAction(ShelfAction.OnRemoveClick(item.id)) },
                 previewModifier = Modifier
-                    .liftToSlide(slideState, key = item.id, slot = slot) { slideState.tryLift(currentItem, it) }
-                    // While a copy is in the overlay (lifted), the slot shows nothing; the label stays, under the blur.
-                    .graphicsLayer { alpha = if (slideState.hiddenId == item.id) 0f else 1f }
+                    .liftToSlide(slideState, key = item.id, slot = slot) {
+                        grabState?.item == null && slideState.tryLift(currentItem, it)
+                    }
+                    // While a copy is in the overlay (lifted or grabbed), the slot shows nothing; the label stays.
+                    .graphicsLayer {
+                        alpha = if (slideState.hiddenId == item.id || grabState?.hiddenId == item.id) 0f else 1f
+                    }
                     .drawWithContent {
                         drawContent()
                         val cover = handOff.value

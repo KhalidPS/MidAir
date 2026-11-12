@@ -101,6 +101,38 @@ class LineUpTest {
         assertThat(peerClockAheadMillis(samples)).isEqualTo(300L)
         assertThat(peerClockAheadMillis(emptyList())).isNull()
     }
+
+    @Test
+    fun `phones whose densities disagree measure the swipe at different speeds, and the line-up corrects for it`() {
+        // B reports 5 % too few pixels per inch, so its millimetres come out 5 % long: it measures 210 mm/s.
+        val fastB = rightArriving.copy(acrossMmPerS = 210f)
+
+        val onLeft = lineUp(mine = leftLeaving, theirs = fastB, peerClockAheadMillis = 300)!!
+        val onRight = lineUp(mine = fastB, theirs = leftLeaving, peerClockAheadMillis = -300)!!
+
+        // A turns B's millimetres into its own, and B the other way round.
+        assertThat(onLeft.peerMmScale).isCloseTo(200f / 210f, 0.001f)
+        assertThat(onRight.peerMmScale).isCloseTo(210f / 200f, 0.001f)
+    }
+
+    @Test
+    fun `crossings too far apart in speed to be a density error leave the millimetres alone`() {
+        val lined = lineUp(mine = leftLeaving, theirs = rightArriving.copy(acrossMmPerS = 300f), peerClockAheadMillis = 300)
+
+        assertThat(lined).isNotNull().given { assertThat(it.peerMmScale).isEqualTo(1f) }
+    }
+
+    @Test
+    fun `a slow swipe is not used to compare densities`() {
+        val lined = lineUp(
+            mine = leftLeaving.copy(acrossMmPerS = 30f),
+            theirs = rightArriving.copy(acrossMmPerS = 31f),
+            peerClockAheadMillis = 300,
+        )
+
+        assertThat(lined).isNotNull().given { assertThat(it.peerMmScale).isEqualTo(1f) }
+    }
+
 }
 
 private const val Tolerance = 0.01f

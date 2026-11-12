@@ -31,6 +31,7 @@ class SlideMessageCodecTest {
         outwardMmPerS = 180f,
         alongEdgeMmPerS = -12f,
         tiltDegrees = 4.5f,
+        atMillis = 1_793_000_000_123,
     )
 
     private fun roundTrip(message: SlideMessage): SlideMessage {
@@ -45,8 +46,18 @@ class SlideMessageCodecTest {
             start.copy(thumbnail = null),
             move,
             SlideMessage.DragCancel("7"),
+            SlideMessage.DragMoves(
+                listOf(
+                    SlideMessage.DragMove("7", 3, ExitEdge.RIGHT, 12f, -4f, 300f, 0f, 2f, atMillis = 1_700_000_000_000),
+                    SlideMessage.DragMove("7", 4, ExitEdge.RIGHT, 12.5f, -2f, 310f, 1f, 2f, atMillis = 1_700_000_000_016),
+                ),
+            ),
             SlideMessage.DragCommit("7", outwardMmPerS = 300f, alongEdgeMmPerS = 5f),
             SlideMessage.FileOffer("7", transferId = -4_611_686_018_427_387_904),
+            SlideMessage.FileQueued("7"),
+            SlideMessage.FileCancelled("7", bySender = true),
+            SlideMessage.FileCancelled("7", bySender = false),
+            SlideMessage.FileKept("7"),
             SlideMessage.Ping(sentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000),
             SlideMessage.Pong(pingSentAtMillis = 1_700_000_000_000, answeredAtMillis = 1_700_000_000_321),
@@ -60,7 +71,14 @@ class SlideMessageCodecTest {
                     alongEdgeMmPerS = -6f,
                 ),
             ),
-        )
+            SlideMessage.PlaybackOffer("7", sizeBytes = 24_000_000_000, positionMs = 61_250, isPlaying = true),
+            SlideMessage.PlaybackOffer("7", 24_000, 0, isPlaying = false, httpUrl = "http://192.168.1.20:40123/v/7?t=ab"),
+            SlideMessage.PlaybackClock("7", positionMs = 61_500, isPlaying = false),
+            SlideMessage.PlaybackHint("7", sizeBytes = 24_000_000_000),
+            SlideMessage.Grabbed(itemId = "7"),
+            SlideMessage.Grabbed(itemId = "7", handSize = 0.42f),
+            SlideMessage.Released(itemId = "7"),
+        ) + SlideMessage.FileRoute.Route.entries.map { SlideMessage.FileRoute("7", it) }
 
         messages.forEach { assertThat(roundTrip(it)).isEqualTo(it) }
     }
@@ -70,6 +88,23 @@ class SlideMessageCodecTest {
         val bytes = (SlideMessageCodec.encode(move) as Result.Success).data
 
         assertThat(bytes.size).isLessThan(80)
+    }
+
+    @Test
+    fun `a move from an older build, without a timestamp, reads as untimed`() {
+        // An older build has no timestamp field, which is what an unknown (default) one encodes to.
+        val untimed = (SlideMessageCodec.encode(move.copy(atMillis = 0L)) as Result.Success).data
+        val timed = (SlideMessageCodec.encode(move) as Result.Success).data
+
+        assertThat(untimed.size).isLessThan(timed.size)
+        assertThat(SlideMessageCodec.decode(untimed)).isEqualTo(Result.Success(move.copy(atMillis = 0L)))
+    }
+
+    @Test
+    fun `a playback clock is small enough to send several times a second`() {
+        val bytes = (SlideMessageCodec.encode(SlideMessage.PlaybackClock("7", 3_600_000, true)) as Result.Success).data
+
+        assertThat(bytes.size).isLessThan(40)
     }
 
     @Test
@@ -89,7 +124,15 @@ class SlideMessageCodecTest {
             move.copy(penetrationMm = Float.POSITIVE_INFINITY),
             move.copy(alongEdgeMm = 50_000f),
             move.copy(tiltDegrees = Float.NaN),
+            move.copy(atMillis = -1),
             SlideMessage.DragCommit("7", outwardMmPerS = Float.NaN, alongEdgeMmPerS = 0f),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 0, positionMs = 0, isPlaying = true),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 1_000, positionMs = -5, isPlaying = true),
+            SlideMessage.PlaybackClock("7", positionMs = -1, isPlaying = true),
+            SlideMessage.PlaybackHint("7", sizeBytes = 0),
+            SlideMessage.PlaybackOffer("7", sizeBytes = 1_000, positionMs = 0, isPlaying = true, httpUrl = "file:///sdcard/x"),
+            SlideMessage.Grabbed("7", handSize = Float.NaN),
+            SlideMessage.Grabbed("7", handSize = 1.5f),
         )
 
         impossible.forEach { message ->

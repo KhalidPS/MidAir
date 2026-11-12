@@ -19,6 +19,9 @@ import kotlin.coroutines.cancellation.CancellationException
 
 private const val FolderName = "TransferingFileByAir"
 
+/** Big reads and writes: a received video is hundreds of megabytes, and 8 KB steps made its copy crawl. */
+private const val CopyBufferBytes = 256 * 1024
+
 /**
  * Keeps received files in Downloads/TransferingFileByAir (Android 10+, through MediaStore, no storage permission),
  * or in the app's own Downloads folder shared through a FileProvider on older versions. Either way the reference
@@ -76,7 +79,7 @@ internal class AndroidReceivedFileStore(context: Context) : ReceivedFileStore {
     private fun keepInAppFolder(source: Uri, name: String): Uri {
         val folder = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), FolderName).apply { mkdirs() }
         val file = uniqueFile(folder, name)
-        resolver.openInputStream(source)?.use { input -> file.outputStream().use { input.copyTo(it) } }
+        resolver.openInputStream(source)?.use { input -> file.outputStream().use { input.copyTo(it, CopyBufferBytes) } }
             ?: throw FileNotFoundException(source.toString())
         return FileProvider.getUriForFile(context, "${context.packageName}.received", file)
     }
@@ -85,7 +88,7 @@ internal class AndroidReceivedFileStore(context: Context) : ReceivedFileStore {
         val input = resolver.openInputStream(source) ?: throw FileNotFoundException(source.toString())
         input.use {
             val output = resolver.openOutputStream(target) ?: throw IOException("Couldn't write $target")
-            output.use { input.copyTo(it) }
+            output.use { input.copyTo(it, CopyBufferBytes) }
         }
     }
 

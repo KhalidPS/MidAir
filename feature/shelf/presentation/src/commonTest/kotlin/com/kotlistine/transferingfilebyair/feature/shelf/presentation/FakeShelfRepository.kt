@@ -40,10 +40,15 @@ class FakeShelfRepository : ShelfRepository {
     }
 
     companion object {
-        fun item(id: String, uri: String = "content://file/$id", name: String = "file-$id.pdf") = ShelfItem(
+        fun item(
+            id: String,
+            uri: String = "content://file/$id",
+            name: String = "file-$id.pdf",
+            mimeType: String = "application/pdf",
+        ) = ShelfItem(
             id = id,
             name = name,
-            mimeType = "application/pdf",
+            mimeType = mimeType,
             sizeBytes = 16_000,
             addedAtEpochMillis = 0,
             uri = uri,

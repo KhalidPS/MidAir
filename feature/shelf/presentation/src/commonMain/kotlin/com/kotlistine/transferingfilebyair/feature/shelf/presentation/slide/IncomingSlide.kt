@@ -44,8 +44,10 @@ import com.kotlistine.transferingfilebyair.core.designsystem.motion.Motion
 import com.kotlistine.transferingfilebyair.core.designsystem.motion.awaitFrames
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
+import com.kotlistine.transferingfilebyair.core.media.VideoSurface
 import com.kotlistine.transferingfilebyair.core.presentation.image.decodeToImageBitmapOrNull
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.feature.shelf.presentation.components.LocalCardVideo
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.IncomingCardUi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,12 +59,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.exp
 import kotlin.math.roundToInt
+import kotlin.time.TimeSource
 
-/** How quickly the drawn card catches up with the latest reported position (matched by the sender-side lead). */
-private const val FollowSmoothingSeconds = 0.03f
+/** How the drawn card's speed is measured, to carry it into the landing. */
+private const val DrawnVelocitySmoothingSeconds = 0.03f
+
+/** A let-go faster than this (pixels per second) is carried into the landing at this speed. */
+private const val MaxCarriedSpeedPx = 6000f
 
 /** How long the light takes to ripple out across the screen after a card arrives. */
 private const val WaveMillis = 1100
+
+/** How small a caught card is as it bursts out of the opened hand. */
+private const val EmergeFromScale = 0.15f
 private val IncomingElevation = 28.dp
 
 /** Every placed grid slot by key, so a received card can find where it lands. */
@@ -124,6 +133,15 @@ class IncomingSlideState internal constructor(
 
     /** 0 → 1 while the card flies from where it was let go into its slot. */
     internal val landing = Animatable(0f)
+
+    /** The let-go's momentum, on top of the landing: starts at the card's speed and dies out by the slot. */
+    private val momentum = Animatable(Offset.Zero, Offset.VectorConverter)
+
+    /** 0 → 1 while a card caught by an opened hand grows out of the palm (1 for every other card). */
+    private val emerge = Animatable(1f)
+
+    /** Caught from the air rather than slid in: no light at an edge, it came out of a hand. */
+    private var isCaught = false
     private val arrival = Animatable(0f)
     private val glow = Animatable(1f)
     private val wave = Animatable(1f)
@@ -137,9 +155,16 @@ class IncomingSlideState internal constructor(
 
     internal var containerSize = Size.Zero
 
-    private var target = Offset.Zero
-    private var targetTilt = 0f
-    private var targetArrival = 0f
+    /** The peer's moves, played back evenly. */
+    private val playback = MovePlayback()
+    private val clockOrigin = TimeSource.Monotonic.markNow()
+
+    /** Frame times on this phone's clock: frames are timed by another clock, this far from it. */
+    private var frameToClockMillis = Double.POSITIVE_INFINITY
+
+    /** How fast the card moves as drawn, once it has been drawn on [followedFrames] frames. */
+    private var drawnVelocity = Offset.Zero
+    private var followedFrames = 0
     private var followJob: Job? = null
     private var arrivalJob: Job? = null
     private var withdrawJob: Job? = null
@@ -149,7 +174,7 @@ class IncomingSlideState internal constructor(
 
     internal fun bloom(): Bloom? {
         val card = card ?: return null
-        if (!isShown) return null
+        if (!isShown || isCaught) return null
         val y = position.value.y + card.heightPx / 2f
         return Bloom(entryEdge, arrival.value * glow.value, y)
     }
@@ -163,9 +188,13 @@ class IncomingSlideState internal constructor(
     internal fun drawnRect(card: IncomingCardUi): Rect {
         val following = Rect(position.value, Size(card.widthPx, card.heightPx))
         val t = landing.value
-        if (t == 0f) return following
+        if (t == 0f) {
+            // A caught card grows out of the palm about its centre; every other card is at full size already.
+            val size = following.size * (EmergeFromScale + (1f - EmergeFromScale) * emerge.value)
+            return Rect(following.center - Offset(size.width / 2f, size.height / 2f), size).translate(momentum.value)
+        }
         landingTo()?.let { lastLandingTo = it }
-        return lerp(landingFrom, lastLandingTo, t)
+        return lerp(landingFrom, lastLandingTo, t).translate(momentum.value)
     }
 
     /**
@@ -182,7 +211,12 @@ class IncomingSlideState internal constructor(
         this.card = card
         picture = null
         isShown = false
+        isCaught = false
+        playback.start()
+        drawnVelocity = Offset.Zero
+        followedFrames = 0
         scope.launch {
+            emerge.snapTo(1f)
             tilt.snapTo(0f)
             turn.snapTo(0f)
             landing.snapTo(0f)
@@ -197,15 +231,38 @@ class IncomingSlideState internal constructor(
         }
     }
 
-    fun onMoved(id: String, leftPx: Float, topPx: Float, tiltDegrees: Float, arrival: Float, entryEdge: ExitEdge) {
+    fun onMoved(
+        id: String,
+        leftPx: Float,
+        topPx: Float,
+        velocityXPxPerS: Float,
+        velocityYPxPerS: Float,
+        tiltDegrees: Float,
+        arrival: Float,
+        entryEdge: ExitEdge,
+        sentAtMillis: Long,
+        leadMillis: Float,
+    ) {
         if (card?.id != id || arrivalJob != null) return
-        target = Offset(leftPx, topPx)
-        targetTilt = tiltDegrees
-        targetArrival = arrival
+        val receivedAt = clockMillis()
+        playback.add(
+            MoveSample(
+                // A peer that doesn't say when is played back by arrival, as before.
+                sentAtMillis = if (sentAtMillis > 0L) sentAtMillis.toDouble() else receivedAt,
+                receivedAtMillis = receivedAt,
+                x = leftPx,
+                y = topPx,
+                vx = velocityXPxPerS,
+                vy = velocityYPxPerS,
+                tilt = tiltDegrees,
+                arrival = arrival,
+            ),
+            leadMillis = leadMillis.toDouble(),
+        )
         this.entryEdge = entryEdge
         if (!isShown) {
             isShown = true
-            scope.launch { position.snapTo(target) }
+            scope.launch { position.snapTo(Offset(leftPx, topPx)) }
         }
         if (followJob?.isActive != true) followJob = scope.launch { follow() }
     }
@@ -230,11 +287,14 @@ class IncomingSlideState internal constructor(
 
     /**
      * The sender let go past the edge: the light ripples out from where the card came in, and the card flies
-     * straight into its slot ([slotOf]), straightening as it goes, then the slot takes over from it.
+     * straight into its slot ([slotOf]), straightening as it goes, then the slot takes over from it. It carries on
+     * at the speed it was drawn moving (or, if it never was, the speed it was let go at, [velocity]), so the flight
+     * across the edge is one motion.
      */
-    fun onArrived(id: String) {
+    fun onArrived(id: String, velocity: Offset = Offset.Zero) {
         val card = card?.takeIf { it.id == id } ?: return
         followJob?.cancel()
+        val carried = (if (followedFrames >= 2) drawnVelocity else velocity).limitedTo(MaxCarriedSpeedPx)
         flyingId = id
         arrivalJob = scope.launch {
             try {
@@ -248,7 +308,7 @@ class IncomingSlideState internal constructor(
                 val edge = entryEdge
                 val centerY = position.value.y + card.heightPx / 2f
                 scope.launch { ripple(edge, centerY) }
-                flyIntoSlot(card)
+                flyIntoSlot(card, carried)
             } finally {
                 // Even when cut short, the slot shows first and the card goes a couple of frames later: no gap.
                 withContext(NonCancellable) {
@@ -260,7 +320,45 @@ class IncomingSlideState internal constructor(
         }
     }
 
-    private suspend fun flyIntoSlot(card: IncomingCardUi) {
+    /**
+     * The card was caught by a hand opening in front of this phone, at [center] (overlay pixels): it bursts out of the
+     * palm, then flies into its slot like a card that slid in. A video it carries plays as it comes out.
+     */
+    fun onCaught(id: String, center: Offset) {
+        val card = card?.takeIf { it.id == id } ?: return
+        followJob?.cancel()
+        withdrawJob?.cancel()
+        withdrawJob = null
+        flyingId = id
+        isCaught = true
+        arrivalJob = scope.launch {
+            try {
+                // Kept whole on screen, wherever the camera thought the hand was.
+                val halfWidth = card.widthPx / 2f
+                val halfHeight = card.heightPx / 2f
+                val x = center.x.coerceIn(halfWidth, maxOf(halfWidth, containerSize.width - halfWidth))
+                val y = center.y.coerceIn(halfHeight, maxOf(halfHeight, containerSize.height - halfHeight))
+                position.snapTo(Offset(x - halfWidth, y - halfHeight))
+                emerge.snapTo(0f)
+                isShown = true
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                coroutineScope {
+                    launch { emerge.animateTo(1f, Motion.pop()) }
+                    launch { arrival.animateTo(1f, tween(240, easing = FastOutSlowInEasing)) }
+                }
+                flyIntoSlot(card, carried = Offset.Zero)
+            } finally {
+                // Even when cut short, the slot shows first and the card goes a couple of frames later: no gap.
+                withContext(NonCancellable) {
+                    if (flyingId == card.id) flyingId = null
+                    awaitFrames(2)
+                    clear(card.id)
+                }
+            }
+        }
+    }
+
+    private suspend fun flyIntoSlot(card: IncomingCardUi, carried: Offset) {
         // Wait (briefly) for the grid to lay the new slot out.
         var destination: Rect? = null
         for (frame in 0 until 60) {
@@ -276,8 +374,10 @@ class IncomingSlideState internal constructor(
         landingFrom = Rect(position.value, Size(card.widthPx, card.heightPx))
         lastLandingTo = destination
         landingTo = { slotOf(card.id) }
+        momentum.snapTo(Offset.Zero)
         coroutineScope {
             launch { landing.animateTo(1f, Motion.preciseLanding()) }
+            launch { momentum.animateTo(Offset.Zero, Motion.preciseLanding(), initialVelocity = carried) }
             launch { turn.animateTo(0f, Motion.preciseLanding()) }
             launch { tilt.animateTo(0f, Motion.preciseLanding()) }
             launch { arrival.animateTo(1f, tween(120)) }
@@ -301,24 +401,50 @@ class IncomingSlideState internal constructor(
         card = null
         picture = null
         isShown = false
+        isCaught = false
         landingTo = { null }
+        drawnVelocity = Offset.Zero
+        followedFrames = 0
+        emerge.snapTo(1f)
+        momentum.snapTo(Offset.Zero)
         landing.snapTo(0f)
         arrival.snapTo(0f)
         glow.snapTo(1f)
     }
 
-    /** Eases the drawn card toward the latest report every frame, hiding the uneven arrival of messages. */
+    /** Draws the card where [playback] has it on every frame, and measures how fast it moves as drawn. */
     private suspend fun follow() {
-        var lastNanos = withFrameNanos { it }
+        var lastMillis = Double.NaN
+        var last = position.value
         while (true) {
-            val now = withFrameNanos { it }
-            val dt = ((now - lastNanos) / 1_000_000_000f).coerceAtLeast(0.001f)
-            lastNanos = now
-            val k = 1f - exp(-dt / FollowSmoothingSeconds)
-            position.snapTo(position.value + (target - position.value) * k)
-            tilt.snapTo(tilt.value + (targetTilt - tilt.value) * k)
-            arrival.snapTo(arrival.value + (targetArrival - arrival.value) * k)
+            val now = frameMillis(withFrameNanos { it })
+            val pose = playback.poseAt(now) ?: continue
+            val drawn = Offset(pose.x, pose.y)
+            if (!lastMillis.isNaN()) {
+                val dt = ((now - lastMillis) / 1000.0).toFloat().coerceAtLeast(0.001f)
+                val k = 1f - exp(-dt / DrawnVelocitySmoothingSeconds)
+                drawnVelocity += ((drawn - last) / dt - drawnVelocity) * k
+                followedFrames++
+            }
+            lastMillis = now
+            last = drawn
+            position.snapTo(drawn)
+            tilt.snapTo(pose.tilt)
+            arrival.snapTo(pose.arrival)
         }
+    }
+
+    private fun clockMillis(): Double = clockOrigin.elapsedNow().inWholeMicroseconds / 1000.0
+
+    /**
+     * [frameNanos] on [clockMillis]'s clock. Frame code runs a little after its frame time, never before, so the
+     * smallest difference seen between the two clocks is how far apart they are.
+     */
+    private fun frameMillis(frameNanos: Long): Double {
+        val frame = frameNanos / 1_000_000.0
+        val apart = clockMillis() - frame
+        if (apart < frameToClockMillis) frameToClockMillis = apart
+        return frame + frameToClockMillis
     }
 }
 
@@ -332,11 +458,15 @@ internal fun rememberIncomingSlideState(): IncomingSlideState {
 /**
  * The peer's card on this screen: its picture at the sender's physical size, moved only by its layer. Place it at
  * the overlay's absolute top-left (also in right-to-left layouts): its layer offsets are in overlay pixels.
+ *
+ * When the card is the peer's playing video, this half plays it too, on the same frame (the picture shows until the
+ * first frame arrives).
  */
 @Composable
 internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifier) {
     val card = state.card ?: return
     val picture = state.picture
+    val video = LocalCardVideo.current?.takeIf { it.itemId == card.id }
     Box(
         modifier = modifier
             .layout { measurable, _ ->
@@ -366,11 +496,26 @@ internal fun IncomingCard(state: IncomingSlideState, modifier: Modifier = Modifi
             .background(AirColors.SurfaceRaised),
         contentAlignment = Alignment.Center,
     ) {
-        if (picture != null) {
-            Image(bitmap = picture, contentDescription = card.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        if (video != null) {
+            VideoSurface(
+                engine = video.engine,
+                isActive = true,
+                modifier = Modifier.fillMaxSize(),
+                placeholder = { CardPicture(picture, card.name) },
+            )
         } else {
-            CardName(card.name)
+            CardPicture(picture, card.name)
         }
+    }
+}
+
+/** The card as the sender drew it, or its name when there is no picture. */
+@Composable
+private fun CardPicture(picture: ImageBitmap?, name: String) {
+    if (picture != null) {
+        Image(bitmap = picture, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    } else {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CardName(name) }
     }
 }
 
@@ -385,4 +530,10 @@ internal fun CardName(name: String, modifier: Modifier = Modifier) {
         overflow = TextOverflow.MiddleEllipsis,
         modifier = modifier.padding(12.dp),
     )
+}
+
+/** The same direction, no faster than [maxSpeed]. */
+private fun Offset.limitedTo(maxSpeed: Float): Offset {
+    val speed = getDistance()
+    return if (speed > maxSpeed) this * (maxSpeed / speed) else this
 }

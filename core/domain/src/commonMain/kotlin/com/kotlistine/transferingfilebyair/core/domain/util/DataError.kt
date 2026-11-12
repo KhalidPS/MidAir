@@ -7,6 +7,12 @@ sealed interface DataError : Error {
         FILE_NOT_FOUND,
         PERMISSION_DENIED,
         DISK_FULL,
+
+        /** The file is in a format this device can't read (a video codec it has no decoder for). */
+        UNSUPPORTED_FORMAT,
+
+        /** The camera can't be used to watch for air gestures (not allowed, missing, or busy). */
+        CAMERA_UNAVAILABLE,
         UNKNOWN,
     }
 
