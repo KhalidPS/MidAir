@@ -1,7 +1,7 @@
 # Pieces over Wi-Fi Direct: the full version of the direct path
 
 Written 12 Nov 2026. Branch: `feature/2026-11-12/pieces-over-wifi-direct`, off `main`.
-**Status: built, unit tests pass, compared with `main` on the phones (Section 7). Verdict: not ready to merge.**
+**Status: built, unit tests pass, two rounds compared with `main` on the phones (Section 7). Round two is promising; not merged.**
 
 Read `docs/LIVE_VIDEO_HISTORY.md` first if the words below are new (piece, lift, pull-back, index, Nearby, Wi-Fi
 Direct group).
@@ -208,8 +208,42 @@ What this says:
   (4.9 against 4.9–5.5 MB/s), so the piece size is not what limits a fetch.
 - **Small numbers:** one run of twelve lifts on each build, one after the other, one drop each.
 
-**Verdict: not ready to merge.** It is faster for files and no better for lifts, and it costs card smoothness, which
-is the product. What would have to change is in Section 8.
+**Verdict of that run: not ready to merge.** It was faster for files and no better for lifts, and it cost card
+smoothness, which is the product.
+
+### Round two (15:22), commit `291989c`
+
+Four changes, made because of the run above:
+
+- **The card messages go first.** Their connection is marked "expedited" (`Socket.trafficClass = 0xB8`), which
+  Wi-Fi sends from its voice queue, and a piece connection may queue at most 128 KB to send.
+- **A read over Wi-Fi starts with a 256 KB piece**, not 1 MB (`FirstWifiPieceBytes`). The pieces a starting player
+  glances at are mostly read again a moment later, so they are not cancelled; they are made smaller.
+- **An offered listener is tried again** when this phone's own address changes, and for a little longer.
+- **A fetch is back on 1 MB pieces.**
+
+Fifteen slides on B, nine of them of a playing video (the 676 MB one this time; the runs above used the 567 MB one):
+
+| Measure | `main` (14:32) | Round one (14:40) | Round two (15:22) |
+| --- | --- | --- | --- |
+| A piece, typical time to open | 520 ms | 112 ms | 80 ms (777 pieces) |
+| First lifts, first frame | 5: 1.9–3.6 s, typical 2.6 s | 3: 2.3, 4.1, 4.4 s | 3: 0.94, 1.08, 2.50 s |
+| Second lifts, first frame | 7: 0.33–1.19 s, typical 0.46 s | 7: 0.35–0.60 s, and 2 slow | 6: 0.38–0.53 s, typical 0.43 s |
+| Lifts that jumped | 1 of 12 | 4 of 12 | 0 of 9 |
+| Card lag, typical per slide | 28–47 ms | 52–79 ms | 40–55 ms |
+| Card lag, worst 1 in 20 moves per slide | 84–171 ms | 137–461 ms | 96–477 ms |
+| Pauses of the card messages (over 0.3 s) | 3 in 12 slides | 13 in 12 slides | 4 in 15 slides |
+| The file after a drop | 3.9 MB/s | 4.9 MB/s | 6.5 MB/s (600 MB in 92 s) |
+
+- **Round two is better than `main` on lifts and files, and about level with it on the card.** The typical card lag
+  is back near `main`'s; its worst moves are still a little worse in some slides.
+- **Which change did what is not separated.** All four went in together.
+- **Small numbers, and not a clean comparison:** three first lifts; another video than in the two runs before; the
+  runs were 40 minutes apart on a link whose speed changed during the day.
+- **Before this run the phones did not link for about two minutes** after the install (A was not searching). It did
+  not happen on the four installs before. Cause unknown; it may or may not have to do with this build.
+
+**Verdict now: promising, worth one repeat of the side-by-side run on the same video before merging.**
 
 ### Not tested
 
@@ -220,13 +254,10 @@ Wi-Fi, and what happens when the Wi-Fi connection breaks in the middle of a piec
 
 ## 8. Next, if it pays off
 
-- **Give the card the radio first.** While a card is in the air, ask for one piece at a time, or pace the bytes, and
-  measure the card lag again. This is the condition for merging.
-- **Stop a piece nobody wants any more** by closing its connection (safe here, never safe over Nearby). On a first
-  lift most of the 12 to 13 pieces read are ones the player left after a glance; not sending them is what could
-  make a first lift faster.
-- **Connect more robustly.** In the 14:40 run B needed three failed tries and about ten seconds to reach A's
-  listener, close to where the retries end. Try again whenever this phone's own address changes.
-- Larger pieces for the fetch were tried (4 MB) and brought nothing; the size can go back to 1 MB.
+- **Repeat the side-by-side run** on the same video, `main` and round two back to back, with more first lifts.
+- **Test the fallbacks:** a lift on Bluetooth before Wi-Fi Direct is up, one phone on an older build, and the Wi-Fi
+  connection breaking in the middle of a piece.
+- **Find out why the phones did not link** for two minutes before the round-two run.
+- Larger pieces for the fetch were tried (4 MB) and brought nothing.
 - Hold the Wi-Fi radio awake while a card is in the air (a low-latency Wi-Fi lock), if the round trip turns out to
   be the radio's power saving.
