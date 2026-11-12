@@ -10,8 +10,8 @@ a desktop and iOS receiver can be added later.
 
 ## Git workflow (mandatory)
 
-- **Every feature or change starts on its own branch off `master`**: `feature/<slug>`, `fix/<slug>`,
-  `chore/<slug>`. Never commit directly to `master`. Don't merge without the user's go-ahead.
+- **Every feature or change starts on its own branch off `main`**: `feature/<slug>`, `fix/<slug>`,
+  `chore/<slug>`. Never commit directly to `main`. Don't merge without the user's go-ahead.
 - **Commit messages use Conventional Commits** (`feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `docs:`).
 - **Commit messages must NOT contain any AI attribution**: no `Co-Authored-By` trailer, and no mention
   of Claude or AI in any form.
