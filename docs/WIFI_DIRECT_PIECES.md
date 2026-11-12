@@ -1,7 +1,7 @@
 # Pieces over Wi-Fi Direct: the full version of the direct path
 
 Written 12 Nov 2026. Branch: `feature/2026-11-12/pieces-over-wifi-direct`, off `main`.
-**Status: built, unit tests pass, not yet tested on the phones. Section 7 is filled in after the phone test.**
+**Status: built, unit tests pass, tested once on the phones (Section 7). Not merged.**
 
 Read `docs/LIVE_VIDEO_HISTORY.md` first if the words below are new (piece, lift, pull-back, index, Nearby, Wi-Fi
 Direct group).
@@ -121,9 +121,65 @@ piece opened in 0.1–1.1 s; card lag typical 37–48 ms.
 
 ---
 
-## 7. Phone results
+## 7. Phone results (12 Nov 2026, one afternoon, one pair of phones)
 
-Not tested yet.
+A = M2101K6G, B = Redmi Note 8, both on the Wi-Fi Direct group. Times are B's clock.
+
+### A bug found by the first run (14:08), fixed in `9844f77`
+
+B never used the new path: all 434 of its pieces went over Nearby. The group's owner (A) offers its listeners about
+0.3 s before B has joined the group, and offers them once; B's connect failed and was never tried again. The same
+was true, before this branch, of B's card messages to A. A failed connect is now tried again over the next seconds.
+
+### One piece
+
+| Path | Run | Pieces | Typical time to open | 9 in 10 under | Slowest |
+| --- | --- | --- | --- | --- | --- |
+| Nearby, B reading from A | 14:08 | 434 | 622 ms | 1,209 ms | 2,813 ms |
+| Wi-Fi, A reading from B | 14:08 | 44 | 73 ms | 113 ms | 281 ms |
+| Wi-Fi, B reading from A | 14:15, after the fix | 1,189 | 94 ms | 197 ms | 741 ms |
+
+No piece went over Nearby in the second run, and none broke.
+
+### Lifts on B, second run (4 lifts, no jump in any)
+
+| Lift | First frame after |
+| --- | --- |
+| First lift of video 14 | 2.3 s |
+| Second lift | 0.49 s |
+| Second lift | 0.46 s |
+| Second lift | 0.47 s |
+
+- **The first lift did not get faster** (one lift; 1.4–2.8 s on 11 Nov). Its pieces each opened in about 0.1 s, but
+  the player read about ten of them, mostly one after the other, before its first frame. The wait is now the bytes
+  themselves and the player's hops, not the requests.
+- **Second lifts were steady** at just under half a second. On Nearby the same morning they ranged from 0.3 to 1.5 s.
+
+### Whole files after a drop
+
+| File | Size fetched | Time | Speed |
+| --- | --- | --- | --- |
+| Video 14, on B | 470 MB (97 MB were already here) | 96.3 s | 4.9 MB/s |
+| Video 2, on B | 676 MB | 123.8 s | 5.5 MB/s |
+| Video 10, on A | 42.6 MB | 8.9 s | 4.8 MB/s |
+
+- The two fetches on B overlapped for about a minute, so the link carried more than one file's speed then: 1,146 MB
+  in 159 s, about 7.2 MB/s.
+- **No proof that whole files are faster.** There is no fetch over Nearby from the same day to compare with. The
+  only earlier figure is "the link carried about 4.5 to 5.5 MB/s" (report 05, 11 Nov), which is the same range.
+- A fetch asks for 3 pieces of 1 MB and waits for all three before the next round. That, not the link, may be what
+  holds it near 5 MB/s. Larger pieces are the first thing to try (Section 8).
+
+### Cards
+
+- Card lag typical 35–56 ms in six slides (37–48 ms on 11 Nov): no change.
+- A card slid across while a file was arriving: the fetch held back each time (0.6–3.0 s), as before.
+- One pause of the card messages (333 ms) in the run, at a lift.
+
+### Not tested
+
+A lift on Bluetooth before Wi-Fi Direct is up, a phone on an older build, a long video, the phones off the home
+Wi-Fi, and what happens when the Wi-Fi connection breaks in the middle of a piece.
 
 ---
 
