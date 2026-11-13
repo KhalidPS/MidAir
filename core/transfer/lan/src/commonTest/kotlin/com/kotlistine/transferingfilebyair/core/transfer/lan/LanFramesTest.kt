@@ -23,6 +23,11 @@ class LanFramesTest {
             LanFrame.FileCancel(transferId = Long.MAX_VALUE),
             LanFrame.Placement(side = ExitEdge.LEFT, verticalOffsetMm = -42.5f),
             LanFrame.Placement(side = ExitEdge.RIGHT, verticalOffsetMm = 0f),
+            LanFrame.MediaRead(requestId = -5, fileId = "item-12", offset = 3_000_000_000, length = 262_144, forKeeps = true),
+            LanFrame.MediaRead(requestId = 6, fileId = "", offset = 0, length = 1, forKeeps = false),
+            LanFrame.MediaDone(requestId = 9, ok = true),
+            LanFrame.MediaDone(requestId = 9, ok = false),
+            LanFrame.MediaCancel(requestId = Long.MIN_VALUE),
         )
         frames.forEach { frame -> assertThat(decodeLanFrame(frame.encode())).isEqualTo(frame) }
     }
@@ -38,6 +43,10 @@ class LanFramesTest {
         val auth = decodeLanFrame(LanFrame.Auth(AuthMode.TRUSTED, byteArrayOf(9)).encode()) as LanFrame.Auth
         assertThat(auth.mode).isEqualTo(AuthMode.TRUSTED)
         assertThat(auth.mac.toList()).isEqualTo(listOf<Byte>(9))
+
+        val data = decodeLanFrame(LanFrame.MediaData(-3, byteArrayOf(4, 5)).encode()) as LanFrame.MediaData
+        assertThat(data.requestId).isEqualTo(-3L)
+        assertThat(data.bytes.toList()).isEqualTo(listOf<Byte>(4, 5))
     }
 
     @Test
@@ -48,6 +57,12 @@ class LanFramesTest {
         // A chunk claiming more bytes than it carries.
         val truncated = LanFrame.FileChunk(1, ByteArray(10)).encode().dropLast(3).toByteArray()
         assertThat(decodeLanFrame(truncated)).isNull()
+    }
+
+    @Test
+    fun `a read of nothing, or from before the start, is not read`() {
+        assertThat(decodeLanFrame(LanFrame.MediaRead(1, "a", offset = 0, length = 0, forKeeps = false).encode())).isNull()
+        assertThat(decodeLanFrame(LanFrame.MediaRead(1, "a", offset = -1, length = 10, forKeeps = false).encode())).isNull()
     }
 
     @Test

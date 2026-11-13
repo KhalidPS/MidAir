@@ -7,6 +7,7 @@ import com.kotlistine.transferingfilebyair.core.transfer.data.SlideMessageCodec
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
+import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
@@ -19,7 +20,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -123,6 +126,23 @@ class LanPeerLink(
 
     /** The laptop places the phone (its Phone menu): no swipe across the two screens. */
     override val linesUpBySwipe: Boolean = false
+
+    private val mediaChannel = LanMediaChannel(files, scope) {
+        session?.let { link ->
+            withTimeoutOrNull(FilesConnectionWaitMillis) {
+                try {
+                    link.files.await()
+                } catch (e: CancellationException) {
+                    // The link ended (its files' connection was called off), unless the caller itself was.
+                    currentCoroutineContext().ensureActive()
+                    null
+                }
+            }
+        }
+    }
+
+    /** Reads the other device's files a piece at a time, over the files' connection ([LanMediaChannel]). */
+    override val media: MediaChannel = mediaChannel
 
     override val transport: Transport = object : Transport {
         override val incoming: Flow<SlideMessage> = received
@@ -568,6 +588,7 @@ class LanPeerLink(
         session = null
         link.close()
         abandonTransfers()
+        mediaChannel.onLinkDropped()
         _state.value = LinkState.Idle
         log("Link with ${link.peer.name} ended")
         if (reconnectAfter) refreshPresence()
@@ -636,7 +657,9 @@ class LanPeerLink(
                 incoming.remove(frame.transferId)?.target?.discard?.invoke()
                 transfer(frame.transferId).complete(Result.Failure(DataError.Network.CANCELLED))
             }
-            LanFrame.Heartbeat, is LanFrame.Auth, is LanFrame.FileStart, is LanFrame.FileChunk, is LanFrame.FileEnd -> Unit
+            LanFrame.Heartbeat, is LanFrame.Auth, is LanFrame.FileStart, is LanFrame.FileChunk, is LanFrame.FileEnd,
+            is LanFrame.MediaRead, is LanFrame.MediaData, is LanFrame.MediaDone, is LanFrame.MediaCancel,
+            -> Unit
         }
     }
 
@@ -717,6 +740,8 @@ class LanPeerLink(
                             connection.sendQuietly(LanFrame.FileCancel(frame.transferId))
                         }
                     }
+                    is LanFrame.MediaRead, is LanFrame.MediaData, is LanFrame.MediaDone, is LanFrame.MediaCancel ->
+                        mediaChannel.onFrame(channel, frame)
                     else -> Unit
                 }
             }

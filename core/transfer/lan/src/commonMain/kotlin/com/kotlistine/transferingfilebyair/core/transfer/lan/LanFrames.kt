@@ -123,6 +123,30 @@ internal sealed interface LanFrame {
      * how far its screen top sits below the laptop's ([verticalOffsetMm], the receiver's view of the line-up).
      */
     data class Placement(val side: ExitEdge, val verticalOffsetMm: Float) : LanFrame
+
+    /**
+     * Asks the other end for [length] bytes of a file it shared, from [offset]: what a video player or a pull of the
+     * whole file reads, a piece at a time. [forKeeps]: the file is being taken whole (it counts as served).
+     */
+    data class MediaRead(
+        val requestId: Long,
+        val fileId: String,
+        val offset: Long,
+        val length: Int,
+        val forKeeps: Boolean,
+    ) : LanFrame
+
+    /** Some of the bytes asked for in [requestId], in order. */
+    class MediaData(val requestId: Long, val bytes: ByteArray) : LanFrame
+
+    /**
+     * All of [requestId] went (fewer bytes than asked: the file ended), or, not [ok], none can: the file isn't shared
+     * (any more) or couldn't be read.
+     */
+    data class MediaDone(val requestId: Long, val ok: Boolean) : LanFrame
+
+    /** The reader no longer wants [requestId]: what is still on its way is dropped. */
+    data class MediaCancel(val requestId: Long) : LanFrame
 }
 
 private const val AuthType = 1
@@ -138,6 +162,10 @@ private const val FileEndType = 10
 private const val FileDoneType = 11
 private const val FileCancelType = 12
 private const val PlacementType = 13
+private const val MediaReadType = 14
+private const val MediaDataType = 15
+private const val MediaDoneType = 16
+private const val MediaCancelType = 17
 
 internal fun LanFrame.encode(): ByteArray = ByteWriter().apply {
     when (val frame = this@encode) {
@@ -185,6 +213,28 @@ internal fun LanFrame.encode(): ByteArray = ByteWriter().apply {
             byte(frame.side.ordinal)
             int(frame.verticalOffsetMm.toRawBits())
         }
+        is LanFrame.MediaRead -> {
+            byte(MediaReadType)
+            long(frame.requestId)
+            string(frame.fileId)
+            long(frame.offset)
+            int(frame.length)
+            byte(if (frame.forKeeps) 1 else 0)
+        }
+        is LanFrame.MediaData -> {
+            byte(MediaDataType)
+            long(frame.requestId)
+            bytes(frame.bytes)
+        }
+        is LanFrame.MediaDone -> {
+            byte(MediaDoneType)
+            long(frame.requestId)
+            byte(if (frame.ok) 1 else 0)
+        }
+        is LanFrame.MediaCancel -> {
+            byte(MediaCancelType)
+            long(frame.requestId)
+        }
     }
 }.toByteArray()
 
@@ -209,6 +259,16 @@ internal fun decodeLanFrame(bytes: ByteArray): LanFrame? = runCatching {
             val offset = Float.fromBits(reader.int())
             if (offset.isFinite()) LanFrame.Placement(side, offset) else null
         }
+        MediaReadType -> LanFrame.MediaRead(
+            requestId = reader.long(),
+            fileId = reader.string(),
+            offset = reader.long(),
+            length = reader.int(),
+            forKeeps = reader.byte() == 1,
+        ).takeIf { it.offset >= 0 && it.length > 0 }
+        MediaDataType -> LanFrame.MediaData(reader.long(), reader.bytes())
+        MediaDoneType -> LanFrame.MediaDone(reader.long(), reader.byte() == 1)
+        MediaCancelType -> LanFrame.MediaCancel(reader.long())
         else -> null
     }
     frame?.takeIf { reader.isDone }

@@ -4,12 +4,14 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
+import com.kotlistine.transferingfilebyair.core.domain.util.ByteStream
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.net.URI
@@ -139,6 +142,74 @@ class LanPeerLinkTest {
     }
 
     @Test
+    fun `a shared file is read from any byte on, both ways`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        listOf(phone to laptop, laptop to phone).forEach { (owner, reader) ->
+            val original = randomFile(900_000)
+            owner.media.share("video", original.toURI().toString())
+            val opened = withTimeout(Timeout) { reader.media.open("video", offset = 300_001) }
+            val stream = (opened as Result.Success).data
+            val bytes = withTimeout(Timeout) { withContext(Dispatchers.IO) { stream.readAll() } }
+            stream.close()
+            assertThat(bytes.toList()).isEqualTo(original.readBytes().drop(300_001))
+        }
+    }
+
+    @Test
+    fun `a file is pulled whole, and the owner counts what went`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        val original = randomFile(1_300_000)
+        phone.media.share("item-1", original.toURI().toString())
+        val pulled = withTimeout(Timeout) { laptop.media.fetch("item-1", original.length()) }
+        val kept = File(URI((pulled as Result.Success).data))
+        assertThat(kept.readBytes().toList()).isEqualTo(original.readBytes().toList())
+        assertThat(phone.media.servedBytes("item-1")).isEqualTo(original.length())
+    }
+
+    @Test
+    fun `a file that isn't shared can't be read`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        val original = randomFile(10_000)
+        phone.media.share("item-1", original.toURI().toString())
+        phone.media.unshare("item-1")
+        val pulled = withTimeout(Timeout) { laptop.media.fetch("item-1", original.length()) }
+        assertThat(pulled).isEqualTo(Result.Failure(DataError.Network.DISCONNECTED))
+    }
+
+    @Test
+    fun `a pull asks for nothing while a card is in the air`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        val original = randomFile(600_000)
+        phone.media.share("item-1", original.toURI().toString())
+        laptop.media.holdFetches(true)
+        val pulling = async { laptop.media.fetch("item-1", original.length()) }
+        kotlinx.coroutines.delay(300)
+        assertThat(phone.media.servedBytes("item-1")).isEqualTo(0L)
+        laptop.media.holdFetches(false)
+        val pulled = withTimeout(Timeout) { pulling.await() }
+        assertThat(File(URI((pulled as Result.Success).data)).length()).isEqualTo(original.length())
+    }
+
+    @Test
+    fun `once the file is kept here, a stream reads on from this copy`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        val original = randomFile(2_000_000)
+        phone.media.share("video", original.toURI().toString())
+        val stream = (withTimeout(Timeout) { laptop.media.open("video", offset = 0) } as Result.Success).data
+        val start = withContext(Dispatchers.IO) { stream.readExactly(1_000) }
+        assertThat(start.toList()).isEqualTo(original.readBytes().take(1_000))
+        // The copy kept here differs, so where the bytes come from shows; the phone no longer serves it.
+        val copy = File(folder, "kept.bin").apply { writeBytes(ByteArray(2_000_000) { 7 }) }
+        laptop.media.settle("video", copy.toURI().toString())
+        phone.media.unshare("video")
+        val rest = withTimeout(Timeout) { withContext(Dispatchers.IO) { stream.readAll() } }
+        stream.close()
+        // What was already on its way may still come from the phone; the end comes from the copy.
+        assertThat(rest.size).isEqualTo(1_999_000)
+        assertThat(rest.takeLast(100).toSet()).isEqualTo(setOf<Byte>(7))
+    }
+
+    @Test
     fun `a stopped file fails on both ends`() = runBlocking<Unit> {
         val (laptop, phone) = pair()
         val original = File(folder, "big.bin").apply { writeBytes(Random.nextBytes(20_000_000)) }
@@ -187,6 +258,30 @@ class LanPeerLinkTest {
     }
 
     /** Pairs a laptop and a phone the way two users would: the phone asks, both accept the code. */
+    private fun randomFile(size: Int): File =
+        File(folder, "original-${Random.nextInt()}.bin").apply { writeBytes(Random.nextBytes(size)) }
+
+    private fun ByteStream.readAll(): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(32 * 1024)
+        while (true) {
+            val read = read(buffer, 0, buffer.size)
+            if (read < 0) return out.toByteArray()
+            out.write(buffer, 0, read)
+        }
+    }
+
+    private fun ByteStream.readExactly(count: Int): ByteArray {
+        val bytes = ByteArray(count)
+        var at = 0
+        while (at < count) {
+            val read = read(bytes, at, count - at)
+            check(read > 0)
+            at += read
+        }
+        return bytes
+    }
+
     private suspend fun pair(beforeLinking: (laptop: LanPeerLink) -> Unit = {}): Pair<LanPeerLink, LanPeerLink> {
         val laptop = link("laptop")
         val phone = link("phone")
