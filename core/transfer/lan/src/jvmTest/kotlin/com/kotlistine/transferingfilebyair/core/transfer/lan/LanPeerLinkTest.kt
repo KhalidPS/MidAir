@@ -203,11 +203,10 @@ class LanPeerLinkTest {
         phone.accept(onPhone.peer)
         withTimeout(Timeout) { laptop.state.first { it is LinkState.Connected } }
         withTimeout(Timeout) { phone.state.first { it is LinkState.Connected } }
-        // The key is handed out right after linking up.
+        // The key is handed out right after linking up. Read from each link's own memory: a second one on the same
+        // file could read it between the old one's removal and the new one's rename (Windows), and write its own.
         withTimeout(Timeout) {
-            while (LanMemory(File(folder, "phone/link.properties")).peer == null ||
-                LanMemory(File(folder, "laptop/link.properties")).peer == null
-            ) {
+            while (memories.getValue("phone").peer == null || memories.getValue("laptop").peer == null) {
                 kotlinx.coroutines.delay(20)
             }
         }
