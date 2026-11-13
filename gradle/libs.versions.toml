@@ -37,6 +37,8 @@ mediapipeTasks = "0.10.35"
 desktopJvmTarget = "17"
 jmdns = "3.6.5"
 zxing = "3.5.4"
+javacv = "1.5.11"
+bytedecoFfmpeg = "7.1-1.5.11"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -60,6 +62,9 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "kotlinxCoroutines" }
 jmdns = { group = "org.jmdns", name = "jmdns", version.ref = "jmdns" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+bytedeco-javacv = { group = "org.bytedeco", name = "javacv", version.ref = "javacv" }
+bytedeco-javacpp = { group = "org.bytedeco", name = "javacpp", version.ref = "javacv" }
+bytedeco-ffmpeg = { group = "org.bytedeco", name = "ffmpeg", version.ref = "bytedecoFfmpeg" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
