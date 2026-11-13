@@ -1,7 +1,7 @@
-package com.kotlistine.transferingfilebyair.core.transfer.nearby
+package com.kotlistine.transferingfilebyair.core.transfer.data
 
 /** The bytes of a file from [start] (included) to [end] (excluded). */
-internal data class ByteSpan(val start: Long, val end: Long) {
+data class ByteSpan(val start: Long, val end: Long) {
     val length: Long get() = end - start
 }
 
@@ -9,7 +9,7 @@ internal data class ByteSpan(val start: Long, val end: Long) {
  * The parts of a file of [size] bytes that none of [have] cover, in file order, cut into spans of at most [maxBytes]
  * (what one request may ask for). [have] may overlap, and may reach past the end.
  */
-internal fun missingSpans(size: Long, have: List<ByteSpan>, maxBytes: Long): List<ByteSpan> {
+fun missingSpans(size: Long, have: List<ByteSpan>, maxBytes: Long): List<ByteSpan> {
     require(maxBytes > 0)
     val missing = mutableListOf<ByteSpan>()
     var cursor = 0L
@@ -22,13 +22,13 @@ internal fun missingSpans(size: Long, have: List<ByteSpan>, maxBytes: Long): Lis
 }
 
 /** How many of the bytes of a file of [size] bytes [have] cover, counting overlaps once. */
-internal fun coveredBytes(size: Long, have: List<ByteSpan>): Long = merged(have, size).sumOf { it.length }
+fun coveredBytes(size: Long, have: List<ByteSpan>): Long = merged(have, size).sumOf { it.length }
 
 /**
  * How to put a file of [size] bytes together from [have]: for each part of the file in order, the index in [have] to
  * copy it from, and the part. Null while any byte is missing.
  */
-internal fun assemblyPlan(size: Long, have: List<ByteSpan>): List<Pair<Int, ByteSpan>>? {
+fun assemblyPlan(size: Long, have: List<ByteSpan>): List<Pair<Int, ByteSpan>>? {
     val plan = mutableListOf<Pair<Int, ByteSpan>>()
     var cursor = 0L
     while (cursor < size) {

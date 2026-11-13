@@ -1,5 +1,7 @@
 package com.kotlistine.transferingfilebyair.core.transfer.nearby
 
+import com.kotlistine.transferingfilebyair.core.transfer.data.ByteSpan
+
 /** How many bytes say what a box is and how long: enough for one with a 64-bit length. */
 internal const val Mp4BoxHeaderBytes = 16
 

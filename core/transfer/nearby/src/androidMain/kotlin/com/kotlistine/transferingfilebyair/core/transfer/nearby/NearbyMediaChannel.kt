@@ -11,7 +11,21 @@ import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.kotlistine.transferingfilebyair.core.domain.util.ByteStream
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.data.ByteSpan
+import com.kotlistine.transferingfilebyair.core.transfer.data.assemblyPlan
+import com.kotlistine.transferingfilebyair.core.transfer.data.coveredBytes
+import com.kotlistine.transferingfilebyair.core.transfer.data.missingSpans
 import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStream
+import java.io.RandomAccessFile
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -30,16 +44,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
-import java.io.InputStream
-import java.io.RandomAccessFile
-import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 /** How long the other phone has to start sending a piece it was asked for. */
 private const val OpenTimeoutMillis = 10_000L

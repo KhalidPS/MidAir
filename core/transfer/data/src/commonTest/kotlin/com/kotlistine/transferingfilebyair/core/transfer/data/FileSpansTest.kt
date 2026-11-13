@@ -1,4 +1,4 @@
-package com.kotlistine.transferingfilebyair.core.transfer.nearby
+package com.kotlistine.transferingfilebyair.core.transfer.data
 
 import assertk.assertThat
 import assertk.assertions.containsExactly

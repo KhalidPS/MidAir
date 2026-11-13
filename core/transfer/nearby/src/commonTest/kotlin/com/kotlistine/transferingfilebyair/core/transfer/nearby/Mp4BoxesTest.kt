@@ -6,6 +6,7 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
+import com.kotlistine.transferingfilebyair.core.transfer.data.ByteSpan
 import kotlin.test.Test
 
 class Mp4BoxesTest {
