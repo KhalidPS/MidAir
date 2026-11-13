@@ -139,7 +139,7 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
 
 - **Decisions (Phase 8, desktop and the LAN link):**
   - Every shared module also builds for the JVM, and `:desktopApp` (Compose Desktop) runs the same `App()`. On the
-    desktop a video card shows its still (no player yet, so a video crosses as a file), and there are no air gestures.
+    desktop there are no air gestures.
   - Phone ↔ laptop goes over `:core:transfer:lan`: found over mDNS (`_airslide._tcp`: JmDNS on every interface on the
     desktop, NSD on Android), then TCP. Written on Java sockets and crypto in a `jvmSharedMain` source set (Android +
     desktop), not Ktor in common code: the pairing crypto needs `javax.crypto` anyway. Frames and rules are plain
@@ -154,6 +154,15 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
   - `AIR_INSTANCE=2` (or `-PairInstance=2`) runs a second desktop copy with its own data, to pair two windows.
 - The laptop's screen can't take part in the line-up swipe, so the laptop's user places the phone: its Phone menu    (left or right). The window docks against that screen edge, full height, so its edge is the screen's edge, as in    the video. The phone is assumed to stand bottoms-level with the screen (150 mm tall), which sets the height    offset. The laptop tells the phone (a `Placement` frame, at every link-up and change), so the phone's cards leave    only through the edge that faces the laptop. Pairing with a new device keeps the placement: it is a setting.  - A frame of a type this build doesn't know is skipped, not treated as a broken link: it is authenticated, so it    comes from the other end on a newer build.
 - QR fallback (for networks where mDNS is blocked, or to skip the code check): the laptop's Phone menu shows a    one-time invitation, `airslide:1?h=…&p=…&i=…&t=…&n=…` (its real network addresses before virtual ones, port, id,    a 16-byte secret, name). The phone's pairing screen has "Scan code" (CameraX + ZXing). Both ends prove the secret    over the encrypted connection (HMAC over its transcript) and pair without asking; a code that doesn't hold, or was    taken back, fails and never falls back to the code check. An invitation pairs once.  - A laptop lines up by its Phone menu, not the swipe: after pairing with one, both ends go back to the shelf.
+- Video on the laptop: FFmpeg through JavaCV (LGPL decoders; only the building computer's native build ships). The
+  picture and the sound are read by two readers that follow one clock, which starts at the first decoded frame;
+  frames are scaled to 960 px, drawn with Skia, turned by the file's display rotation. A card's first frame is its
+  picture (a Coil decoder). The sound's reader starts only once the video is to be heard.
+- The LAN link has a media channel, as Nearby does: each end serves what it shared, and the other asks for 256 KB
+  pieces (two ahead) over the files' connection. A card's video plays on the laptop from the phone's frame, read
+  through a seekable stream that fetches only what FFmpeg reads. Since the link is fast, landed cards' files are
+  pulled in pieces, asking for none while a card is in the air: measured on 2.4 GHz Wi-Fi, a file pushed at full
+  speed made the cards' moves arrive 100 to 270 ms late. A pull that fails falls back to the sender pushing it.
 
 ---
 
