@@ -55,6 +55,48 @@ class LanPeerLinkTest {
     }
 
     @Test
+    fun `scanning the laptop's code pairs them without asking either user`() = runBlocking<Unit> {
+        val laptop = link("laptop")
+        val phone = link("phone")
+        val invite = laptop.invite(listOf("10.255.255.1", "127.0.0.1"))!!
+        // Neither is searching: the code alone brings them together, trying each address in turn.
+        phone.joinInvite(invite.toText())
+        withTimeout(Timeout) { laptop.state.first { it is LinkState.Connected } }
+        withTimeout(Timeout) { phone.state.first { it is LinkState.Connected } }
+        withTimeout(Timeout) {
+            while (memories.getValue("phone").peer == null || memories.getValue("laptop").peer == null) {
+                kotlinx.coroutines.delay(20)
+            }
+        }
+        assertThat(memories.getValue("phone").peer!!.key.toList())
+            .isEqualTo(memories.getValue("laptop").peer!!.key.toList())
+    }
+
+    @Test
+    fun `a code with the wrong secret doesn't pair`() = runBlocking<Unit> {
+        val laptop = link("laptop")
+        val phone = link("phone")
+        val invite = laptop.invite(listOf("127.0.0.1"))!!
+        val forged = LanInvite(invite.hosts, invite.port, invite.deviceId, invite.name, ByteArray(InviteTokenBytes))
+        phone.joinInvite(forged.toText())
+        assertThat(withTimeout(Timeout) { phone.state.first { it is LinkState.Failed } })
+            .isEqualTo(LinkState.Failed(DataError.Network.DISCONNECTED))
+        assertThat(laptop.state.value).isEqualTo(LinkState.Idle)
+    }
+
+    @Test
+    fun `a withdrawn code no longer pairs`() = runBlocking<Unit> {
+        val laptop = link("laptop")
+        val phone = link("phone")
+        val invite = laptop.invite(listOf("127.0.0.1"))!!
+        laptop.withdrawInvite()
+        kotlinx.coroutines.delay(100)
+        phone.joinInvite(invite.toText())
+        withTimeout(Timeout) { phone.state.first { it is LinkState.Failed } }
+        assertThat(laptop.state.value).isEqualTo(LinkState.Idle)
+    }
+
+    @Test
     fun `the phone learns where it sits from the laptop, at linking and on every change`() = runBlocking<Unit> {
         val (laptop, _) = pair(beforeLinking = { laptop -> laptop.placePeer(ExitEdge.RIGHT, verticalOffsetMm = 40f) })
         val phoneMemory = memories.getValue("phone")

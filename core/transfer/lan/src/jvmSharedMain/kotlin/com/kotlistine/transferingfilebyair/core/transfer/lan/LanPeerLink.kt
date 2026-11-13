@@ -104,6 +104,10 @@ class LanPeerLink(
     /** A first meeting waiting for the users (or for the other one). */
     private var attempt: Connection? = null
 
+    /** The secret of the invitation this device has on show ([invite]), until it is used or withdrawn. */
+    @Volatile
+    private var inviteToken: ByteArray? = null
+
     /** The live link; read from the sockets' threads too. */
     @Volatile
     private var session: Connection? = null
@@ -179,6 +183,36 @@ class LanPeerLink(
         val service = found[peer.id] ?: return@withContext Result.Failure(DataError.Network.DISCONNECTED)
         _state.value = LinkState.Connecting(peer)
         dial(service.host, service.port, userAsked = true)
+        Result.Success(Unit)
+    }
+
+    /**
+     * An invitation to pair, for this device to show as a QR code: listening on every address in [hosts]. Replaces
+     * any earlier one; it pairs once, with whoever scans it ([joinInvite]), without either user checking a code.
+     */
+    suspend fun invite(hosts: List<String>): LanInvite? = withContext(confined) {
+        if (hosts.isEmpty() || !ensureServer()) return@withContext null
+        val port = server?.localPort ?: return@withContext null
+        val token = LanCrypto.random(InviteTokenBytes)
+        inviteToken = token
+        LanInvite(hosts, port, ownHex, identity.name, token)
+    }
+
+    /** Takes back the invitation on show (its QR code was closed): nobody can pair with it any more. */
+    fun withdrawInvite() {
+        scope.launch(confined) { inviteToken = null }
+    }
+
+    /** Pairs with the device whose invitation was scanned ([text]), if it is one; both prove they know its secret. */
+    suspend fun joinInvite(text: String): EmptyResult<DataError.Network> = withContext(confined) {
+        val invite = LanInvite.parse(text) ?: return@withContext Result.Failure(DataError.Network.MALFORMED_MESSAGE)
+        if (session != null) return@withContext Result.Failure(DataError.Network.UNKNOWN)
+        attempt?.let { pending ->
+            attempt = null
+            pending.hangUp(LanFrame.Decline)
+        }
+        _state.value = LinkState.Connecting(PeerDevice(PeerIdPrefix + invite.deviceId, invite.name))
+        dial(invite.hosts, invite.port, userAsked = true, inviteKey = invite.token)
         Result.Success(Unit)
     }
 
@@ -356,21 +390,28 @@ class LanPeerLink(
         return true
     }
 
-    private fun dial(host: String, port: Int, userAsked: Boolean) {
+    private fun dial(host: String, port: Int, userAsked: Boolean) = dial(listOf(host), port, userAsked, inviteKey = null)
+
+    /**
+     * Calls the device at the first of [hosts] that answers on [port]. [inviteKey]: the secret of a scanned
+     * invitation, which this end proves it knows.
+     */
+    private fun dial(hosts: List<String>, port: Int, userAsked: Boolean, inviteKey: ByteArray?) {
         dialing?.cancel()
         dialing = scope.launch {
             val self = coroutineContext[Job]
-            val socket = Socket()
+            var connected: Socket? = null
             // Cancelling doesn't interrupt a socket blocked in a read: closing it does.
-            self?.invokeOnCompletion { cause -> if (cause != null) runCatching { socket.close() } }
+            self?.invokeOnCompletion { cause -> if (cause != null) runCatching { connected?.close() } }
             try {
-                socket.connect(InetSocketAddress(host, port), ConnectTimeoutMillis)
+                val (host, socket) = connectToFirst(hosts, port)
+                connected = socket
                 socket.prepare()
                 val channel = SecureChannel.open(socket, identity, Purpose.CONTROL, isDialer = true)
-                onControlChannel(channel, isDialer = true, userAsked = userAsked, host = host, port = port)
+                onControlChannel(channel, isDialer = true, userAsked = userAsked, host = host, port = port, inviteKey)
             } catch (e: IOException) {
-                runCatching { socket.close() }
-                log("Couldn't link up with $host:$port: $e")
+                runCatching { connected?.close() }
+                log("Couldn't link up with ${hosts.joinToString()} on $port: $e")
                 withContext(confined) {
                     if (userAsked && _state.value is LinkState.Connecting && attempt == null && session == null) {
                         _state.value = LinkState.Failed(DataError.Network.DISCONNECTED)
@@ -382,6 +423,22 @@ class LanPeerLink(
                 }
             }
         }
+    }
+
+    /** The first of [hosts] that takes a connection on [port] (a laptop has an address on each of its networks). */
+    private fun connectToFirst(hosts: List<String>, port: Int): Pair<String, Socket> {
+        var lastError: IOException = IOException("No address to call")
+        for (host in hosts) {
+            val socket = Socket()
+            try {
+                socket.connect(InetSocketAddress(host, port), ConnectTimeoutMillis)
+                return host to socket
+            } catch (e: IOException) {
+                runCatching { socket.close() }
+                lastError = e
+            }
+        }
+        throw lastError
     }
 
     private suspend fun onIncomingSocket(socket: Socket) {
@@ -398,17 +455,32 @@ class LanPeerLink(
         }
     }
 
-    /** Both ends show who they are; then the connection links up, waits for the users, or is dropped. */
+    /**
+     * Both ends show who they are; then the connection links up, waits for the users, or is dropped. [inviteKey]: the
+     * dialer scanned this end's invitation and knows its secret.
+     */
     private suspend fun onControlChannel(
         channel: SecureChannel,
         isDialer: Boolean,
         userAsked: Boolean,
         host: String?,
         port: Int,
+        inviteKey: ByteArray? = null,
     ) {
         val trusted = memory.peer?.takeIf { it.id.contentEquals(channel.peerId) }
-        val mine = if (trusted != null) AuthMode.TRUSTED else AuthMode.PAIR
-        val mac = trusted?.let { channel.proof(it.key, memory.ownId) } ?: ByteArray(0)
+        // The secret an invitation proof is checked against: the one scanned, or the one this end has on show.
+        val invitation = inviteKey ?: inviteToken
+        val mine = when {
+            inviteKey != null -> AuthMode.QR
+            trusted != null -> AuthMode.TRUSTED
+            invitation != null -> AuthMode.QR
+            else -> AuthMode.PAIR
+        }
+        val mac = when (mine) {
+            AuthMode.TRUSTED -> channel.proof(requireNotNull(trusted).key, memory.ownId)
+            AuthMode.QR -> channel.proof(requireNotNull(invitation), memory.ownId)
+            AuthMode.PAIR, AuthMode.SESSION -> ByteArray(0)
+        }
         channel.send(LanFrame.Auth(mine, mac))
         val theirAuth = channel.receive() as? LanFrame.Auth ?: throw IOException("Expected the other end's proof")
         val theirs = when (theirAuth.mode) {
@@ -417,8 +489,13 @@ class LanPeerLink(
             } else {
                 AuthMode.TRUSTED.takeIf { LanCrypto.same(theirAuth.mac, channel.proof(trusted.key, channel.peerId)) }
             }
+            AuthMode.QR -> if (invitation == null) {
+                AuthMode.PAIR
+            } else {
+                AuthMode.QR.takeIf { LanCrypto.same(theirAuth.mac, channel.proof(invitation, channel.peerId)) }
+            }
             AuthMode.PAIR -> AuthMode.PAIR
-            AuthMode.QR, AuthMode.SESSION -> null
+            AuthMode.SESSION -> null
         }
         val peer = PeerDevice(PeerIdPrefix + channel.peerId.toHex(), channel.peer.name)
         val connection = Connection(channel, peer, isDialer, host, port)
@@ -431,7 +508,8 @@ class LanPeerLink(
             }
             val isFree = session == null && attempt == null
             val mayAskUsers = isFree && if (isDialer) {
-                userAsked && (_state.value as? LinkState.Connecting)?.peer?.id == peer.id
+                // A scanned code pairs through its secret or not at all: no falling back to the code check.
+                userAsked && inviteKey == null && (_state.value as? LinkState.Connecting)?.peer?.id == peer.id
             } else {
                 isSearching && dialing == null
             }
@@ -439,14 +517,21 @@ class LanPeerLink(
             log("${if (isDialer) "Called" else "Called by"} ${peer.name}: mine $mine, theirs $theirs → $outcome")
             when (outcome) {
                 AuthOutcome.LINK -> linkUp(connection, isNewPairing = false)
-                AuthOutcome.LINK_NEW_PAIRING -> linkUp(connection, isNewPairing = true)
+                AuthOutcome.LINK_NEW_PAIRING -> {
+                    // An invitation pairs once.
+                    if (!isDialer) inviteToken = null
+                    linkUp(connection, isNewPairing = true)
+                }
                 AuthOutcome.ASK_USERS -> {
                     attempt = connection
                     _state.value = LinkState.Incoming(peer, channel.code)
                 }
                 AuthOutcome.REFUSE -> {
                     channel.close()
-                    if (isDialer && userAsked && isFree) _state.value = afterAttempt()
+                    if (isDialer && userAsked && isFree) {
+                        // A scanned code that didn't pair (taken back, or not this laptop's) says so.
+                        _state.value = if (inviteKey != null) LinkState.Failed(DataError.Network.DISCONNECTED) else afterAttempt()
+                    }
                     return@withContext
                 }
             }
