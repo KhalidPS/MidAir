@@ -9,8 +9,8 @@ internal fun DataError.Network.toPairingMessage(): String = when (this) {
     DataError.Network.LOCATION_OFF ->
         "Turn on Location on both phones. Android only lets apps find nearby phones while Location is on."
     DataError.Network.DISCONNECTED -> "The other phone went out of reach."
+    DataError.Network.MALFORMED_MESSAGE -> "That isn't a pairing code. Open “Pair with a QR code” on the laptop and scan that."
     DataError.Network.PAYLOAD_TOO_LARGE,
-    DataError.Network.MALFORMED_MESSAGE,
     DataError.Network.CANCELLED,
     DataError.Network.UNKNOWN,
     -> "Couldn't connect. Keep the phones close together and try again."

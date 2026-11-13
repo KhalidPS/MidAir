@@ -25,6 +25,15 @@ sealed interface PairingAction {
     /** Handled by PairingRoot: line the screens up (again). */
     data object OnLineUpClick : PairingAction
 
+    /** Open the camera to scan a laptop's pairing code. */
+    data object OnScanClick : PairingAction
+
+    /** The camera read a QR code ([text]: whatever it holds). */
+    data class OnCodeScanned(val text: String) : PairingAction
+
+    /** Close the camera without scanning. */
+    data object OnScanCancel : PairingAction
+
     /** Handled by PairingRoot: leave without pairing. */
     data object OnCloseClick : PairingAction
 }

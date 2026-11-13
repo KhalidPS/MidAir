@@ -26,4 +26,8 @@ data class PairingState(
     /** Shown on both phones while pairing, so people can check it is the phone in front of them. */
     val code: String? = null,
     val error: DataError.Network? = null,
+    /** This device can pair by scanning another one's QR code (a phone, with a laptop to pair with). */
+    val canScan: Boolean = false,
+    /** The camera is open, looking for a laptop's code. */
+    val isScanning: Boolean = false,
 )

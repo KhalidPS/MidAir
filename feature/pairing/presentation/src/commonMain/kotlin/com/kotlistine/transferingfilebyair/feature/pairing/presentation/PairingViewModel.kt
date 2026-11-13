@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.onFailure
+import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import kotlinx.coroutines.channels.Channel
@@ -20,9 +21,13 @@ import kotlinx.coroutines.launch
  * The pairing ritual: both phones search; when one person holds Connect, the link comes up and both phones light up
  * together. Searching starts only once the user has allowed finding nearby devices.
  */
-class PairingViewModel(private val link: PeerLink) : ViewModel() {
+class PairingViewModel(
+    private val link: PeerLink,
+    /** Pairs from a scanned laptop code; null where this device can't scan (the desktop). */
+    private val invites: InviteLink? = null,
+) : ViewModel() {
 
-    private val _state = MutableStateFlow(PairingState())
+    private val _state = MutableStateFlow(PairingState(canScan = invites != null))
     val state: StateFlow<PairingState> = _state.asStateFlow()
 
     // Buffered, so announcing a pairing never holds up following the link's later changes.
@@ -57,6 +62,9 @@ class PairingViewModel(private val link: PeerLink) : ViewModel() {
             PairingAction.OnDisconnectClick -> link.disconnect()
             // Withdraws the request; the link goes idle and searching starts again.
             PairingAction.OnCancelClick -> link.stopSearching()
+            PairingAction.OnScanClick -> _state.update { it.copy(isScanning = invites != null) }
+            PairingAction.OnScanCancel -> _state.update { it.copy(isScanning = false) }
+            is PairingAction.OnCodeScanned -> joinInvite(action.text)
             PairingAction.OnAllowClick, PairingAction.OnCloseClick, PairingAction.OnLineUpClick -> Unit
         }
     }
@@ -64,6 +72,17 @@ class PairingViewModel(private val link: PeerLink) : ViewModel() {
     private fun search() {
         if (!hasPermission) return
         viewModelScope.launch { link.startSearching() }
+    }
+
+    /** A scanned laptop code pairs with that laptop; anything else scanned says it isn't a pairing code. */
+    private fun joinInvite(text: String) {
+        val invites = invites ?: return
+        _state.update { it.copy(isScanning = false) }
+        viewModelScope.launch {
+            invites.joinInvite(text).onFailure { error ->
+                _state.update { it.copy(phase = PairingPhase.FAILED, error = error) }
+            }
+        }
     }
 
     /** Holding Connect asks the phone found to pair, or agrees to the phone that asked. */

@@ -62,6 +62,7 @@ import com.kotlistine.transferingfilebyair.feature.pairing.presentation.componen
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.components.rememberPairingMotion
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.lineup.LineUpRoot
 import com.kotlistine.transferingfilebyair.feature.pairing.presentation.permission.rememberNearbyPermissions
+import com.kotlistine.transferingfilebyair.feature.pairing.presentation.scan.QrScanner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
@@ -133,6 +134,13 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
                 },
             )
         }
+    }
+    // Over everything while open: the camera, looking for the laptop's code.
+    if (state.isScanning) {
+        QrScanner(
+            onScanned = { text -> viewModel.onAction(PairingAction.OnCodeScanned(text)) },
+            onCancel = { viewModel.onAction(PairingAction.OnScanCancel) },
+        )
     }
 }
 
@@ -299,6 +307,7 @@ private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modi
             }
             state.phase == PairingPhase.FAILED -> {
                 TextButton(onClick = { onAction(PairingAction.OnCloseClick) }) { Text("Not now") }
+                ScanButton(state, onAction)
                 PrimaryButton("Try again") { onAction(PairingAction.OnRetryClick) }
             }
             state.phase == PairingPhase.INCOMING -> {
@@ -312,9 +321,18 @@ private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modi
                 TextButton(onClick = { onAction(PairingAction.OnLineUpClick) }) { Text("Line up") }
                 PrimaryButton("Done") { onAction(PairingAction.OnCloseClick) }
             }
-            else -> TextButton(onClick = { onAction(PairingAction.OnCloseClick) }) { Text("Not now") }
+            else -> {
+                TextButton(onClick = { onAction(PairingAction.OnCloseClick) }) { Text("Not now") }
+                ScanButton(state, onAction)
+            }
         }
     }
+}
+
+/** Pairing with a laptop by its QR code: where it can't be found by itself, or to skip comparing codes. */
+@Composable
+private fun ScanButton(state: PairingState, onAction: (PairingAction) -> Unit) {
+    if (state.canScan) TextButton(onClick = { onAction(PairingAction.OnScanClick) }) { Text("Scan code") }
 }
 
 @Composable
@@ -405,6 +423,6 @@ private fun PairingScreenIncomingPreview() {
 @Composable
 private fun PairingScreenSearchingPreview() {
     AirTheme {
-        PairingScreen(state = PairingState(phase = PairingPhase.SEARCHING), onAction = {})
+        PairingScreen(state = PairingState(phase = PairingPhase.SEARCHING, canScan = true), onAction = {})
     }
 }

@@ -4,11 +4,14 @@ import app.cash.turbine.test
 import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isNull
+import assertk.assertions.isTrue
 import assertk.assertions.isZero
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
@@ -228,6 +231,58 @@ class PairingViewModelTest {
 
         assertThat(link.searches).isEqualTo(2)
         assertThat(viewModel.state.value.phase).isEqualTo(PairingPhase.SEARCHING)
+    }
+
+    @Test
+    fun `a device that can't scan never offers it`() {
+        assertThat(viewModel.state.value.canScan).isFalse()
+        viewModel.onAction(PairingAction.OnScanClick)
+        assertThat(viewModel.state.value.isScanning).isFalse()
+    }
+
+    @Test
+    fun `scanning opens the camera, and cancelling closes it`() {
+        val scanning = PairingViewModel(link, invites = FakeInvites())
+        assertThat(scanning.state.value.canScan).isTrue()
+
+        scanning.onAction(PairingAction.OnScanClick)
+        assertThat(scanning.state.value.isScanning).isTrue()
+        scanning.onAction(PairingAction.OnScanCancel)
+        assertThat(scanning.state.value.isScanning).isFalse()
+    }
+
+    @Test
+    fun `a scanned code closes the camera and pairs with the laptop it names`() {
+        val invites = FakeInvites()
+        val scanning = PairingViewModel(link, invites)
+        scanning.onAction(PairingAction.OnScanClick)
+
+        scanning.onAction(PairingAction.OnCodeScanned("airslide:1?h=…"))
+
+        assertThat(invites.joined).containsExactly("airslide:1?h=…")
+        assertThat(scanning.state.value.isScanning).isFalse()
+    }
+
+    @Test
+    fun `a scanned code that isn't a pairing code says so`() {
+        val invites = FakeInvites(result = Result.Failure(DataError.Network.MALFORMED_MESSAGE))
+        val scanning = PairingViewModel(link, invites)
+
+        scanning.onAction(PairingAction.OnCodeScanned("https://example.com"))
+
+        assertThat(scanning.state.value.phase).isEqualTo(PairingPhase.FAILED)
+        assertThat(scanning.state.value.error).isEqualTo(DataError.Network.MALFORMED_MESSAGE)
+    }
+}
+
+private class FakeInvites(
+    private val result: EmptyResult<DataError.Network> = Result.Success(Unit),
+) : InviteLink {
+    val joined = mutableListOf<String>()
+
+    override suspend fun joinInvite(text: String): EmptyResult<DataError.Network> {
+        joined += text
+        return result
     }
 }
 
