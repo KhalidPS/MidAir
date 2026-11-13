@@ -33,6 +33,7 @@ fun main() {
     application {
         val windowState = rememberWindowState(size = DpSize(width = 480.dp, height = 860.dp))
         var phoneSide by remember { mutableStateOf(savedSide) }
+        var showsQrCode by remember { mutableStateOf(false) }
 
         fun placePhone(side: ExitEdge) {
             phoneSide = side
@@ -53,8 +54,11 @@ fun main() {
                 Menu("Phone") {
                     RadioButtonItem("On my left", selected = phoneSide == ExitEdge.LEFT) { placePhone(ExitEdge.LEFT) }
                     RadioButtonItem("On my right", selected = phoneSide == ExitEdge.RIGHT) { placePhone(ExitEdge.RIGHT) }
+                    Separator()
+                    Item("Pair with a QR code…") { showsQrCode = true }
                 }
             }
+            if (showsQrCode) QrInviteWindow(lanLink, onClose = { showsQrCode = false })
             LaunchedEffect(Unit) {
                 // Where the user put the phone last time: the window stands against that edge again.
                 savedSide?.let { PhonePlacement.dock(windowState, it) }

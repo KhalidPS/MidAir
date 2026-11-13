@@ -22,9 +22,13 @@ dependencies {
     implementation(projects.shared)
     implementation(projects.core.transfer.domain)
     implementation(projects.core.transfer.lan)
+    implementation(projects.core.designsystem)
+    implementation(libs.jetbrains.compose.material3)
     implementation(projects.feature.shelf.presentation)
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutines.swing)
+    // Draws the pairing QR code.
+    implementation(libs.zxing.core)
     implementation(platform(libs.koin.bom))
     implementation(libs.koin.core)
 }
