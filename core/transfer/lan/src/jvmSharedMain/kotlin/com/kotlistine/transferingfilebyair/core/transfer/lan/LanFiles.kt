@@ -23,8 +23,15 @@ interface LanFiles {
 /**
  * Files on the disk: `file:` URIs or plain paths to read, and incoming files in [incomingFolder] (a scratch folder:
  * the shelf copies a finished file to where received files are kept).
+ *
+ * Made once, when the app starts: what the folder still holds then is left over from before (nothing can be on its
+ * way yet), and goes, or every received file would stay there twice for good.
  */
 class DiskLanFiles(private val incomingFolder: File) : LanFiles {
+
+    init {
+        incomingFolder.listFiles()?.forEach { runCatching { it.delete() } }
+    }
 
     override fun open(uri: String): OpenedFile? = runCatching {
         val file = if (uri.startsWith("file:")) File(URI(uri)) else File(uri)
