@@ -8,9 +8,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(projects.core.transfer.domain)
+            // The file span arithmetic its MP4 index reading shares with the LAN link.
+            implementation(projects.core.transfer.data)
         }
         androidMain.dependencies {
-            implementation(projects.core.transfer.data)
             implementation(libs.play.services.nearby)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.coroutines.play.services)
