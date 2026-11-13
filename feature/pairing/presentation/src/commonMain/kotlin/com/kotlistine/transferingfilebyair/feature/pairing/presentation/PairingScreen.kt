@@ -101,10 +101,11 @@ fun PairingRoot(onDone: () -> Unit, viewModel: PairingViewModel = koinViewModel(
 
     ObserveAsEvents(viewModel.events) { event ->
         when (event) {
-            // Both phones light up together, then line the screens up.
+            // Both devices light up together, then line the screens up (phones) or go back to the shelf (a laptop,
+            // which places the phone itself).
             is PairingEvent.Paired -> scope.launch {
                 motion.burst()
-                isLiningUp = true
+                if (event.linesUp) isLiningUp = true else leave()
             }
         }
     }
@@ -318,7 +319,7 @@ private fun Actions(state: PairingState, onAction: (PairingAction) -> Unit, modi
             }
             state.phase == PairingPhase.CONNECTED -> {
                 TextButton(onClick = { onAction(PairingAction.OnDisconnectClick) }) { Text("Unpair") }
-                TextButton(onClick = { onAction(PairingAction.OnLineUpClick) }) { Text("Line up") }
+                if (state.canLineUp) TextButton(onClick = { onAction(PairingAction.OnLineUpClick) }) { Text("Line up") }
                 PrimaryButton("Done") { onAction(PairingAction.OnCloseClick) }
             }
             else -> {

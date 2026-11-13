@@ -146,6 +146,15 @@ class CombinedPeerLinkTest {
         }
 
     @Test
+    fun `the screens line up by swipe unless the laptop is the live link`() = runTest(UnconfinedTestDispatcher()) {
+        val link = combined()
+        lan.linesUp = false
+        assertThat(link.linesUpBySwipe).isTrue()
+        lan.state.value = LinkState.Connected(laptop)
+        assertThat(link.linesUpBySwipe).isFalse()
+    }
+
+    @Test
     fun `searching works if either link can search`() = runTest(UnconfinedTestDispatcher()) {
         val link = combined()
         nearby.searchResult = Result.Failure(DataError.Network.PERMISSION_MISSING)
@@ -180,6 +189,8 @@ class CombinedPeerLinkTest {
         override val state = MutableStateFlow<LinkState>(LinkState.Idle)
         val calls = mutableListOf<String>()
         var searchResult: EmptyResult<DataError.Network> = Result.Success(Unit)
+        var linesUp = true
+        override val linesUpBySwipe: Boolean get() = linesUp
 
         override val transport: Transport = object : Transport {
             override val incoming = MutableSharedFlow<SlideMessage>()

@@ -145,6 +145,18 @@ class PairingViewModelTest {
     }
 
     @Test
+    fun `pairing with a laptop skips the line-up swipe`() = runTest {
+        link.linesUp = false
+        viewModel.onAction(PairingAction.OnPermissionsResult(granted = true))
+        viewModel.events.test {
+            link.state.value = LinkState.Connected(PeerDevice("lan:ab", "Laptop"))
+
+            assertThat(awaitItem()).isEqualTo(PairingEvent.Paired("Laptop", linesUp = false))
+            assertThat(viewModel.state.value.canLineUp).isFalse()
+        }
+    }
+
+    @Test
     fun `opening pairing while already paired shows the phone without replaying the moment`() = runTest {
         link.state.value = LinkState.Connected(pixel)
         viewModel = PairingViewModel(link)
@@ -288,6 +300,8 @@ private class FakeInvites(
 
 private class FakePeerLink : PeerLink {
     override val state = MutableStateFlow<LinkState>(LinkState.Idle)
+    var linesUp = true
+    override val linesUpBySwipe: Boolean get() = linesUp
     var searches = 0
     var disconnects = 0
     val connected = mutableListOf<PeerDevice>()

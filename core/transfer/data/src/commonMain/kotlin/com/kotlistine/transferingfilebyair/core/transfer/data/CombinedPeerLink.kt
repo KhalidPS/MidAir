@@ -73,6 +73,8 @@ class CombinedPeerLink(
 
     override val media: MediaChannel? get() = live().media
 
+    override val linesUpBySwipe: Boolean get() = live().linesUpBySwipe
+
     override suspend fun startSearching(): EmptyResult<DataError.Network> {
         if (isLinked()) return Result.Success(Unit)
         val first = primary.startSearching()

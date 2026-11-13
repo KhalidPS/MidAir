@@ -121,6 +121,9 @@ class LanPeerLink(
     /** The port this device listens on, once it does (for a QR code to point at). */
     val port: Int? get() = server?.localPort
 
+    /** The laptop places the phone (its Phone menu): no swipe across the two screens. */
+    override val linesUpBySwipe: Boolean = false
+
     override val transport: Transport = object : Transport {
         override val incoming: Flow<SlideMessage> = received
 

@@ -127,7 +127,13 @@ class PairingViewModel(
                     error = null,
                 )
                 is LinkState.Connected ->
-                    current.copy(phase = PairingPhase.CONNECTED, peerName = linkState.peer.name, code = null, error = null)
+                    current.copy(
+                        phase = PairingPhase.CONNECTED,
+                        peerName = linkState.peer.name,
+                        code = null,
+                        error = null,
+                        canLineUp = link.linesUpBySwipe,
+                    )
                 is LinkState.Failed -> current.copy(phase = PairingPhase.FAILED, code = null, error = linkState.error)
             }
         }
@@ -135,7 +141,8 @@ class PairingViewModel(
         // searching while it isn't.
         if (linkState is LinkState.Idle) search()
         if (isConnected && !wasConnected) {
-            eventChannel.send(PairingEvent.Paired((linkState as LinkState.Connected).peer.name))
+            val peer = (linkState as LinkState.Connected).peer
+            eventChannel.send(PairingEvent.Paired(peer.name, linesUp = link.linesUpBySwipe))
         }
         wasConnected = isConnected
     }

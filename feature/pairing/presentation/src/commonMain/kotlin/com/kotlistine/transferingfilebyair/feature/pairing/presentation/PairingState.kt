@@ -30,4 +30,6 @@ data class PairingState(
     val canScan: Boolean = false,
     /** The camera is open, looking for a laptop's code. */
     val isScanning: Boolean = false,
+    /** The linked device lines up by a swipe across both screens (a phone; a laptop places the phone itself). */
+    val canLineUp: Boolean = true,
 )

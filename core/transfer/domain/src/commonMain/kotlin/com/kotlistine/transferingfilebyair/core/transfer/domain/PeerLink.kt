@@ -44,6 +44,12 @@ interface PeerLink {
     /** Messages to and from the connected peer. Sends fail with [DataError.Network.DISCONNECTED] while unpaired. */
     val transport: Transport
 
+    /**
+     * Whether the two screens line up by a finger swiping across both (phones). A laptop can't take part in that
+     * swipe; it sets where the phone sits itself.
+     */
+    val linesUpBySwipe: Boolean get() = true
+
     /** Reading the peer's shared files in ranges, where the link can (null: it can't). */
     val media: MediaChannel? get() = null
 
