@@ -1,5 +1,7 @@
 package com.kotlistine.transferingfilebyair.core.transfer.lan
 
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+
 /** Bumped when the frames change in a way an older build can't read; a mismatch ends the connection. */
 internal const val LanProtocolVersion = 1
 
@@ -115,6 +117,12 @@ internal sealed interface LanFrame {
 
     /** Either end stopped the transfer. */
     data class FileCancel(val transferId: Long) : LanFrame
+
+    /**
+     * Where the receiving device sits, as the laptop's user set it: its own edge that faces the laptop ([side]), and
+     * how far its screen top sits below the laptop's ([verticalOffsetMm], the receiver's view of the line-up).
+     */
+    data class Placement(val side: ExitEdge, val verticalOffsetMm: Float) : LanFrame
 }
 
 private const val AuthType = 1
@@ -129,6 +137,7 @@ private const val FileChunkType = 9
 private const val FileEndType = 10
 private const val FileDoneType = 11
 private const val FileCancelType = 12
+private const val PlacementType = 13
 
 internal fun LanFrame.encode(): ByteArray = ByteWriter().apply {
     when (val frame = this@encode) {
@@ -171,6 +180,11 @@ internal fun LanFrame.encode(): ByteArray = ByteWriter().apply {
             byte(FileCancelType)
             long(frame.transferId)
         }
+        is LanFrame.Placement -> {
+            byte(PlacementType)
+            byte(frame.side.ordinal)
+            int(frame.verticalOffsetMm.toRawBits())
+        }
     }
 }.toByteArray()
 
@@ -190,6 +204,11 @@ internal fun decodeLanFrame(bytes: ByteArray): LanFrame? = runCatching {
         FileEndType -> LanFrame.FileEnd(reader.long())
         FileDoneType -> LanFrame.FileDone(reader.long())
         FileCancelType -> LanFrame.FileCancel(reader.long())
+        PlacementType -> {
+            val side = ExitEdge.entries.getOrNull(reader.byte()) ?: return null
+            val offset = Float.fromBits(reader.int())
+            if (offset.isFinite()) LanFrame.Placement(side, offset) else null
+        }
         else -> null
     }
     frame?.takeIf { reader.isDone }

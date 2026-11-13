@@ -58,7 +58,10 @@ class LanMemory(private val file: File) : LinkGeometry {
         }
     }
 
-    /** Remembers [trusted]; a different device than before starts from the default line-up, keeping the side. */
+    /**
+     * Remembers [trusted]; a different device than before starts from the default line-up, keeping the placement
+     * (the side and height the laptop's user set: a setting of the laptop, not a measurement of one device).
+     */
     fun trust(trusted: LanTrustedPeer) {
         val sameDevice = peer?.id?.contentEquals(trusted.id) == true
         peer = trusted
@@ -68,18 +71,22 @@ class LanMemory(private val file: File) : LinkGeometry {
             properties.setProperty(PeerKeyKey, trusted.key.toHex())
             save()
         }
-        if (!sameDevice) update(SlideLink(peerSide = current.value.peerSide))
+        if (!sameDevice) update(placementOnly())
     }
 
-    /** Forgets the paired device. The side the phone sits on is the laptop's own setting, so it stays. */
+    /** Forgets the paired device. Where the phone sits is the laptop's own setting, so it stays. */
     fun forget() {
         peer = null
         synchronized(lock) {
             listOf(PeerIdKey, PeerNameKey, PeerKeyKey).forEach(properties::remove)
             save()
         }
-        update(SlideLink(peerSide = current.value.peerSide))
+        update(placementOnly())
     }
+
+    /** The default line-up, with the placement kept. */
+    private fun placementOnly(): SlideLink =
+        SlideLink(peerSide = current.value.peerSide, verticalOffsetMm = current.value.verticalOffsetMm)
 
     private fun readPeer(): LanTrustedPeer? {
         val id = properties.getProperty(PeerIdKey)?.hexToBytesOrNull() ?: return null

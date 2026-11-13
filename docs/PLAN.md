@@ -152,6 +152,7 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
     hands out a 32-byte key; a paired device links up again silently by proving it (HMAC over the connection's
     transcript), the smaller id making the call. A proof that fails ends the connection.
   - `AIR_INSTANCE=2` (or `-PairInstance=2`) runs a second desktop copy with its own data, to pair two windows.
+- The laptop's screen can't take part in the line-up swipe, so the laptop's user places the phone: its Phone menu    (left or right). The window docks against that screen edge, full height, so its edge is the screen's edge, as in    the video. The phone is assumed to stand bottoms-level with the screen (150 mm tall), which sets the height    offset. The laptop tells the phone (a `Placement` frame, at every link-up and change), so the phone's cards leave    only through the edge that faces the laptop. Pairing with a new device keeps the placement: it is a setting.  - A frame of a type this build doesn't know is skipped, not treated as a broken link: it is authenticated, so it    comes from the other end on a newer build.
 
 ---
 

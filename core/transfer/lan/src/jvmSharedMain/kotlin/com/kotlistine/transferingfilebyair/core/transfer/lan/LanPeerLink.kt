@@ -4,6 +4,7 @@ import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.data.SlideMessageCodec
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
@@ -70,6 +71,11 @@ class LanPeerLink(
     private val discovery: LanDiscovery,
     private val files: LanFiles,
     ownName: String,
+    /**
+     * This device decides where the other one sits ([placePeer]): a laptop, whose screen can't take part in the
+     * phones' line-up swipe. The other device takes the placement it is told.
+     */
+    private val ownsPlacement: Boolean = false,
     /** Where what happens is told (logcat on a phone, the console on a laptop). */
     private val log: (String) -> Unit = {},
 ) : PeerLink {
@@ -260,6 +266,24 @@ class LanPeerLink(
         }
     }
 
+    /**
+     * The other device sits beside this one's [side] edge, its screen top [verticalOffsetMm] below this one's. Kept,
+     * and told to the other device (now, and whenever they link up), so its cards leave through the edge that faces
+     * this one and arrive at the height they left.
+     */
+    fun placePeer(side: ExitEdge, verticalOffsetMm: Float) {
+        memory.update(memory.link.value.copy(peerSide = side, verticalOffsetMm = verticalOffsetMm))
+        placementForPeer()?.let { placement -> session?.sendQuietly(placement) }
+    }
+
+    /** The other device's view of [placePeer]: its own edge that faces this one, and this one's top below its own. */
+    private fun placementForPeer(): LanFrame.Placement? {
+        if (!ownsPlacement) return null
+        val link = memory.link.value
+        val side = link.peerSide ?: return null
+        return LanFrame.Placement(side.opposite, -link.verticalOffsetMm)
+    }
+
     override fun cancelTransfer(transferId: Long) {
         cancelled += transferId
         incoming.remove(transferId)?.target?.discard?.invoke()
@@ -444,6 +468,7 @@ class LanPeerLink(
             memory.trust(LanTrustedPeer(connection.channel.peerId, connection.peer.name, key))
             connection.sendQuietly(LanFrame.Trust(key))
         }
+        placementForPeer()?.let(connection::sendQuietly)
         if (connection.isDialer) openFilesChannel(connection)
         refreshPresence()
     }
@@ -461,7 +486,7 @@ class LanPeerLink(
 
     private fun readControl(connection: Connection) = scope.launch {
         try {
-            while (true) onControlFrame(connection, connection.channel.receive())
+            while (true) connection.channel.receive()?.let { onControlFrame(connection, it) }
         } catch (_: IOException) {
             withContext(confined) {
                 when {
@@ -510,6 +535,11 @@ class LanPeerLink(
             }
             LanFrame.Forget -> withContext(confined) {
                 if (session === connection) memory.forget()
+            }
+            // The laptop says where this device sits: its cards leave through that edge from now on.
+            is LanFrame.Placement -> if (session === connection && !ownsPlacement) {
+                log("Placed: the other device is beside my ${frame.side} edge, ${frame.verticalOffsetMm} mm")
+                memory.update(memory.link.value.copy(peerSide = frame.side, verticalOffsetMm = frame.verticalOffsetMm))
             }
             is LanFrame.FileDone -> transfers[frame.transferId]?.complete(Result.Success(null))
             is LanFrame.FileCancel -> {

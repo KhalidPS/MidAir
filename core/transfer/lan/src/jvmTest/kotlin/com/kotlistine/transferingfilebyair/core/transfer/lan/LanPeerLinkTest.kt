@@ -6,6 +6,7 @@ import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.SlideMessage
 import kotlinx.coroutines.CompletableDeferred
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.io.File
@@ -33,11 +35,16 @@ class LanPeerLinkTest {
         folder.deleteRecursively()
     }
 
+    /** The memory each link was made with, by name: what the link keeps, as it keeps it. */
+    private val memories = mutableMapOf<String, LanMemory>()
+
+    /** The laptop decides where the phone sits, as in the app. */
     private fun link(name: String) = LanPeerLink(
-        memory = LanMemory(File(folder, "$name/link.properties")),
+        memory = LanMemory(File(folder, "$name/link.properties")).also { memories[name] = it },
         discovery = network.discovery(),
         files = DiskLanFiles(File(folder, "$name/incoming")),
         ownName = name,
+        ownsPlacement = name == "laptop",
     )
 
     @Test
@@ -45,6 +52,20 @@ class LanPeerLinkTest {
         val (laptop, phone) = pair()
         assertThat((laptop.state.value as LinkState.Connected).peer.name).isEqualTo("phone")
         assertThat((phone.state.value as LinkState.Connected).peer.name).isEqualTo("laptop")
+    }
+
+    @Test
+    fun `the phone learns where it sits from the laptop, at linking and on every change`() = runBlocking<Unit> {
+        val (laptop, _) = pair(beforeLinking = { laptop -> laptop.placePeer(ExitEdge.RIGHT, verticalOffsetMm = 40f) })
+        val phoneMemory = memories.getValue("phone")
+        withTimeout(Timeout) { phoneMemory.link.first { it.peerSide != null } }
+        assertThat(phoneMemory.link.value.peerSide).isEqualTo(ExitEdge.LEFT)
+        assertThat(phoneMemory.link.value.verticalOffsetMm).isEqualTo(-40f)
+
+        laptop.placePeer(ExitEdge.LEFT, verticalOffsetMm = 25f)
+        withTimeout(Timeout) { phoneMemory.link.first { it.peerSide == ExitEdge.RIGHT } }
+        assertThat(phoneMemory.link.value.verticalOffsetMm).isEqualTo(-25f)
+        assertThat(memories.getValue("laptop").link.value.peerSide).isEqualTo(ExitEdge.LEFT)
     }
 
     @Test
@@ -124,9 +145,10 @@ class LanPeerLinkTest {
     }
 
     /** Pairs a laptop and a phone the way two users would: the phone asks, both accept the code. */
-    private suspend fun pair(): Pair<LanPeerLink, LanPeerLink> {
+    private suspend fun pair(beforeLinking: (laptop: LanPeerLink) -> Unit = {}): Pair<LanPeerLink, LanPeerLink> {
         val laptop = link("laptop")
         val phone = link("phone")
+        beforeLinking(laptop)
         laptop.startSearching()
         phone.startSearching()
         val found = withTimeout(Timeout) { phone.state.first { it is LinkState.Found } } as LinkState.Found
@@ -162,11 +184,11 @@ class LanPeerLinkTest {
 
             override fun advertise(deviceId: String, name: String, port: Int) {
                 mine = deviceId
-                services.value += deviceId to LanService(deviceId, name, "127.0.0.1", port)
+                services.update { it + (deviceId to LanService(deviceId, name, "127.0.0.1", port)) }
             }
 
             override fun stopAdvertising() {
-                mine?.let { services.value -= it }
+                mine?.let { id -> services.update { it - id } }
             }
 
             override fun browse(): Flow<List<LanService>> = services.map { it.values.toList() }

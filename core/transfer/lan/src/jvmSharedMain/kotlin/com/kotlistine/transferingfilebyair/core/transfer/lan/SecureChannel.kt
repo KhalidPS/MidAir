@@ -54,9 +54,12 @@ internal class SecureChannel private constructor(
         }
     }
 
-    /** The next frame, or an [IOException] when the connection ended, timed out, or carried something not ours. */
+    /**
+     * The next frame; null for one this version doesn't know (it opened, so it comes from the other end: a newer build,
+     * skipped rather than ending the link). An [IOException] when the connection ended, timed out, or was tampered with.
+     */
     @Throws(IOException::class)
-    fun receive(): LanFrame {
+    fun receive(): LanFrame? {
         val size = input.readInt()
         if (size <= 0 || size > MaxFrameBytes + SealOverheadBytes) throw IOException("Frame of $size bytes")
         val sealed = ByteArray(size).also(input::readFully)
@@ -65,7 +68,7 @@ internal class SecureChannel private constructor(
         } catch (e: Exception) {
             throw IOException("Frame failed to open", e)
         }
-        return decodeLanFrame(plain) ?: throw IOException("Unreadable frame")
+        return decodeLanFrame(plain)
     }
 
     /** How long [receive] may wait for a frame before the connection counts as gone (0: forever). */

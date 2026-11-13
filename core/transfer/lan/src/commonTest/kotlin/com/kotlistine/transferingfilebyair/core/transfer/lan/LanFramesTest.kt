@@ -5,6 +5,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
+import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import kotlin.test.Test
 
 class LanFramesTest {
@@ -20,6 +21,8 @@ class LanFramesTest {
             LanFrame.FileEnd(transferId = 42),
             LanFrame.FileDone(transferId = 42),
             LanFrame.FileCancel(transferId = Long.MAX_VALUE),
+            LanFrame.Placement(side = ExitEdge.LEFT, verticalOffsetMm = -42.5f),
+            LanFrame.Placement(side = ExitEdge.RIGHT, verticalOffsetMm = 0f),
         )
         frames.forEach { frame -> assertThat(decodeLanFrame(frame.encode())).isEqualTo(frame) }
     }
@@ -45,6 +48,22 @@ class LanFramesTest {
         // A chunk claiming more bytes than it carries.
         val truncated = LanFrame.FileChunk(1, ByteArray(10)).encode().dropLast(3).toByteArray()
         assertThat(decodeLanFrame(truncated)).isNull()
+    }
+
+    @Test
+    fun `a placement with no such side or an impossible offset is not read`() {
+        val noSuchSide = ByteWriter().apply {
+            byte(13)
+            byte(7)
+            int(0f.toRawBits())
+        }
+        assertThat(decodeLanFrame(noSuchSide.toByteArray())).isNull()
+        val notANumber = ByteWriter().apply {
+            byte(13)
+            byte(0)
+            int(Float.NaN.toRawBits())
+        }
+        assertThat(decodeLanFrame(notANumber.toByteArray())).isNull()
     }
 
     @Test

@@ -30,6 +30,8 @@ internal val desktopModule = module {
         discovery = get<JmdnsDiscovery>(),
         files = DiskLanFiles(File(DesktopInstance.dataFolder, "incoming")),
         ownName = DesktopInstance.deviceName,
+        // The laptop says where the phone stands (its Phone menu); the phone takes it.
+        ownsPlacement = true,
         log = { println("AirLan: $it") },
     ) }
     single<PeerLink> { get<LanPeerLink>() }
