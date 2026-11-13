@@ -101,6 +101,29 @@ class FfmpegVideoEngineTest {
     }
 
     @Test
+    fun `a video on the other device plays, read a piece at a time`() = runBlocking<Unit> {
+        val video = recordTestVideo(folder, seconds = 1)
+        val bytes = video.readBytes()
+        val opens = java.util.concurrent.atomic.AtomicInteger()
+        val remote = VideoSource.Remote("video", bytes.size.toLong()) { offset ->
+            opens.incrementAndGet()
+            com.kotlistine.transferingfilebyair.core.domain.util.Result.Success(ArrayByteStream(bytes, offset.toInt()))
+        }
+        val engine = withContext(ui) { FfmpegVideoEngine(ui) }
+        val ended = engine.events
+        withContext(ui) {
+            engine.load(remote)
+            // As a card arriving: muted, so only the picture is read.
+            engine.setVolume(0f)
+        }
+        waitUntil { withContext(ui) { engine.frame != null } }
+        assertThat(withContext(ui) { engine.durationMs }).isBetween(900L, 1_100L)
+        assertThat(withTimeout(5_000) { ended.first() }).isEqualTo(VideoEngineEvent.Ended)
+        assertThat(opens.get()).isGreaterThanOrEqualTo(1)
+        withContext(ui) { engine.release() }
+    }
+
+    @Test
     fun `a missing file fails as not found`() = runBlocking<Unit> {
         val engine = withContext(ui) { FfmpegVideoEngine(ui) }
         val events = engine.events

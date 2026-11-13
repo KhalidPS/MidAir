@@ -104,16 +104,12 @@ internal class FfmpegVideoEngine(private val main: CoroutineDispatcher = Dispatc
     override fun load(source: VideoSource, startAtMs: Long, playWhenReady: Boolean) {
         release()
         val input = when (source) {
-            is VideoSource.Local -> localPath(source.uri)
-            is VideoSource.Url -> source.url
-            // Read through the peer link only on the phones; on the desktop nothing hands out such a source yet.
-            is VideoSource.Remote -> null
+            is VideoSource.Local -> GrabberInput.Path(localPath(source.uri))
+            is VideoSource.Url -> GrabberInput.Path(source.url)
+            // On the other device, read a piece at a time over the link: a card's video arriving.
+            is VideoSource.Remote -> GrabberInput.Remote(source)
         }
-        if (input == null) {
-            eventChannel.trySend(VideoEngineEvent.Failed(DataError.Local.UNSUPPORTED_FORMAT))
-            return
-        }
-        if (source is VideoSource.Local && !File(input).exists()) {
+        if (input is GrabberInput.Path && source is VideoSource.Local && !File(input.path).exists()) {
             eventChannel.trySend(VideoEngineEvent.Failed(DataError.Local.FILE_NOT_FOUND))
             return
         }
@@ -165,7 +161,19 @@ internal class FfmpegVideoEngine(private val main: CoroutineDispatcher = Dispatc
     }
 
     override fun setVolume(volume: Float) {
-        playback?.volume = volume.coerceIn(0f, 1f)
+        val current = playback ?: return
+        current.volume = volume.coerceIn(0f, 1f)
+        startSound(current)
+    }
+
+    /**
+     * Starts the sound's reader once the video is known to have sound and is to be heard: a card's video arriving
+     * plays muted, and a second reader of it would only take bytes from the link for nothing.
+     */
+    private fun startSound(current: Playback) {
+        if (!current.hasSound || current.volume <= 0f || current.isSoundStarted) return
+        current.isSoundStarted = true
+        current.jobs += scope.launch(Dispatchers.IO) { playSound(current) }
     }
 
     override fun release() {
@@ -248,7 +256,8 @@ internal class FfmpegVideoEngine(private val main: CoroutineDispatcher = Dispatc
                 if (this@FfmpegVideoEngine.playback !== playback) return@withContext
                 durationMs = length
                 rotationDegrees = rotation
-                if (hasSound) playback.jobs += scope.launch(Dispatchers.IO) { playSound(playback) }
+                playback.hasSound = hasSound
+                startSound(playback)
             }
             if (playback.startUs > 0) grabber.timestamp = playback.startUs
             while (currentCoroutineContext().isActive) {
@@ -302,7 +311,9 @@ internal class FfmpegVideoEngine(private val main: CoroutineDispatcher = Dispatc
             line = runCatching {
                 AudioSystem.getSourceDataLine(format).apply { open(format, (bytesPerSecond * SoundBufferMillis / 1000).toInt() and 3.inv()) }
             }.getOrNull() ?: return // No speakers: silent.
-            if (playback.startUs > 0) grabber.timestamp = playback.startUs
+            // From where the picture is now (it may have played muted for a while).
+            playback.takeSoundSeek()
+            clock.nowUs().takeIf { it > 0 }?.let { grabber.timestamp = it }
             var pending: Sound? = null
             while (currentCoroutineContext().isActive) {
                 playback.takeSoundSeek()?.let { targetUs ->
@@ -371,8 +382,10 @@ internal class FfmpegVideoEngine(private val main: CoroutineDispatcher = Dispatc
     }
 
     /** One loaded video: its readers, and the frames decoded ahead. */
-    private class Playback(val input: String, val startUs: Long) {
+    private class Playback(val input: GrabberInput, val startUs: Long) {
         val jobs = mutableListOf<Job>()
+        var hasSound = false
+        var isSoundStarted = false
         private val frames = ArrayDeque<VideoFrame>()
         private var pictureSeek: Seek? = null
         private var soundSeek: Long? = null
@@ -456,10 +469,23 @@ internal class VideoFrame(val timestampUs: Long, val image: Image, val generatio
 /** FFmpeg prints every file it opens to the console; only its errors are worth that. */
 private val quietFfmpeg: Unit by lazy { av_log_set_level(AV_LOG_ERROR) }
 
-internal fun open(input: String, forPicture: Boolean): FFmpegFrameGrabber = FFmpegFrameGrabber(input).apply {
+/** Where FFmpeg reads a video from: a path or address it opens itself, or a file on the other device. */
+internal sealed interface GrabberInput {
+    data class Path(val path: String) : GrabberInput
+
+    class Remote(val source: VideoSource.Remote) : GrabberInput
+}
+
+internal fun open(input: String, forPicture: Boolean): FFmpegFrameGrabber = open(GrabberInput.Path(input), forPicture)
+
+internal fun open(input: GrabberInput, forPicture: Boolean): FFmpegFrameGrabber = when (input) {
+    is GrabberInput.Path -> FFmpegFrameGrabber(input.path).apply {
+        // Over the network: give up on a stalled read instead of hanging.
+        if (input.path.startsWith("http")) setOption("rw_timeout", "10000000")
+    }
+    is GrabberInput.Remote -> FFmpegFrameGrabber(RemoteInputStream(input.source))
+}.apply {
     quietFfmpeg
-    // Over the network: give up on a stalled read instead of hanging.
-    if (input.startsWith("http")) setOption("rw_timeout", "10000000")
     if (forPicture) {
         pixelFormat = AV_PIX_FMT_BGRA
     } else {
