@@ -48,4 +48,5 @@ kotlin {
 
 dependencies {
     add("kspAndroid", libs.androidx.room.compiler)
+    add("kspJvm", libs.androidx.room.compiler)
 }

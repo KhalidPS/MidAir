@@ -2,8 +2,8 @@
 
 Android-first app for sliding files between devices that are physically next to each other. You lift a
 file card and drag it off the screen edge, and it continues onto the neighbouring device's screen. The
-codebase is Kotlin Multiplatform + Compose Multiplatform from day one (Android target only for now), so
-a desktop and iOS receiver can be added later.
+codebase is Kotlin Multiplatform + Compose Multiplatform, with an Android and a desktop (JVM) target, so
+an iOS app can be added later.
 
 - **Product spec, video study and phased roadmap:** `docs/PLAN.md`. Read it before starting a phase.
 - **Reference frames from the target video:** `docs/reference/`
@@ -23,14 +23,17 @@ The `java` on PATH is JDK 8. Gradle 9.6 needs JDK 17+, so use Android Studio's b
 ```bash
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
 ./gradlew :app:assembleDebug                          # build the app
+./gradlew :desktopApp:run                             # run the desktop app (Compose Desktop, JVM)
 ./gradlew :core:domain:testAndroidHostTest            # unit tests of one KMP module
 ./gradlew testAndroidHostTest                         # unit tests of all KMP modules
+./gradlew jvmTest                                     # the same common tests on the desktop JVM
 ```
 
 ## Module structure (feature-layered)
 
 ```
 :app                          Thin Android shell: Application (startKoin), MainActivity → App()
+:desktopApp                   Thin desktop shell: main() starts Koin and opens a Window running App()
 :shared                       App() root composable, root NavHost, list of Koin modules (appModules)
 :core:domain                  Shared domain models + Result / Error / DataError
 :core:presentation            Shared presentation helpers (ObserveAsEvents)
