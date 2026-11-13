@@ -19,6 +19,10 @@ kotlin {
             implementation(projects.core.transfer.data)
             implementation(libs.kotlinx.coroutines.core)
         }
+        androidMain.dependencies {
+            implementation(project.dependencies.platform(libs.koin.bom))
+            implementation(libs.koin.core)
+        }
         jvmMain.dependencies {
             implementation(libs.jmdns)
         }

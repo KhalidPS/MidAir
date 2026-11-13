@@ -42,6 +42,8 @@ android {
 dependencies {
     implementation(projects.shared)
     implementation(projects.core.transfer.nearby)
+    implementation(projects.core.transfer.lan)
+    implementation(projects.core.transfer.data)
     implementation(projects.feature.shelf.presentation)
     implementation(libs.kotlinx.coroutines.core)
     debugImplementation(projects.feature.simulator)
