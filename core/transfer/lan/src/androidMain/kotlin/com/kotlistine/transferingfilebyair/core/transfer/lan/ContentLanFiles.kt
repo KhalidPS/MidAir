@@ -23,6 +23,8 @@ internal class ContentLanFiles(context: Context) : LanFiles {
 
     override fun createIncoming(transferId: Long): IncomingFile = incoming.createIncoming(transferId)
 
+    override fun scratch(name: String): File = incoming.scratch(name)
+
     private fun sizeOf(uri: Uri): Long? {
         resolver.openAssetFileDescriptor(uri, "r")?.use { descriptor ->
             if (descriptor.length >= 0) return descriptor.length

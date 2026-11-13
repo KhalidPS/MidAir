@@ -2,6 +2,7 @@ package com.kotlistine.transferingfilebyair.core.transfer.lan
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isLessThanOrEqualTo
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import com.kotlistine.transferingfilebyair.core.domain.util.ByteStream
@@ -164,6 +165,23 @@ class LanPeerLinkTest {
         val kept = File(URI((pulled as Result.Success).data))
         assertThat(kept.readBytes().toList()).isEqualTo(original.readBytes().toList())
         assertThat(phone.media.servedBytes("item-1")).isEqualTo(original.length())
+    }
+
+    @Test
+    fun `what a player already read isn't pulled again`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        val original = randomFile(2_000_000)
+        phone.media.share("video", original.toURI().toString())
+        val stream = (withTimeout(Timeout) { laptop.media.open("video", offset = 0) } as Result.Success).data
+        withContext(Dispatchers.IO) { stream.readExactly(700_000) }
+        val pulled = withTimeout(Timeout) { laptop.media.fetch("video", original.length()) }
+        val file = File(URI((pulled as Result.Success).data))
+        assertThat(file.readBytes().toList()).isEqualTo(original.readBytes().toList())
+        assertThat(phone.media.servedBytes("video")).isLessThanOrEqualTo(original.length() - 700_000)
+        // The player reads on from the pulled file, from where it was.
+        val rest = withTimeout(Timeout) { withContext(Dispatchers.IO) { stream.readAll() } }
+        stream.close()
+        assertThat(rest.toList()).isEqualTo(original.readBytes().drop(700_000))
     }
 
     @Test

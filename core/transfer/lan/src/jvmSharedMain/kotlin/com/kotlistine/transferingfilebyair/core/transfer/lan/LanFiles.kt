@@ -18,6 +18,12 @@ interface LanFiles {
 
     /** A new, empty file for incoming transfer [transferId]. */
     fun createIncoming(transferId: Long): IncomingFile
+
+    /**
+     * A file named [name] in the same scratch folder, for this device to fill as it likes: what has come over of a
+     * file read a piece at a time.
+     */
+    fun scratch(name: String): File
 }
 
 /**
@@ -37,6 +43,11 @@ class DiskLanFiles(private val incomingFolder: File) : LanFiles {
         val file = if (uri.startsWith("file:")) File(URI(uri)) else File(uri)
         OpenedFile(file.inputStream().buffered(), file.length())
     }.getOrNull()
+
+    override fun scratch(name: String): File {
+        incomingFolder.mkdirs()
+        return File(incomingFolder, name)
+    }
 
     override fun createIncoming(transferId: Long): IncomingFile {
         incomingFolder.mkdirs()
