@@ -14,6 +14,7 @@ import androidx.compose.ui.window.rememberWindowState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ScreenDensity
+import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferBoard
 import com.kotlistine.transferingfilebyair.core.transfer.lan.JmdnsDiscovery
 import com.kotlistine.transferingfilebyair.core.transfer.lan.LanMemory
 import com.kotlistine.transferingfilebyair.core.transfer.lan.LanPeerLink
@@ -21,6 +22,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.presentation.di.unatten
 import com.kotlistine.transferingfilebyair.shared.App
 import com.kotlistine.transferingfilebyair.shared.appModules
 import org.koin.core.context.startKoin
+import java.io.File
 
 fun main() {
     val koin = startKoin {
@@ -30,6 +32,9 @@ fun main() {
     val lanLink = koin.get<LanPeerLink>()
     val density = koin.get<ScreenDensity>()
     val savedSide = koin.get<LanMemory>().link.value.peerSide
+    val timings = SlideTimings(File(DesktopInstance.dataFolder, "slide-timings.log")).apply {
+        start(link.transport.incoming, koin.getOrNull<TransferBoard>()?.transfers)
+    }
     application {
         val windowState = rememberWindowState(size = DpSize(width = 480.dp, height = 860.dp))
         var phoneSide by remember { mutableStateOf(savedSide) }
@@ -65,6 +70,7 @@ fun main() {
                 // While the app is open, the phone it paired with before links up again by itself when in reach.
                 link.reconnect()
             }
+            SlideFrameWatch(timings)
             App()
         }
     }
