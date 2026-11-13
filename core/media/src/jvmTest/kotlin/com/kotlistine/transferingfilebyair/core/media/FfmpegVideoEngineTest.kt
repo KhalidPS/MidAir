@@ -15,16 +15,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_AAC
-import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_MPEG4
-import org.bytedeco.javacv.FFmpegFrameRecorder
-import org.bytedeco.javacv.Frame
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ShortBuffer
 import java.util.concurrent.Executors
-import kotlin.math.PI
-import kotlin.math.sin
 import kotlin.test.AfterTest
 import kotlin.test.Test
 
@@ -42,7 +34,7 @@ class FfmpegVideoEngineTest {
 
     @Test
     fun `a video plays from its first frame to the end`() = runBlocking<Unit> {
-        val video = recordVideo(seconds = 1)
+        val video = recordTestVideo(folder, seconds = 1)
         val engine = withContext(ui) { FfmpegVideoEngine(ui) }
         val ended = engine.events
         withContext(ui) { engine.load(VideoSource.Local(video.toURI().toString())) }
@@ -60,7 +52,7 @@ class FfmpegVideoEngineTest {
 
     @Test
     fun `paused, the picture and the position stay put`() = runBlocking<Unit> {
-        val video = recordVideo(seconds = 2)
+        val video = recordTestVideo(folder, seconds = 2)
         val engine = withContext(ui) { FfmpegVideoEngine(ui) }
         withContext(ui) { engine.load(VideoSource.Local(video.toURI().toString()), playWhenReady = false) }
 
@@ -77,7 +69,7 @@ class FfmpegVideoEngineTest {
 
     @Test
     fun `a seek shows the frame from there and plays on`() = runBlocking<Unit> {
-        val video = recordVideo(seconds = 2)
+        val video = recordTestVideo(folder, seconds = 2)
         val engine = withContext(ui) { FfmpegVideoEngine(ui) }
         withContext(ui) { engine.load(VideoSource.Local(video.toURI().toString()), playWhenReady = false) }
         waitUntil { withContext(ui) { engine.frame != null } }
@@ -90,7 +82,7 @@ class FfmpegVideoEngineTest {
 
     @Test
     fun `starting part way in begins there`() = runBlocking<Unit> {
-        val video = recordVideo(seconds = 2)
+        val video = recordTestVideo(folder, seconds = 2)
         val engine = withContext(ui) { FfmpegVideoEngine(ui) }
         withContext(ui) { engine.load(VideoSource.Local(video.toURI().toString()), startAtMs = 1_000, playWhenReady = false) }
         waitUntil { withContext(ui) { engine.frame != null } }
@@ -100,7 +92,7 @@ class FfmpegVideoEngineTest {
 
     @Test
     fun `a portrait phone video is drawn turned upright`() = runBlocking<Unit> {
-        val video = recordVideo(seconds = 1, displayRotation = -90.0)
+        val video = recordTestVideo(folder, seconds = 1, displayRotation = -90.0)
         val engine = withContext(ui) { FfmpegVideoEngine(ui) }
         withContext(ui) { engine.load(VideoSource.Local(video.toURI().toString()), playWhenReady = false) }
         waitUntil { withContext(ui) { engine.frame != null } }
@@ -131,41 +123,5 @@ class FfmpegVideoEngineTest {
         withTimeout(5_000) {
             while (!condition()) delay(10)
         }
-    }
-
-    /** A grey picture that brightens frame by frame, over a 440 Hz tone, 25 frames a second. */
-    private fun recordVideo(seconds: Int, displayRotation: Double = 0.0): File {
-        val file = File(folder, "clip-${System.nanoTime()}.mp4")
-        val width = 64
-        val height = 48
-        val fps = 25
-        val sampleRate = 44_100
-        FFmpegFrameRecorder(file, width, height, 1).apply {
-            format = "mp4"
-            videoCodec = AV_CODEC_ID_MPEG4
-            audioCodec = AV_CODEC_ID_AAC
-            frameRate = fps.toDouble()
-            this.sampleRate = sampleRate
-            gopSize = fps / 2
-            if (displayRotation != 0.0) setDisplayRotation(displayRotation)
-            start()
-            val samplesPerFrame = sampleRate / fps
-            var sampleIndex = 0
-            repeat(seconds * fps) { index ->
-                val picture = Frame(width, height, Frame.DEPTH_UBYTE, 3)
-                val pixels = picture.image[0] as ByteBuffer
-                val shade = (index * 255 / (seconds * fps)).toByte()
-                for (i in 0 until pixels.capacity()) pixels.put(i, shade)
-                record(picture)
-                val tone = ShortArray(samplesPerFrame) {
-                    (sin(2 * PI * 440 * (sampleIndex + it) / sampleRate) * 8_000).toInt().toShort()
-                }
-                sampleIndex += samplesPerFrame
-                recordSamples(ShortBuffer.wrap(tone))
-            }
-            stop()
-            release()
-        }
-        return file
     }
 }

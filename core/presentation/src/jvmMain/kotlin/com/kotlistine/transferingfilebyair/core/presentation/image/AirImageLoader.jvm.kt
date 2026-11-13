@@ -2,5 +2,7 @@ package com.kotlistine.transferingfilebyair.core.presentation.image
 
 import coil3.ComponentRegistry
 
-/** Skia decodes the images; video frames and PDF pages have no desktop decoder yet, so those cards show their icon. */
-internal actual fun ComponentRegistry.Builder.addPlatformDecoders() = Unit
+/** Skia decodes the images and FFmpeg the videos' first frames; PDF pages have no desktop decoder yet (their icon shows). */
+internal actual fun ComponentRegistry.Builder.addPlatformDecoders() {
+    add(VideoStillDecoder.Factory())
+}

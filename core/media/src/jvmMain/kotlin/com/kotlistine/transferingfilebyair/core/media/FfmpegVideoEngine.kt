@@ -456,7 +456,7 @@ internal class VideoFrame(val timestampUs: Long, val image: Image, val generatio
 /** FFmpeg prints every file it opens to the console; only its errors are worth that. */
 private val quietFfmpeg: Unit by lazy { av_log_set_level(AV_LOG_ERROR) }
 
-private fun open(input: String, forPicture: Boolean): FFmpegFrameGrabber = FFmpegFrameGrabber(input).apply {
+internal fun open(input: String, forPicture: Boolean): FFmpegFrameGrabber = FFmpegFrameGrabber(input).apply {
     quietFfmpeg
     // Over the network: give up on a stalled read instead of hanging.
     if (input.startsWith("http")) setOption("rw_timeout", "10000000")
@@ -470,7 +470,7 @@ private fun open(input: String, forPicture: Boolean): FFmpegFrameGrabber = FFmpe
 }
 
 /** The frame's pixels, copied (the grabber reuses its buffer) into an image Skia can draw. */
-private fun Frame.toSkiaImage(): Image? {
+internal fun Frame.toSkiaImage(): Image? {
     val buffer = image?.firstOrNull() as? ByteBuffer ?: return null
     val rowBytes = imageStride
     val bytes = ByteArray(rowBytes * imageHeight)
