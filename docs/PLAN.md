@@ -137,6 +137,22 @@ A **Compose Desktop receiver** in the KMP phase reproduces the video's phone →
     dropped. These introductions are link frames, kept apart from slide messages by their first byte.
   - "Unpair" tells the other phone to forget too, so neither links up again by itself.
 
+- **Decisions (Phase 8, desktop and the LAN link):**
+  - Every shared module also builds for the JVM, and `:desktopApp` (Compose Desktop) runs the same `App()`. On the
+    desktop a video card shows its still (no player yet, so a video crosses as a file), and there are no air gestures.
+  - Phone ↔ laptop goes over `:core:transfer:lan`: found over mDNS (`_airslide._tcp`: JmDNS on every interface on the
+    desktop, NSD on Android), then TCP. Written on Java sockets and crypto in a `jvmSharedMain` source set (Android +
+    desktop), not Ktor in common code: the pairing crypto needs `javax.crypto` anyway. Frames and rules are plain
+    Kotlin in `commonMain`; an iOS app would bring its own link.
+  - A link is two connections, opened by the end that asked: one for pairing and card messages, one for file bytes,
+    so a file never holds up a card's moves (the lesson of the Nearby lag fixes).
+  - Each connection runs a fresh ECDH (P-256) key exchange; HKDF gives a key each way (AES-256-GCM, counter nonces),
+    the 6-digit code both users compare, and a session secret the files' connection proves itself with. Pairing
+    works like the phones': one user asks, both see the same code, each accepts. The end with the smaller id then
+    hands out a 32-byte key; a paired device links up again silently by proving it (HMAC over the connection's
+    transcript), the smaller id making the call. A proof that fails ends the connection.
+  - `AIR_INSTANCE=2` (or `-PairInstance=2`) runs a second desktop copy with its own data, to pair two windows.
+
 ---
 
 ## 4. Technical study: what we need

@@ -5,7 +5,10 @@ import java.net.URI
 
 private const val AppFolderName = "TransferingFileByAir"
 
-/** The app's own data folder: `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.local/share`. */
+/**
+ * The app's own data folder: `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.local/share`. A
+ * second copy of the app on the same computer (`AIR_INSTANCE=2`, for trying the link without a phone) gets its own.
+ */
 internal fun desktopAppDataFolder(): File {
     val home = System.getProperty("user.home")
     val os = System.getProperty("os.name").lowercase()
@@ -14,7 +17,8 @@ internal fun desktopAppDataFolder(): File {
         os.contains("mac") -> File(home, "Library/Application Support")
         else -> System.getenv("XDG_DATA_HOME")?.let(::File) ?: File(home, ".local/share")
     }
-    return File(base, AppFolderName).apply { mkdirs() }
+    val instance = System.getenv("AIR_INSTANCE")?.takeIf { it.isNotBlank() && it != "1" }
+    return File(base, AppFolderName + (instance?.let { "-$it" } ?: "")).apply { mkdirs() }
 }
 
 /** Where received files go: `~/Downloads/TransferingFileByAir`, as on the phone. */

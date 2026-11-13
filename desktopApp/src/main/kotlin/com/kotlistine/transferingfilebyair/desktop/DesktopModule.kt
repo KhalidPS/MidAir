@@ -3,6 +3,10 @@ package com.kotlistine.transferingfilebyair.desktop
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.TransferKeepAlive
+import com.kotlistine.transferingfilebyair.core.transfer.lan.DiskLanFiles
+import com.kotlistine.transferingfilebyair.core.transfer.lan.JmdnsDiscovery
+import com.kotlistine.transferingfilebyair.core.transfer.lan.LanMemory
+import com.kotlistine.transferingfilebyair.core.transfer.lan.LanPeerLink
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.di.TransfersScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,13 +14,23 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.swing.Swing
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import java.io.File
 
-/** What only the desktop shell provides: the transfers' app-wide scope, and the link to the phone. */
+/** What only the desktop shell provides: the transfers' app-wide scope, and the link to the phone over the LAN. */
 internal val desktopModule = module {
     single(named(TransfersScope)) { CoroutineScope(SupervisorJob() + Dispatchers.Swing) }
     // A desktop app stays alive while its window is open; nothing extra keeps it running.
     single { TransferKeepAlive.None }
-    single { OfflinePeerLink() }
-    single<PeerLink> { get<OfflinePeerLink>() }
-    single<LinkGeometry> { get<OfflinePeerLink>() }
+
+    single { LanMemory(File(DesktopInstance.dataFolder, "link.properties")) }
+    single<LinkGeometry> { get<LanMemory>() }
+    single { JmdnsDiscovery() }
+    single { LanPeerLink(
+        memory = get(),
+        discovery = get<JmdnsDiscovery>(),
+        files = DiskLanFiles(File(DesktopInstance.dataFolder, "incoming")),
+        ownName = DesktopInstance.deviceName,
+        log = { println("AirLan: $it") },
+    ) }
+    single<PeerLink> { get<LanPeerLink>() }
 }

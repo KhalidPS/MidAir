@@ -21,11 +21,17 @@ java {
 dependencies {
     implementation(projects.shared)
     implementation(projects.core.transfer.domain)
+    implementation(projects.core.transfer.lan)
     implementation(projects.feature.shelf.presentation)
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutines.swing)
     implementation(platform(libs.koin.bom))
     implementation(libs.koin.core)
+}
+
+// `./gradlew :desktopApp:run -PairInstance=2` starts a second copy with its own data, to pair two windows.
+tasks.withType<JavaExec>().configureEach {
+    providers.gradleProperty("airInstance").orNull?.let { environment("AIR_INSTANCE", it) }
 }
 
 compose.desktop {
