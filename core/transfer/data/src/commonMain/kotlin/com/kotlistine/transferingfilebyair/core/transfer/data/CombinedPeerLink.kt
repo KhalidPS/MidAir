@@ -3,6 +3,7 @@ package com.kotlistine.transferingfilebyair.core.transfer.data
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.MediaChannel
@@ -36,7 +37,7 @@ class CombinedPeerLink(
     private val primary: PeerLink,
     private val secondary: PeerLink,
     private val scope: CoroutineScope,
-) : PeerLink {
+) : PeerLink, InviteLink {
 
     /** Of two devices found at once, the one found last is offered. */
     private var foundLast: PeerLink? = null
@@ -114,6 +115,14 @@ class CombinedPeerLink(
         val link = owner(peer) ?: return Result.Failure(DataError.Network.DISCONNECTED)
         askedLast = link
         return link.accept(peer)
+    }
+
+    /** A scanned invitation is the second link's (a laptop's); the phones' link stops looking meanwhile. */
+    override suspend fun joinInvite(text: String): EmptyResult<DataError.Network> {
+        val invites = secondary as? InviteLink ?: return Result.Failure(DataError.Network.UNKNOWN)
+        askedLast = secondary
+        primary.stopSearching()
+        return invites.joinInvite(text)
     }
 
     override fun decline(peer: PeerDevice) {

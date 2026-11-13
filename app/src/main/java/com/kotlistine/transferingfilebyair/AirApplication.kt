@@ -3,6 +3,7 @@ package com.kotlistine.transferingfilebyair
 import android.app.Application
 import com.kotlistine.transferingfilebyair.core.transfer.data.CombinedLinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.data.CombinedPeerLink
+import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
 import com.kotlistine.transferingfilebyair.core.transfer.lan.LanMemory
@@ -47,6 +48,8 @@ private val linkModule = module {
         )
     }
     single<PeerLink> { get<CombinedPeerLink>() }
+    // Scanning a laptop's QR code pairs with it.
+    single<InviteLink> { get<CombinedPeerLink>() }
     single<LinkGeometry> {
         CombinedLinkGeometry(
             primary = get(named(NearbyLink)),

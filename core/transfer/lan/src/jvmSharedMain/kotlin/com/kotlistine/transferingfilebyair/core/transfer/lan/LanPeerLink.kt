@@ -5,6 +5,7 @@ import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
 import com.kotlistine.transferingfilebyair.core.transfer.data.SlideMessageCodec
 import com.kotlistine.transferingfilebyair.core.transfer.domain.ExitEdge
+import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerLink
@@ -78,7 +79,7 @@ class LanPeerLink(
     private val ownsPlacement: Boolean = false,
     /** Where what happens is told (logcat on a phone, the console on a laptop). */
     private val log: (String) -> Unit = {},
-) : PeerLink {
+) : PeerLink, InviteLink {
 
     private val identity = LanIdentity(memory.ownId, ownName)
     private val ownHex = memory.ownId.toHex()
@@ -204,7 +205,7 @@ class LanPeerLink(
     }
 
     /** Pairs with the device whose invitation was scanned ([text]), if it is one; both prove they know its secret. */
-    suspend fun joinInvite(text: String): EmptyResult<DataError.Network> = withContext(confined) {
+    override suspend fun joinInvite(text: String): EmptyResult<DataError.Network> = withContext(confined) {
         val invite = LanInvite.parse(text) ?: return@withContext Result.Failure(DataError.Network.MALFORMED_MESSAGE)
         if (session != null) return@withContext Result.Failure(DataError.Network.UNKNOWN)
         attempt?.let { pending ->

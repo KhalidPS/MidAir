@@ -8,6 +8,7 @@ import assertk.assertions.isTrue
 import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.domain.util.EmptyResult
 import com.kotlistine.transferingfilebyair.core.domain.util.Result
+import com.kotlistine.transferingfilebyair.core.transfer.domain.InviteLink
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkGeometry
 import com.kotlistine.transferingfilebyair.core.transfer.domain.LinkState
 import com.kotlistine.transferingfilebyair.core.transfer.domain.PeerDevice
@@ -132,6 +133,19 @@ class CombinedPeerLinkTest {
     }
 
     @Test
+    fun `a scanned code goes to the laptop's link, and the phones' link stops looking`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val link = combined()
+            link.joinInvite("airslide:1?code")
+            assertThat(lan.calls).containsExactly("joinInvite airslide:1?code")
+            assertThat(nearby.calls).containsExactly("stopSearching")
+            // Its failure is the one to show.
+            nearby.state.value = LinkState.Searching
+            lan.state.value = LinkState.Failed(DataError.Network.DISCONNECTED)
+            assertThat(link.state.value).isEqualTo(LinkState.Failed(DataError.Network.DISCONNECTED))
+        }
+
+    @Test
     fun `searching works if either link can search`() = runTest(UnconfinedTestDispatcher()) {
         val link = combined()
         nearby.searchResult = Result.Failure(DataError.Network.PERMISSION_MISSING)
@@ -162,7 +176,7 @@ class CombinedPeerLinkTest {
         }
     }
 
-    private class FakeLink(val label: String) : PeerLink {
+    private class FakeLink(val label: String) : PeerLink, InviteLink {
         override val state = MutableStateFlow<LinkState>(LinkState.Idle)
         val calls = mutableListOf<String>()
         var searchResult: EmptyResult<DataError.Network> = Result.Success(Unit)
@@ -212,6 +226,11 @@ class CombinedPeerLinkTest {
         ): Result<String, DataError.Network> {
             calls += "receiveFile $transferId"
             return Result.Success("file")
+        }
+
+        override suspend fun joinInvite(text: String): EmptyResult<DataError.Network> {
+            calls += "joinInvite $text"
+            return Result.Success(Unit)
         }
 
         override fun cancelTransfer(transferId: Long) {
