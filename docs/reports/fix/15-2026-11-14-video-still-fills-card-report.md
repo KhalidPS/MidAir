@@ -4,9 +4,10 @@ This report explains **what went wrong**, **what we did instead**, and **what it
 
 - Branch: `fix/2026-11-14/1901-video-still-fills-card`. One commit: `17d9676`, "fix: size a desktop video card's still
   to cover the card, so the lifted card has it at once". Built on `feature/2026-11-13/desktop-receiver`.
-- **Not merged yet.**
+- **Merged** into `feature/2026-11-13/desktop-receiver` on 2026-11-14, after the device check.
 - Devices: laptop (desktop app, sender) and phone M2101K6G (receiver).
-- **Phone result: not tested yet**, pending the user's laptop → phone send.
+- **Device result: works.** The user sent a video that was not playing from the laptop to the phone: the phone's
+  half showed the thumbnail.
 
 ---
 
@@ -82,14 +83,15 @@ Not done:
 
 - **No end-to-end test of Coil's memory cache.** It would need the FFmpeg and Skia native libraries in
   `core/presentation`'s tests.
-- **No device test yet.** The laptop → phone send is pending.
+- **Device test:** laptop → phone, a video not playing: the phone's half showed the thumbnail (user's check,
+  2026-11-14).
 
 ---
 
 ## 4. What it brings
 
-- **The lifted card should carry the thumbnail** when a not-playing video goes from the laptop to the phone. This is
-  expected from the cause above and the unit tests, not yet seen on the devices.
+- **The lifted card should carry the thumbnail** when a not-playing video goes from the laptop to the phone. Confirmed
+  on the devices.
 - **Fewer FFmpeg decodes.** Shelf slots that scroll back on screen also reuse the cached frame now, instead of
   decoding again.
 - **Cost:** a covering frame can be larger than before. For wide videos in tall cards this means a larger bitmap in
@@ -99,7 +101,6 @@ Not done:
 
 ## 5. Open points
 
-1. **Confirm on the devices:** laptop → phone, a video that is not playing, with both a landscape and a portrait
-   video.
+1. **Portrait and landscape videos:** the device check did not say which; both are sized by the same rule.
 2. **Whether to add an end-to-end cache test later**, with the native libraries in `core/presentation`'s tests.
-3. **The edge-light branches** (`feature/2026-11-14/edge-light-desktop`) do not contain this fix until it is merged.
+3. **The edge-light branches** (`feature/2026-11-14/edge-light-desktop`) get this fix once they are rebased on, or merged with, `desktop-receiver`.
