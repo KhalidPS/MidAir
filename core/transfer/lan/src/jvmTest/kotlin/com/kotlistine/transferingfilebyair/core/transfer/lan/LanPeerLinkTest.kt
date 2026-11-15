@@ -275,6 +275,54 @@ class LanPeerLinkTest {
         withTimeout(Timeout) { phoneAgain.state.first { it is LinkState.Connected } }
     }
 
+    @Test
+    fun `scanning the code of a laptop paired before links them again`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        val oldKey = memories.getValue("laptop").peer!!.key.toList()
+
+        // The apps restart and don't find each other on the network: the user falls back on the code.
+        laptop.stopSearching()
+        phone.stopSearching()
+        network.clear()
+        val laptopAgain = link("laptop")
+        val phoneAgain = link("phone")
+        val invite = laptopAgain.invite(listOf("127.0.0.1"))!!
+        phoneAgain.joinInvite(invite.toText())
+
+        withTimeout(Timeout) { laptopAgain.state.first { it is LinkState.Connected } }
+        withTimeout(Timeout) { phoneAgain.state.first { it is LinkState.Connected } }
+        // The scan is a new pairing: both end up with the same new key.
+        withTimeout(Timeout) {
+            while (true) {
+                val onLaptop = memories.getValue("laptop").peer?.key?.toList()
+                val onPhone = memories.getValue("phone").peer?.key?.toList()
+                if (onLaptop != null && onLaptop != oldKey && onLaptop == onPhone) break
+                kotlinx.coroutines.delay(20)
+            }
+        }
+    }
+
+    @Test
+    fun `scanning the code pairs a phone that forgot the laptop, though the laptop remembers it`() = runBlocking<Unit> {
+        val (laptop, phone) = pair()
+        laptop.stopSearching()
+        phone.stopSearching()
+        network.clear()
+        // The phone keeps who it is, and forgets the laptop.
+        val phoneFile = File(folder, "phone/link.properties")
+        phoneFile.writeText(phoneFile.readLines().filterNot { it.startsWith("peer_") }.joinToString("\n"))
+        val laptopAgain = link("laptop")
+        val phoneAgain = link("phone")
+        assertThat(memories.getValue("phone").peer).isNull()
+        assertThat(memories.getValue("laptop").peer).isNotNull()
+
+        val invite = laptopAgain.invite(listOf("127.0.0.1"))!!
+        phoneAgain.joinInvite(invite.toText())
+
+        withTimeout(Timeout) { laptopAgain.state.first { it is LinkState.Connected } }
+        withTimeout(Timeout) { phoneAgain.state.first { it is LinkState.Connected } }
+    }
+
     /** Pairs a laptop and a phone the way two users would: the phone asks, both accept the code. */
     private fun randomFile(size: Int): File =
         File(folder, "original-${Random.nextInt()}.bin").apply { writeBytes(Random.nextBytes(size)) }

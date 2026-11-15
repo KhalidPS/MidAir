@@ -494,8 +494,13 @@ class LanPeerLink(
         val trusted = memory.peer?.takeIf { it.id.contentEquals(channel.peerId) }
         // The secret an invitation proof is checked against: the one scanned, or the one this end has on show.
         val invitation = inviteKey ?: inviteToken
+        // The caller shows itself first, so the called end can answer in kind.
+        val heard = if (isDialer) null else channel.receiveAuth()
         val mine = when {
             inviteKey != null -> AuthMode.QR
+            // A phone that scanned the code on show pairs through it, even one paired before: it may have forgotten
+            // this end, and answering it as a paired device would leave the two with nothing in common.
+            heard?.mode == AuthMode.QR && invitation != null -> AuthMode.QR
             trusted != null -> AuthMode.TRUSTED
             invitation != null -> AuthMode.QR
             else -> AuthMode.PAIR
@@ -506,7 +511,7 @@ class LanPeerLink(
             AuthMode.PAIR, AuthMode.SESSION -> ByteArray(0)
         }
         channel.send(LanFrame.Auth(mine, mac))
-        val theirAuth = channel.receive() as? LanFrame.Auth ?: throw IOException("Expected the other end's proof")
+        val theirAuth = heard ?: channel.receiveAuth()
         val theirs = when (theirAuth.mode) {
             AuthMode.TRUSTED -> if (trusted == null) {
                 AuthMode.PAIR
@@ -527,9 +532,8 @@ class LanPeerLink(
         withContext(confined) {
             val current = session
             // The paired device came back while this end still thought the old connection was up: it wasn't.
-            if (current != null && current.peer.id == peer.id && mine == AuthMode.TRUSTED && theirs == AuthMode.TRUSTED) {
-                dropLink(reconnectAfter = false)
-            }
+            val bothProved = mine == theirs && (mine == AuthMode.TRUSTED || mine == AuthMode.QR)
+            if (current != null && current.peer.id == peer.id && bothProved) dropLink(reconnectAfter = false)
             val isFree = session == null && attempt == null
             val mayAskUsers = isFree && if (isDialer) {
                 // A scanned code pairs through its secret or not at all: no falling back to the code check.
@@ -564,6 +568,9 @@ class LanPeerLink(
             keepAlive(connection)
         }
     }
+
+    private fun SecureChannel.receiveAuth(): LanFrame.Auth =
+        receive() as? LanFrame.Auth ?: throw IOException("Expected the other end's proof")
 
     /** On [confined]. */
     private fun linkUp(connection: Connection, isNewPairing: Boolean) {
