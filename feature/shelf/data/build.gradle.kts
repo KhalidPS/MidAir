@@ -8,6 +8,21 @@ room {
     schemaDirectory("$projectDir/schemas")
 }
 
+// OpenCV's native build for the computer building the desktop app: Windows, macOS or Linux, x86-64 or ARM.
+val javacppPlatform: String = run {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = if (System.getProperty("os.arch").lowercase().let { "aarch64" in it || "arm64" in it }) "arm64" else "x86_64"
+    when {
+        "win" in os -> "windows-$arch"
+        "mac" in os -> "macosx-$arch"
+        else -> "linux-$arch"
+    }
+}
+
+/** [library] as `group:name:version`, plus a [classifier]: the build of its native code for one platform. */
+fun coordinates(library: Provider<MinimalExternalModuleDependency>, classifier: String? = null): String =
+    library.get().let { "${it.module}:${it.versionConstraint.requiredVersion}" + classifier?.let { c -> ":$c" }.orEmpty() }
+
 kotlin {
     android {
         // Real Room + SQLite runs only on Android here: run with `connectedAndroidDeviceTest` on a device/emulator.
@@ -31,6 +46,13 @@ kotlin {
             implementation(libs.androidx.camera.camera2)
             implementation(libs.androidx.camera.lifecycle)
             implementation(libs.mediapipe.tasks.vision)
+        }
+        jvmMain.dependencies {
+            // Air gestures on the desktop: the webcam (OpenCV's videoio) and the hand models (OpenCV's dnn).
+            implementation(libs.bytedeco.opencv)
+            runtimeOnly(coordinates(libs.bytedeco.opencv, javacppPlatform))
+            runtimeOnly(coordinates(libs.bytedeco.openblas, javacppPlatform))
+            runtimeOnly(coordinates(libs.bytedeco.javacpp, javacppPlatform))
         }
         commonTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)

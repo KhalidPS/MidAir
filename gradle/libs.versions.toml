@@ -39,6 +39,8 @@ jmdns = "3.6.5"
 zxing = "3.5.4"
 javacv = "1.5.11"
 bytedecoFfmpeg = "7.1-1.5.11"
+bytedecoOpencv = "4.10.0-1.5.11"
+bytedecoOpenblas = "0.3.28-1.5.11"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -65,6 +67,8 @@ zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" 
 bytedeco-javacv = { group = "org.bytedeco", name = "javacv", version.ref = "javacv" }
 bytedeco-javacpp = { group = "org.bytedeco", name = "javacpp", version.ref = "javacv" }
 bytedeco-ffmpeg = { group = "org.bytedeco", name = "ffmpeg", version.ref = "bytedecoFfmpeg" }
+bytedeco-opencv = { group = "org.bytedeco", name = "opencv", version.ref = "bytedecoOpencv" }
+bytedeco-openblas = { group = "org.bytedeco", name = "openblas", version.ref = "bytedecoOpenblas" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
