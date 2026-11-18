@@ -14,5 +14,5 @@ build/
 .cxx
 local.properties
 
-# Reference recording (large binary); key frames live in docs/reference/
+# Reference recording (large binary); key frames live in art/
 /transfer sample.mp4
