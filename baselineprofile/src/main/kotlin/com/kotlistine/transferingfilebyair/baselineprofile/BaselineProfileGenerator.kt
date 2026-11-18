@@ -10,7 +10,7 @@ import org.junit.runner.RunWith
 /**
  * Records which code the app runs on its way to the shelf and while the shelf scrolls, so it is compiled ahead of
  * time on install: the first launch and the first slides don't stutter while that code is still being interpreted.
- * Run with `./gradlew :app:generateBaselineProfile`; the result lands in app/src/release/generated/baselineProfiles.
+ * Run with `./gradlew :androidApp:generateBaselineProfile`; the result lands in androidApp/src/release/generated/baselineProfiles.
  */
 @RunWith(AndroidJUnit4::class)
 @LargeTest

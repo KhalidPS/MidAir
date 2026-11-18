@@ -26,7 +26,7 @@ dependencyResolutionManagement {
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 rootProject.name = "TransferingFileByAir"
-include(":app")
+include(":androidApp")
 include(":desktopApp")
 include(":baselineprofile")
 include(":shared")

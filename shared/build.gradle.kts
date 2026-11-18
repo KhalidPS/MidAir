@@ -4,7 +4,7 @@ plugins {
 }
 
 // Root of the shared app: theme + navigation graph + DI modules.
-// Every platform entry point (Android Activity now, desktop/iOS later) just calls App().
+// Every platform entry point (androidApp's Activity, desktopApp's window, iOS later) just calls App().
 kotlin {
     sourceSets {
         commonMain.dependencies {

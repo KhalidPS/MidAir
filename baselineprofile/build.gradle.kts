@@ -4,7 +4,7 @@ plugins {
 }
 
 // Generates the app's Baseline Profile and measures its startup, on a phone plugged in (or an emulator):
-//   ./gradlew :app:generateBaselineProfile
+//   ./gradlew :androidApp:generateBaselineProfile
 //   ./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest
 android {
     namespace = "com.kotlistine.transferingfilebyair.baselineprofile"
@@ -23,7 +23,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    targetProjectPath = ":app"
+    targetProjectPath = ":androidApp"
 }
 
 baselineProfile {
