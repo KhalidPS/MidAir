@@ -1,5 +1,6 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.data.gesture
 
+import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandFrame
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandPose
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandTracker
@@ -68,7 +69,7 @@ class WebcamHandTracker(private val cameraIndex: Int = 0) : HandTracker {
         if (!camera.isOpened) {
             camera.release()
             models.close()
-            throw HandTrackingException("No webcam could be opened")
+            throw cameraFailure("No webcam could be opened")
         }
         camera.set(CAP_PROP_FRAME_WIDTH, 640.0)
         camera.set(CAP_PROP_FRAME_HEIGHT, 480.0)
@@ -80,7 +81,7 @@ class WebcamHandTracker(private val cameraIndex: Int = 0) : HandTracker {
         try {
             while (currentCoroutineContext().isActive) {
                 // Reading drains the webcam's queue even when the picture is skipped, so the next one is fresh.
-                if (!camera.read(picture) || picture.empty()) throw HandTrackingException("The webcam stopped giving pictures")
+                if (!camera.read(picture) || picture.empty()) throw cameraFailure("The webcam stopped giving pictures")
                 val now = System.currentTimeMillis()
                 if (now - handSeenAt > IdleAfterMillis && now - lastReadAt < IdleFrameGapMillis) continue
                 lastReadAt = now
@@ -97,6 +98,12 @@ class WebcamHandTracker(private val cameraIndex: Int = 0) : HandTracker {
             models.close()
         }
     }.flowOn(Dispatchers.IO) // The webcam blocks until each picture is ready.
+
+    /** A blocked webcam either won't open or gives no pictures: the privacy switches tell which failure it is. */
+    private fun cameraFailure(message: String) = HandTrackingException(
+        message,
+        error = if (CameraPrivacy.isBlockedBySystem()) DataError.Local.CAMERA_BLOCKED else DataError.Local.CAMERA_UNAVAILABLE,
+    )
 
     /** On Windows through DirectShow: OpenCV's default there (Media Foundation) takes seconds to open a webcam. */
     private fun openCamera(): VideoCapture {

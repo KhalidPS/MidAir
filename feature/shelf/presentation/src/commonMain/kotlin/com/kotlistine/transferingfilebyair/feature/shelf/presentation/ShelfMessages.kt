@@ -8,6 +8,7 @@ internal fun DataError.toMessage(): String = when (this) {
     DataError.Local.DISK_FULL -> "Your device is out of storage."
     DataError.Local.UNSUPPORTED_FORMAT -> "This device can't play this file."
     DataError.Local.CAMERA_UNAVAILABLE -> "The camera isn't available for air gestures."
+    DataError.Local.CAMERA_BLOCKED -> "The camera is switched off in your privacy settings."
     DataError.Local.UNKNOWN -> "Something went wrong."
     DataError.Network.DISCONNECTED -> "The other device isn't connected."
     DataError.Network.PERMISSION_MISSING -> "Allow nearby devices to pair with the device next to you."
@@ -30,6 +31,8 @@ internal fun ShelfEvent.ShowSent.toMessage(): String = "“$name” left the she
 internal const val UndoLabel = "Undo"
 
 internal const val RetryLabel = "Retry"
+
+internal const val OpenSettingsLabel = "Open settings"
 
 internal fun ShelfEvent.ShowSendFailed.toMessage(): String =
     if (error == DataError.Network.CANCELLED) {

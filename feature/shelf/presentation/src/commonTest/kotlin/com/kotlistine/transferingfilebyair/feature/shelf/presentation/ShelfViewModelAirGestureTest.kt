@@ -173,6 +173,18 @@ class ShelfViewModelAirGestureTest {
         }
     }
 
+    @Test
+    fun `a camera blocked in the privacy settings says so, so the user can be sent there`() = runTest {
+        hands.failure = HandTrackingException("blocked", error = DataError.Local.CAMERA_BLOCKED)
+        shelfOnScreen()
+        viewModel.events.test {
+            viewModel.onAction(ShelfAction.OnAirGestureToggle)
+
+            assertThat(awaitItem()).isEqualTo(ShelfEvent.ShowError(DataError.Local.CAMERA_BLOCKED))
+            assertThat(air.isOn).isFalse()
+        }
+    }
+
     // endregion
 
     // region Grabbing a card here

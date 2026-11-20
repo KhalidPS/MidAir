@@ -8,6 +8,9 @@ interface CameraPermission {
 
     /** Asks the user; the answer goes to the callback given to [rememberCameraPermission]. */
     fun request()
+
+    /** Opens the system's settings where the camera can be allowed again. */
+    fun openSettings()
 }
 
 @Composable

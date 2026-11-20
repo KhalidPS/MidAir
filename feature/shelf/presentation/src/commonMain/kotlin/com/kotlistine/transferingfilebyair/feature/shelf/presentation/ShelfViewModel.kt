@@ -39,6 +39,7 @@ import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandFram
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandPose
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandSmoother
 import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandTracker
+import com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture.HandTrackingException
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.AirGestureUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.ArrivingItemUi
 import com.kotlistine.transferingfilebyair.feature.shelf.presentation.model.CatchableCardUi
@@ -1213,13 +1214,14 @@ class ShelfViewModel(
             smoother.reset()
             val job = hands.frames()
                 .onEach(::onHandFrame)
-                .catch {
+                .catch { failure ->
                     watchJob = null
                     cameraFailed = true
                     _hand.value = null
                     air = air.copy(isOn = false, isWatching = false)
                     publishAir()
-                    eventChannel.send(ShelfEvent.ShowError(DataError.Local.CAMERA_UNAVAILABLE))
+                    val error = (failure as? HandTrackingException)?.error ?: DataError.Local.CAMERA_UNAVAILABLE
+                    eventChannel.send(ShelfEvent.ShowError(error))
                 }
                 .launchIn(viewModelScope)
             // A camera that failed straight away has been given up on already.

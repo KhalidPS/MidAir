@@ -51,8 +51,21 @@ actual fun rememberCameraPermission(onResult: (granted: Boolean) -> Unit): Camer
             override fun request() {
                 if (CameraConsent.isAllowed()) currentOnResult(true) else isAsking = true
             }
+
+            override fun openSettings() = openCameraPrivacySettings()
         }
     }
+}
+
+/** The system's camera privacy page: Windows Settings, or macOS System Settings; Linux has none to open. */
+private fun openCameraPrivacySettings() {
+    val os = System.getProperty("os.name").lowercase()
+    val command = when {
+        "win" in os -> listOf("explorer.exe", "ms-settings:privacy-webcam")
+        "mac" in os -> listOf("open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")
+        else -> return
+    }
+    runCatching { ProcessBuilder(command).start() }
 }
 
 /** The user's answer, kept across restarts in this user's preferences. */

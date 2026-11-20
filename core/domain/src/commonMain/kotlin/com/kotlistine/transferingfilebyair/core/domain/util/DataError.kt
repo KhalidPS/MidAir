@@ -13,6 +13,9 @@ sealed interface DataError : Error {
 
         /** The camera can't be used to watch for air gestures (not allowed, missing, or busy). */
         CAMERA_UNAVAILABLE,
+
+        /** The camera is switched off for apps in the system's privacy settings; the user can switch it back on. */
+        CAMERA_BLOCKED,
         UNKNOWN,
     }
 

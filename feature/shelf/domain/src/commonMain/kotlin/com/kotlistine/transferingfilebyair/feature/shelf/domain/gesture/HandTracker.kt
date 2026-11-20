@@ -1,5 +1,6 @@
 package com.kotlistine.transferingfilebyair.feature.shelf.domain.gesture
 
+import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import kotlinx.coroutines.flow.Flow
 
 /** What the hand in front of the camera is doing. */
@@ -41,4 +42,9 @@ fun interface HandTracker {
     fun frames(): Flow<HandFrame>
 }
 
-class HandTrackingException(message: String, cause: Throwable? = null) : Exception(message, cause)
+/** Why the camera can't watch: [DataError.Local.CAMERA_BLOCKED] when the system's privacy settings switched it off. */
+class HandTrackingException(
+    message: String,
+    cause: Throwable? = null,
+    val error: DataError.Local = DataError.Local.CAMERA_UNAVAILABLE,
+) : Exception(message, cause)

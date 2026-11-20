@@ -65,6 +65,7 @@ import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirColors
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirDimens
 import com.kotlistine.transferingfilebyair.core.designsystem.theme.AirTheme
 import com.kotlistine.transferingfilebyair.core.domain.shelf.FileKind
+import com.kotlistine.transferingfilebyair.core.domain.util.DataError
 import com.kotlistine.transferingfilebyair.core.media.VideoEngine
 import com.kotlistine.transferingfilebyair.core.presentation.ObserveAsEvents
 import com.kotlistine.transferingfilebyair.core.presentation.file.OpenFileResult
@@ -182,7 +183,19 @@ fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () ->
             }
             is ShelfEvent.ShowSent -> offerUndo(event)
             is ShelfEvent.ShowAddFailed -> showMessage(event.toMessage())
-            is ShelfEvent.ShowError -> showMessage(event.error.toMessage())
+            is ShelfEvent.ShowError -> if (event.error == DataError.Local.CAMERA_BLOCKED) {
+                scope.launch {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    val result = snackbarHostState.showSnackbar(
+                        event.error.toMessage(),
+                        OpenSettingsLabel,
+                        duration = SnackbarDuration.Long,
+                    )
+                    if (result == SnackbarResult.ActionPerformed) camera.openSettings()
+                }
+            } else {
+                showMessage(event.error.toMessage())
+            }
             is ShelfEvent.PeerCardLifted -> incomingSlide.onLifted(event.card)
             is ShelfEvent.PeerCardMoved -> incomingSlide.onMoved(
                 id = event.id,
