@@ -40,7 +40,7 @@ tasks.withType<JavaExec>().configureEach {
 
 compose.desktop {
     application {
-        mainClass = "com.kotlistine.transferingfilebyair.desktop.MainKt"
+        mainClass = "com.kotlistine.midair.desktop.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "MidAir"
