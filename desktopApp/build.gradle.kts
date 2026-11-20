@@ -45,6 +45,9 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "MidAir"
             packageVersion = "1.0.0"
+            windows { iconFile.set(project.file("icons/midair.ico")) }
+            macOS { iconFile.set(project.file("icons/midair.icns")) }
+            linux { iconFile.set(project.file("icons/midair.png")) }
         }
     }
 }
