@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="256" height="256">
+  <!-- MidAir icon ("The Lift"): a file card floating above a glowing ring. Same drawing as the Android launcher icon. -->
+  <defs>
+    <radialGradient id="bg" cx="54" cy="44" r="78" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1A1A21"/><stop offset="1" stop-color="#0A0A0D"/></radialGradient>
+    <linearGradient id="ir" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFE15A"/><stop offset="0.25" stop-color="#3FE0D0"/><stop offset="0.5" stop-color="#2F7BFF"/><stop offset="0.75" stop-color="#B53DFF"/><stop offset="1" stop-color="#FF2E93"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFE15A"/><stop offset="0.5" stop-color="#3FE0D0"/><stop offset="1" stop-color="#FF2E93"/></linearGradient>
+    <radialGradient id="shadow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#000" stop-opacity="0.6"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="url(#bg)"/>
+  <ellipse cx="54" cy="81" rx="30" ry="8" fill="none" stroke="url(#ir)" stroke-width="6" stroke-opacity="0.3"/>
+  <ellipse cx="54" cy="81" rx="30" ry="8" fill="none" stroke="url(#ir)" stroke-width="2.4"/>
+  <ellipse cx="54" cy="81" rx="15" ry="3.5" fill="url(#shadow)"/>
+  <g transform="rotate(8 54 42)">
+    <rect x="37" y="20" width="34" height="44" rx="7" fill="#EDEDF1" stroke="url(#rim)" stroke-width="1.6"/>
+    <rect x="43" y="28" width="22" height="3" rx="1.5" fill="#D3D3DB"/>
+    <rect x="43" y="34.5" width="15" height="3" rx="1.5" fill="#D3D3DB"/>
+    <rect x="43" y="41" width="19" height="3" rx="1.5" fill="#D3D3DB"/>
+    <rect x="43" y="47.5" width="12" height="3" rx="1.5" fill="#D3D3DB"/>
+  </g>
+</svg>

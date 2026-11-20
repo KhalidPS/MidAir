@@ -5,6 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.loadSvgPainter
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.MenuBar
@@ -37,6 +39,9 @@ fun main() {
     }
     application {
         val windowState = rememberWindowState(size = DpSize(width = 480.dp, height = 860.dp))
+        val appIcon = remember {
+            DesktopInstance::class.java.getResourceAsStream("/midair_icon.svg")!!.use { loadSvgPainter(it, Density(1f)) }
+        }
         var phoneSide by remember { mutableStateOf(savedSide) }
         var showsQrCode by remember { mutableStateOf(false) }
 
@@ -53,6 +58,7 @@ fun main() {
                 exitApplication()
             },
             title = DesktopInstance.windowTitle,
+            icon = appIcon,
             state = windowState,
         ) {
             MenuBar {
