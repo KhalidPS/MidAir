@@ -31,5 +31,5 @@ internal object DesktopInstance {
         name + (number?.let { " ($it)" } ?: "")
     }
 
-    val windowTitle: String get() = "TransferingFileByAir" + (number?.let { " ($it)" } ?: "")
+    val windowTitle: String get() = "MidAir" + (number?.let { " ($it)" } ?: "")
 }

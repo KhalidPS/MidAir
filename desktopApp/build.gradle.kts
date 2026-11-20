@@ -43,7 +43,7 @@ compose.desktop {
         mainClass = "com.kotlistine.transferingfilebyair.desktop.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
-            packageName = "TransferingFileByAir"
+            packageName = "MidAir"
             packageVersion = "1.0.0"
         }
     }
