@@ -1,6 +1,6 @@
 <div align="center">
 
-<!-- TODO(media): app icon, 128 px → docs/media/icon.png -->
+
 <img src="docs/media/icon.png" width="128" alt="MidAir icon" />
 
 # MidAir
