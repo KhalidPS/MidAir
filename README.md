@@ -1,192 +1,116 @@
 <div align="center">
 
-<img src="art/play-store-icon-512.png" width="128" alt="MidAir icon: a card floating above a glowing ring" />
+<!-- TODO(media): app icon, 128 px → docs/media/icon.png -->
+<img src="docs/media/icon.png" width="128" alt="MidAir icon" />
 
 # MidAir
 
 **Slide a file off your phone's screen and watch it land on the device next to you.**
 
-![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)
-![Kotlin Multiplatform](https://img.shields.io/badge/Kotlin_Multiplatform-Android_%7C_Desktop-7F52FF)
-![Compose Multiplatform](https://img.shields.io/badge/Compose_Multiplatform-1.12-4285F4)
-![License: MIT](https://img.shields.io/badge/License-MIT-green)
+![Kotlin Multiplatform](https://img.shields.io/badge/Kotlin-Multiplatform-7F52FF?logo=kotlin&logoColor=white)
+![Compose Multiplatform](https://img.shields.io/badge/Compose-Multiplatform-4285F4?logo=jetpackcompose&logoColor=white)
+![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
+![Desktop](https://img.shields.io/badge/Desktop-Windows%20%7C%20macOS%20%7C%20Linux-555555)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue)
 
-Built for the [Kotlin Multiplatform Contest](https://kotlinconf.com/contest/) · Android + Desktop (Windows, macOS, Linux)
+Built for the [Kotlin Multiplatform Contest](https://kotlinconf.com/contest/) (KotlinConf 2027).
+
+<!-- TODO(media): hero GIF, the card crossing from phone to laptop, ~800 px wide → docs/media/hero.gif -->
+<img src="docs/media/hero.gif" width="800" alt="A card slides off a phone and lands on a laptop" />
+
+▶️ **[Watch the demo (3–5 min)](TODO-video-link)** <!-- TODO(media): screencast link -->
 
 </div>
-
-<!-- TODO before submission: replace with a GIF or screenshots of MidAir itself, and the screencast link. -->
-> 🎥 **Screencast (3–5 min):** _link coming_
->
-> 📸 **Screenshots:** _coming_
 
 ---
 
 ## Contents
 
 - [What it is](#what-it-is)
-- [Key features](#key-features)
-- [How Kotlin Multiplatform is used](#how-kotlin-multiplatform-is-used)
-- [Architecture](#architecture)
+- [Screenshots](#screenshots)
+- [Demo videos](#demo-videos)
+- [Features](#features)
+- [How to run](#how-to-run)
+- [Judge's walkthrough](#judges-walkthrough)
+- [Kotlin Multiplatform architecture](#kotlin-multiplatform-architecture)
+- [How a slide works](#how-a-slide-works)
 - [Tech stack](#tech-stack)
-- [Run it](#run-it)
-- [Judge's walkthrough: try the key features](#judges-walkthrough-try-the-key-features)
 - [Tests](#tests)
 - [Project structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
-- [Credits and licence](#credits-and-licence)
-
----
+- [Credits and license](#credits-and-license)
 
 ## What it is
 
-Sending a file to the phone or laptop right beside you still means menus: share sheet, pick a device, wait,
-open a notification. MidAir turns it into a physical gesture.
+Sharing a file between two devices on the same desk still means menus, share sheets and pick-a-device lists.
+MidAir makes it physical: put two devices side by side, press on a file and **drag it off the edge of the
+screen**. As it crosses the gap, the card appears on the other device, following your finger, and lands on its
+shelf. Videos keep playing while they cross, and with the camera on you can **grab a card with your fist and drop
+it on the other device by opening your hand**.
 
-Put two devices side by side and pair them. Every file sits on a **shelf** as a card. Press a card, drag it to
-the edge of the screen, and keep going. The card **crosses the gap**: its first half appears on the other
-device's edge, follows your finger there in real time, and lands on that device's shelf when you let go. The
-file's bytes travel underneath, separately from the motion, so even a large video slides smoothly. A video
-**keeps playing** while it straddles the two screens.
+It works **phone ↔ phone** (Android, over Nearby Connections, no Wi-Fi network needed) and **phone ↔ laptop**
+(Android ↔ Windows, macOS or Linux, over the local network, paired by scanning a QR code).
 
-You can also skip the touch completely: close your hand into a **fist** in front of the camera to grab a card,
-then **open your hand** in front of the other device to drop it there.
+## Screenshots
 
-It works phone ↔ phone (Android, over Google Nearby Connections) and phone ↔ laptop (Android ↔ desktop, over the
-local network, paired by scanning a QR code).
+<!-- TODO(media): drop the images into docs/media/ with these names, or change the paths. -->
 
-## Key features
+| Shelf (phone) | Pairing (phone) | Line-up (phone) |
+|:---:|:---:|:---:|
+| <img src="docs/media/phone-shelf.png" width="220" alt="Phone shelf" /> | <img src="docs/media/phone-pairing.png" width="220" alt="Pairing" /> | <img src="docs/media/phone-lineup.png" width="220" alt="Line-up" /> |
+| **Card crossing the edge** | **Receiving** | **Transfers** |
+| <img src="docs/media/phone-crossing.png" width="220" alt="Card crossing the edge" /> | <img src="docs/media/phone-receiving.png" width="220" alt="Receiving" /> | <img src="docs/media/phone-transfers.png" width="220" alt="Transfers sheet" /> |
 
-| | Feature | What happens |
-|---|---|---|
-| 🃏 | **Slide across the gap** | A card dragged off the edge enters the other screen at the same height and speed, sized in real millimetres so it looks continuous across two different displays. |
-| 📐 | **Line-up** | After pairing, one swipe from one screen straight onto the other measures where the other phone is: which side, how many millimetres away, and how much higher or lower its screen sits. On a laptop you pick the side the phone sits on. |
-| 🎬 | **Live video across two screens** | A playing video keeps playing while half of it is on each device. The second device follows the first one's clock. |
-| ✊ | **Air gestures** | Fist to grab, open hand to drop, using the phone camera (MediaPipe) or the laptop webcam (OpenCV + ONNX models). |
-| 💻 | **Phone ↔ laptop** | The desktop app shows a QR code; the phone scans it and the two pair over Wi-Fi with an encrypted link. |
-| 📦 | **Real transfers** | Files go one at a time at full link speed, with progress, speed and time left. They keep going with the screen off (an Android foreground service), and each can be stopped. |
-| 🗂️ | **A persistent shelf** | Received files are saved (Downloads on Android) and stay on the shelf, stored in a Room database shared by both platforms. |
+| Desktop shelf | Pairing QR code on the laptop |
+|:---:|:---:|
+| <img src="docs/media/desktop-shelf.png" width="420" alt="Desktop shelf" /> | <img src="docs/media/desktop-qr.png" width="420" alt="QR pairing window" /> |
 
-## How Kotlin Multiplatform is used
+| Air gestures: grab | Air gestures: release |
+|:---:|:---:|
+| <img src="docs/media/air-grab.png" width="420" alt="Grabbing a card with a fist" /> | <img src="docs/media/air-release.png" width="420" alt="Opening the hand to drop it" /> |
 
-MidAir is one Kotlin codebase with two thin platform shells. Everything a user sees and every rule about how a
-slide behaves is written once, in `commonMain`.
+## Demo videos
 
-**Shared code, counted in lines of Kotlin (main source sets, tests excluded):**
+<!-- TODO(media): paste the GitHub video links (drag an .mp4 into a GitHub comment to get one) or GIFs. -->
 
-| Source set | Runs on | Lines | Share |
-|---|---|---:|---:|
-| `commonMain` | Android **and** desktop | 13,053 | **58 %** |
-| `jvmSharedMain` (custom) | Android **and** desktop (both JVMs) | 1,839 | 8 % |
-| `androidMain` + `androidApp` | Android only | 5,327 | 24 % |
-| `jvmMain` + `desktopApp` | Desktop only | 2,324 | 10 % |
-
-**About 66 % of the app's code runs on both platforms.** Another 8,292 lines of `commonTest` run on both too:
-the same tests execute on the Android host and on the JVM.
-
-**What is shared:**
-- All UI: every screen, the slide animations, the design system, written in Compose Multiplatform.
-- All ViewModels and state (MVI: `State` / `Action` / `Event`), and navigation.
-- The slide protocol: messages, the geometry that maps one screen's position onto another's, and the CBOR codec.
-- The LAN protocol, its encryption, and its sockets (in `jvmSharedMain`, one copy for Android and desktop).
-- The hand-gesture logic: the fist/open detector, smoothing, and the maths that decodes the ONNX palm and
-  landmark models.
-- The video sync logic (`PlaybackFollower`), and the database (Room KMP).
-
-**What is platform-specific, and why:**
-
-| Concern | Android (`androidMain`) | Desktop (`jvmMain`) |
-|---|---|---|
-| Phone ↔ phone link | Google Nearby Connections | — (desktop pairs over LAN) |
-| LAN discovery | `NsdManager` | JmDNS |
-| Video engine | Media3 ExoPlayer | FFmpeg via JavaCV, drawn with Skia |
-| Hand tracking | MediaPipe on the front camera | OpenCV webcam + two ONNX models |
-| Saving received files | MediaStore (Downloads) | `~/Downloads/TransferingFileByAir` |
-| Keeping transfers alive | Foreground service + notifications | Not needed |
-| Pairing code | Scans the QR code (CameraX + ZXing) | Shows the QR code |
-
-**Two ways to reach platform code from common code**, each used where it fits:
-1. **An interface in common, one implementation per platform, bound in Koin.** This is the default for anything
-   with behaviour, for example `HandTracker` → `CameraHandTracker` (Android) / `WebcamHandTracker` (desktop),
-   or `VideoEngine` → `ExoVideoEngine` / `FfmpegVideoEngine`.
-2. **`expect` / `actual`** for small UI-level pieces, such as the glow effect, image decoding and the video
-   surface:
-
-```kotlin
-// core/designsystem/src/commonMain/.../effects/FlowingGlow.kt
-internal expect fun flowingGlowBrush(): FlowingGlowBrush?
-
-// …/FlowingGlow.android.kt → an AGSL RuntimeShader on Android 13+
-// …/FlowingGlow.jvm.kt
-/** The desktop draws the plain turning sweep for now. */
-internal actual fun flowingGlowBrush(): FlowingGlowBrush? = null
-```
-
-**A custom source set.** `core/transfer/lan` adds `jvmSharedMain` between `commonMain` and the Android and JVM
-targets. Sockets and `javax.crypto` exist on both JVMs, so the encrypted LAN link is written once for both, while
-`commonMain` stays pure Kotlin, ready for an iOS target.
-
-**Ready for iOS.** The shells follow the JetBrains default structure (`shared` + `androidApp` + `desktopApp`). An
-iOS target would need a shell, an implementation of each platform interface above, and one Koin line each. No
-screen, ViewModel or protocol code would change.
-
-## Architecture
-
-Clean Architecture per feature, with MVI in the presentation layer and Koin for dependency injection.
-
-```
-androidApp ─┐                         ┌─ desktopApp        thin shells: start Koin, open App()
-            └────────►  shared  ◄─────┘                    App(), NavHost, the list of Koin modules
-                          │
-   feature/pairing/presentation     feature/shelf/{presentation → domain ← data}
-                          │
-   core/{domain, presentation, designsystem, media, transfer/{domain, data, nearby, lan}}
-```
-
-- **Dependency rule:** `presentation → domain ← data`. The domain depends on nothing; presentation never sees
-  data. Koin wires them together at start-up.
-- **Errors as values:** a `Result<T, DataError>` type; no exceptions cross the data layer.
-- **Motion and bytes are separate.** The card's movement travels as small `SlideMessage`s on the peer link; the
-  file travels as byte-range reads on a `MediaChannel`. A large file never makes the card stutter, and a video
-  can start playing before it has fully arrived.
-- **One link, two transports.** `CombinedPeerLink` routes to Nearby (phone ↔ phone) or LAN (phone ↔ laptop).
-  The shelf only sees a `PeerLink`; adding a third transport would not touch it.
-- **Gradle convention plugins** in `build-logic` give every module its targets and setup
-  (`KmpLibrary` → `KmpCompose` → `KmpFeature`), and all versions live in `gradle/libs.versions.toml`.
-
-## Tech stack
-
-| Layer | Technology |
+| Clip | Link |
 |---|---|
-| Language | Kotlin 2.4, coroutines and Flow, kotlinx.serialization (CBOR), kotlinx-datetime |
-| UI | Compose Multiplatform 1.12, Material 3, JetBrains Navigation and Lifecycle (ViewModel) |
-| DI | Koin 4.2 |
-| Database | Room 2.8 (KMP) with the bundled SQLite driver |
-| Images | Coil 3 |
-| Phone ↔ phone | Google Play Services Nearby Connections |
-| Phone ↔ laptop | TCP sockets + `javax.crypto`, NSD (Android) / JmDNS (desktop) discovery, ZXing QR codes |
-| Video | Media3 ExoPlayer (Android), FFmpeg through JavaCV (desktop) |
-| Hand tracking | MediaPipe Tasks (Android), OpenCV dnn + ONNX models from opencv_zoo (desktop) |
-| Camera | CameraX (Android), OpenCV videoio (desktop) |
-| Build | Gradle 9.6, AGP 9.4 (`com.android.kotlin.multiplatform.library`), convention plugins, version catalog |
-| Tests | kotlin.test, AssertK, Turbine |
+| Phone → phone slide | TODO |
+| Phone → laptop slide | TODO |
+| A video playing while it crosses | TODO |
+| Air gestures: grab here, release there | TODO |
+| Full screencast | TODO |
 
-## Run it
+## Features
+
+- **Slide across the gap.** Drag a card off the edge; the other device draws the half that has crossed, at the
+  same physical size and height, following your finger live.
+- **Pair once, line up once.** Phones pair by pressing and holding *Connect* on both; a quick swipe across both
+  screens tells each device which side the other one is on. A laptop shows a QR code; the phone scans it.
+- **Any file.** Photos, videos, PDFs, documents. The card's motion and the file's bytes travel separately, so a big
+  file never makes the card stutter, and bytes start moving before you let go.
+- **Video that keeps playing.** A video card plays across both screens while it crosses, kept in step by a shared
+  clock (ExoPlayer on Android, FFmpeg on the desktop).
+- **Air gestures.** Turn on the camera: make a fist over a card to grab it, open your hand in front of the other
+  device to drop it there. MediaPipe on Android, OpenCV with ONNX hand models on the desktop.
+- **Transfers outlive the screen.** Leave the app or lock the phone; a foreground service keeps files moving, with a
+  progress notification and *Stop* per file.
+- **Encrypted on the local network.** The laptop link uses an authenticated, encrypted channel set up at pairing.
+
+## How to run
 
 ### Prerequisites
 
-- **JDK 17 or newer** to start Gradle. Gradle downloads the JDK it builds with by itself
-  (`gradle/gradle-daemon-jvm.properties`).
-- **Android Studio** (a recent version that supports AGP 9.4) with the **Android SDK 37** installed. The repo has
-  no `local.properties`; Android Studio creates it, or create it yourself with `sdk.dir=/path/to/Android/sdk`.
-- **For Android:** a phone with Android 8.0 (API 26) or newer and Google Play Services. Two phones to slide
-  between them, or one phone and a computer.
-- **For phone ↔ laptop:** both on the **same Wi-Fi network**, with a network that lets devices see each other
-  (many guest or corporate networks don't).
+| | Needed |
+|---|---|
+| JDK | 17 or newer to start Gradle. The build provisions its own JDK through the Gradle daemon toolchain. |
+| Android | Android Studio (latest stable) or the Android SDK with platform 37. A device with Android 8.0+ and Google Play services. **Two phones** for phone ↔ phone. |
+| Desktop | Windows, macOS or Linux, x86-64 or ARM. A webcam for air gestures (optional). |
+| Network | For phone ↔ laptop: both on the same Wi-Fi / local network. Phone ↔ phone needs no network. |
 
 ```bash
-git clone <repository-url>
-cd <repository-folder>
+git clone TODO-repository-url
+cd TODO-repository-folder
 ```
 
 ### Android
@@ -195,82 +119,136 @@ cd <repository-folder>
 ./gradlew :androidApp:installDebug
 ```
 
-Or open the project in Android Studio, pick the **androidApp** run configuration and press Run. Install it on
-both phones.
+Or open the project in Android Studio and run the `androidApp` configuration. Install it on both phones.
 
-### Desktop (Windows, macOS, Linux)
+### Desktop
 
 ```bash
 ./gradlew :desktopApp:run
 ```
 
-To try pairing two desktop windows on one computer, start a second copy with its own data:
+To try two desktop windows on one computer (each with its own data):
 
 ```bash
 ./gradlew :desktopApp:run -PairInstance=2
 ```
 
-### Desktop installer (optional)
+### Desktop installers
 
 ```bash
-./gradlew :desktopApp:packageDistributionForCurrentOS   # .msi on Windows, .dmg on macOS, .deb on Linux
+./gradlew :desktopApp:packageMsi   # Windows
+./gradlew :desktopApp:packageDmg   # macOS
+./gradlew :desktopApp:packageDeb   # Debian / Ubuntu
 ```
 
-The installer is written to `desktopApp/build/compose/binaries/main/`. Packaging needs a full JDK that includes
-`jpackage`; Android Studio's bundled JDK does not. If Gradle reports `'jpackage' is missing`, see
-[Troubleshooting](#troubleshooting).
+Output: `desktopApp/build/compose/binaries/main/<format>/`. Each installer must be built on its own OS. Packaging
+needs a JDK that includes `jpackage`; Android Studio's bundled JBR does not. Point `JAVA_HOME` at a full JDK 17+
+and add `--no-configuration-cache` if the cache still holds the old JDK path.
 
-> **Windows:** a `.bat` launcher is included, so use `gradlew.bat` (or `.\gradlew`) in place of `./gradlew`.
+## Judge's walkthrough
 
-## Judge's walkthrough: try the key features
+<!-- TODO(media): one screenshot per step would help here. -->
 
-### 1. Pair two phones and slide a file (≈ 2 min)
+**Phone ↔ phone (two Android phones)**
 
-1. Open MidAir on both phones and allow the nearby-devices / location permissions when asked.
-2. On both, open pairing (**Pair with a device nearby**), then press and hold **Connect** until they find each
-   other.
-3. **Line up:** lay the phones side by side and, when asked, swipe from one screen straight onto the other in one
-   smooth move. MidAir shows what it measured, for example "on your right, 11 mm away, its screen 4 mm lower".
-4. On one phone, tap **+** (**Add files**) and pick a photo or video.
-5. Press the card, drag it toward the other phone, and keep going past the edge. Watch it enter the other screen
-   and follow your finger. Let go: it lands on the other phone's shelf, and the file is saved to Downloads.
+1. Open MidAir on both phones and allow *Nearby devices* and *Location* when asked.
+2. Press and hold **Connect** on both phones until they pair.
+3. Put the phones side by side and do the **Line up** swipe across both screens, so each knows where the other is.
+4. Tap **+** and add a few photos, a PDF and a video.
+5. Press a card, drag it off the edge facing the other phone, and watch it cross. Let go: it lands on the other
+   shelf.
+6. Slide a **video** and watch it keep playing while it crosses.
+7. Open **Transfers** to see progress; slide a large file and press the Home button: it keeps going.
 
-### 2. Slide a video while it plays
+**Phone ↔ laptop**
 
-Add a video, tap its card to play it, then slide it across. Halfway, half of the video plays on each phone, in
-step.
+1. Run the desktop app and open **Pair with a QR code** on the laptop.
+2. On the phone, open pairing and tap **Scan code**, then scan the laptop's code.
+3. Hold the phone beside the laptop screen's left or right edge and slide a card off the phone towards it.
+4. Drag a file from the laptop shelf back to the phone.
 
-### 3. Air gestures
+**Air gestures**
 
-1. Tap the hand button in the shelf's bottom bar (**Turn on air gestures**) and allow the camera.
-2. Hold your open hand in front of the camera, over a card, then close it into a **fist**: the card is grabbed.
-3. Move to the other device and **open your hand** in front of it: the card drops there.
+1. Turn on air gestures from the shelf's bottom bar and allow the camera.
+2. Hold an open hand in front of the camera, close it into a fist over a card: it lifts.
+3. Open your hand in front of the other device: the card drops there.
 
-On the desktop, MidAir asks for consent before it uses the webcam. If Windows' camera privacy settings block it,
-MidAir says so and offers to open them.
+## Kotlin Multiplatform architecture
 
-### 4. Phone ↔ laptop
+MidAir follows the JetBrains default KMP structure: a `shared` library with all shared code, and one **thin shell
+per platform** (`androidApp`, `desktopApp`). The shared code is split into `core/*` and `feature/*` modules, each
+built for **Android** and **JVM (desktop)** from the same `commonMain`.
 
-1. Start the desktop app (`./gradlew :desktopApp:run`) on a computer on the same Wi-Fi as the phone.
-2. In the desktop window's menu, choose **Phone → Pair with a QR code…**: it shows a code.
-3. On the phone's pairing screen, tap **Scan code** and point the camera at it.
-4. Hold the phone against the laptop screen's left or right edge and tell the desktop which one
-   (**Phone → On my left / On my right**). The window moves against that edge.
-5. Slide cards across, both ways.
-
-### 5. Transfers
-
-Slide a few large files at once and pull down the notification shade: there is a summary with **Stop all**, plus
-one notification per file with progress and **Stop**. Turn the screen off; the transfers keep going.
-
-### No second phone?
-
-Debug builds include a **Twin Simulator**, a developer tool that fakes two phones side by side on one screen, to
-try the slide without a second device:
-
-```bash
-adb shell am start -n com.kotlistine.midair/.SimulatorActivity
 ```
+androidApp ─┐                       ┌─ desktopApp         thin shells: start Koin, open a window/activity
+            └──────► shared ◄───────┘                     App(), navigation, list of Koin modules
+                       │
+     feature/pairing/presentation     feature/shelf/{presentation → domain ← data}
+                       │
+  core/{domain, presentation, designsystem, media, transfer/{domain, data, nearby, lan}}
+```
+
+- **Clean architecture per feature:** `presentation → domain ← data`. Domain depends on nothing; Koin wires the
+  layers at start-up.
+- **MVI** in every screen: `State`, `Action`, `Event`, a `ViewModel` and a stateless, previewable `Screen`.
+- **Platform code behind common contracts.** Mostly an interface in `commonMain` with one implementation per
+  platform, bound in Koin (`HandTracker`, `VideoEngine`, `LanDiscovery`, `ReceivedFileStore`). `expect`/`actual`
+  only for small UI pieces (a glow effect, image decoding, the video surface).
+- **A custom middle source set.** `core/transfer/lan` has `jvmSharedMain`, shared by Android and the desktop (both
+  JVMs): sockets and encryption are written once for both.
+
+### How much is shared
+
+Lines of Kotlin in `src/main` code (tests not counted):
+
+| Where | Lines | Runs on |
+|---|---:|---|
+| `commonMain` | 13,053 | Android + desktop |
+| `jvmSharedMain` | 1,839 | Android + desktop |
+| `androidMain` | 4,676 | Android only |
+| `jvmMain` | 1,672 | Desktop only |
+| App shells (`androidApp`, `desktopApp`) | 1,303 | One platform each |
+
+**About 66 % of the app's code runs on both platforms** (58 % in `commonMain` alone). The UI, navigation,
+ViewModels, slide geometry, wire protocol, video sync, gesture detection and the database are all shared. What stays
+per platform is what has to: Nearby Connections, the camera and hand models, the video decoder, file storage.
+
+| Contract (common) | Android | Desktop |
+|---|---|---|
+| `PeerLink` | Nearby Connections, LAN | LAN |
+| `LanDiscovery` | `NsdManager` | JmDNS |
+| `VideoEngine` | Media3 ExoPlayer | FFmpeg via JavaCV, drawn with Skia |
+| `HandTracker` | MediaPipe, front camera | OpenCV + ONNX palm and hand models, webcam |
+| `ReceivedFileStore` | MediaStore / Downloads | Downloads folder |
+| `ShelfDatabaseFactory` | Room (Android) | Room (bundled SQLite) |
+
+## How a slide works
+
+1. **Finger input** (`SlideGesture`) becomes *lift / move / drop* messages.
+2. **Geometry** (`SlideGeometry`, `Crossing`, `ScreenDensity`) turns a position on device A into millimetres, then
+   into pixels on device B, so the card keeps its real size across different screens.
+3. **Messages** (`SlideMessage`, a sealed interface) are mapped to DTOs and encoded as CBOR with
+   kotlinx.serialization.
+4. **Transport:** `CombinedPeerLink` routes them over Nearby (phone ↔ phone) or the encrypted LAN link (phone ↔
+   laptop).
+5. **Bytes travel apart** from the motion: the receiver reads byte ranges through `MediaChannel`, so a video can
+   start playing before the whole file has arrived.
+6. **Receiving side** (`IncomingSlide`) draws the half-card entering from its edge, then lands it on the shelf.
+
+## Tech stack
+
+| Area | Libraries |
+|---|---|
+| Language & build | Kotlin 2.4, Kotlin Multiplatform, Gradle convention plugins in `build-logic`, AGP 9 KMP library plugin |
+| UI | Compose Multiplatform, Material 3, JetBrains Navigation & Lifecycle (ViewModel) |
+| Async | kotlinx.coroutines, Flow |
+| DI | Koin |
+| Data | Room (multiplatform) + bundled SQLite, kotlinx.serialization (CBOR), kotlinx-datetime |
+| Images | Coil 3 |
+| Transport | Google Nearby Connections (Android), sockets + JmDNS / NSD (LAN), ZXing (QR codes), CameraX (QR scanning) |
+| Video | Media3 ExoPlayer (Android), FFmpeg via JavaCV (desktop) |
+| Hand tracking | MediaPipe Tasks (Android), OpenCV dnn + ONNX models (desktop) |
+| Tests | kotlin.test, AssertK, Turbine |
 
 ## Tests
 
@@ -278,54 +256,53 @@ adb shell am start -n com.kotlistine.midair/.SimulatorActivity
 ./gradlew testAndroidHostTest jvmTest
 ```
 
-The `commonTest` suites run twice, once on each platform. Good places to start reading:
-- `core/transfer/data` · codec round-trips for every slide message.
-- `feature/shelf/domain` · `PlaybackFollower` (video sync) and the air-gesture detector.
-- `feature/shelf/presentation` · the shelf ViewModel driven through fakes (`FakeHandTracker`, a fake peer link).
-- `feature/pairing/presentation` · `PairingViewModelTest` with Turbine and AssertK.
+The same `commonTest` code (~8,300 lines) runs on **both** targets: codec round trips, slide geometry, the gesture
+detector, playback sync, the transfer board and the ViewModels with fakes.
 
 ## Project structure
 
 ```
-├── androidApp/                 Android shell: Application, MainActivity, transfer foreground service
-├── desktopApp/                 Desktop shell: main(), window docking beside the phone, QR window, installer config
-├── shared/                     App() root, NavHost and the list of Koin modules, for both shells
-├── core/
-│   ├── domain/                 Result/DataError, ShelfItem and other shared models
-│   ├── presentation/           MVI helpers, image loading (expect/actual)
-│   ├── designsystem/           Theme, colours, motion tokens, shader effects (expect/actual)
-│   ├── media/                  VideoEngine contract; ExoPlayer and FFmpeg engines
-│   └── transfer/
-│       ├── domain/             PeerLink, SlideMessage, crossing geometry, TransferBoard
-│       ├── data/               DTOs + CBOR codec, CombinedPeerLink, file spans
-│       ├── nearby/             Google Nearby Connections link (Android)
-│       └── lan/                LAN protocol (common), encrypted sockets (jvmSharedMain), discovery per platform
-├── feature/
-│   ├── pairing/presentation/   Pairing, QR scan/show and line-up screens
-│   ├── shelf/{domain,data,presentation}/   The shelf: slides, transfers, video, air gestures, Room database
-│   └── simulator/              Debug-only Twin Simulator
-├── build-logic/convention/     Gradle convention plugins (KMP library → Compose → feature)
-├── baselineprofile/            Baseline profile for Android start-up
-└── gradle/libs.versions.toml   Every dependency version
+androidApp/          Android shell: Application, Activity, foreground transfer service
+desktopApp/          Desktop shell: main(), window, phone placement, QR window, installer config
+shared/              App(), navigation, every Koin module in one list
+core/
+  domain/            Result & error types, the shelf item model
+  presentation/      UI helpers, image loading (expect/actual)
+  designsystem/      Theme, colours, motion tokens, effects
+  media/             VideoEngine: ExoPlayer / FFmpeg
+  transfer/
+    domain/          PeerLink, SlideMessage, geometry, TransferBoard
+    data/            DTOs, CBOR codec, CombinedPeerLink
+    nearby/          Nearby Connections link (Android)
+    lan/             Encrypted LAN link (Android + desktop)
+feature/
+  pairing/           Pairing, line-up and QR screens
+  shelf/             The shelf: presentation / domain / data
+  simulator/         Debug-only: two virtual phones on one screen
+build-logic/         Convention plugins (KMP library, Compose, feature)
+baselineprofile/     Android baseline profile
+```
+
+**Debug tool:** a debug build includes a *Twin Simulator*, two virtual phones on one screen, for trying the slide
+with one device:
+
+```bash
+adb shell am start -n com.kotlistine.midair/.SimulatorActivity
 ```
 
 ## Troubleshooting
 
-| Problem | Fix |
+| Problem | Try |
 |---|---|
-| `SDK location not found` | Open the project once in Android Studio, or create `local.properties` with `sdk.dir=…`. |
-| `'jpackage' is missing` when packaging the desktop app | Gradle is running on a JDK without `jpackage` (e.g. Android Studio's). Point `JAVA_HOME` at a full JDK 17+ (Temurin, Zulu…), then run `./gradlew --stop` and package again with `--no-configuration-cache`. |
-| The phones don't find each other | Allow all permissions, turn on Bluetooth, Wi-Fi and location, and keep the phones close. |
-| The phone can't reach the laptop | Use the same Wi-Fi network, and allow the desktop app through the computer's firewall. |
-| Air gestures show "camera blocked" on Windows | Allow desktop apps to use the camera: **Settings → Privacy & security → Camera**. MidAir offers a button that opens it. |
+| Phones don't find each other | Allow *Nearby devices* and *Location*, turn on Bluetooth and Wi-Fi, keep the phones close. |
+| Phone can't reach the laptop | Both must be on the same network; some guest or office Wi-Fi blocks devices from seeing each other. Allow the desktop app through the firewall. |
+| Air gestures don't start on Windows | Check *Settings → Privacy → Camera*; the app offers *Open settings* when the camera is blocked. |
+| `jpackage` missing when packaging | Use a full JDK (not Android Studio's JBR) as `JAVA_HOME`, and run with `--no-configuration-cache`. |
 
-## Credits and licence
+## Credits and license
+
+- Hand models: palm detection and hand landmarks from [OpenCV Zoo](https://github.com/opencv/opencv_zoo) (desktop),
+  MediaPipe gesture recognizer (Android).
+- FFmpeg through [JavaCV](https://github.com/bytedeco/javacv) (LGPL build, decoders only).
 
 MidAir is released under the [MIT License](LICENSE).
-
-Third-party pieces it builds on, each under its own licence:
-- Hand models on the desktop (`palm_detection.onnx`, `hand_landmarks.onnx`) are from
-  [OpenCV Zoo](https://github.com/opencv/opencv_zoo).
-- The Android hand model (`gesture_recognizer.task`) is from
-  [Google MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/gesture_recognizer).
-- Desktop video decoding uses FFmpeg through [JavaCV](https://github.com/bytedeco/javacv).
