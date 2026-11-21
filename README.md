@@ -85,8 +85,9 @@ It works **phone ↔ phone** (Android, over Nearby Connections, no Wi-Fi network
 
 - **Slide across the gap.** Drag a card off the edge; the other device draws the half that has crossed, at the
   same physical size and height, following your finger live.
-- **Pair once, line up once.** Phones pair by pressing and holding *Connect* on both; a quick swipe across both
-  screens tells each device which side the other one is on. A laptop shows a QR code; the phone scans it.
+- **Pair once, line up once.** Phones pair by pressing and holding *Connect* on both; one swipe from one screen
+  onto the other measures where the other phone is: which side, how many millimetres away, how much higher or
+  lower. A laptop shows a QR code; the phone scans it.
 - **Any file.** Photos, videos, PDFs, documents. The card's motion and the file's bytes travel separately, so a big
   file never makes the card stutter, and bytes start moving before you let go.
 - **Video that keeps playing.** A video card plays across both screens while it crosses, kept in step by a shared
@@ -153,7 +154,8 @@ and add `--no-configuration-cache` if the cache still holds the old JDK path.
 
 1. Open MidAir on both phones and allow *Nearby devices* and *Location* when asked.
 2. Press and hold **Connect** on both phones until they pair.
-3. Put the phones side by side and do the **Line up** swipe across both screens, so each knows where the other is.
+3. Put the phones side by side and do the **Line up** swipe, from one screen straight onto the other. MidAir shows
+   what it measured, e.g. "on your right, 11 mm away, its screen 4 mm lower".
 4. Tap **+** and add a few photos, a PDF and a video.
 5. Press a card, drag it off the edge facing the other phone, and watch it cross. Let go: it lands on the other
    shelf.
@@ -162,10 +164,14 @@ and add `--no-configuration-cache` if the cache still holds the old JDK path.
 
 **Phone ↔ laptop**
 
-1. Run the desktop app and open **Pair with a QR code** on the laptop.
+1. Run the desktop app and choose **Phone → Pair with a QR code…** in its menu bar.
 2. On the phone, open pairing and tap **Scan code**, then scan the laptop's code.
-3. Hold the phone beside the laptop screen's left or right edge and slide a card off the phone towards it.
-4. Drag a file from the laptop shelf back to the phone.
+3. Hold the phone beside the laptop screen's left or right edge and tell the desktop which side
+   (**Phone → On my left / On my right**); the window moves against that edge.
+4. Slide a card off the phone towards the laptop, then drag a file from the laptop shelf back to the phone.
+
+**Only one phone?** A debug build includes the *Twin Simulator*, two virtual phones on one screen:
+`adb shell am start -n com.kotlistine.midair/.SimulatorActivity`
 
 **Air gestures**
 
@@ -194,6 +200,14 @@ androidApp ─┐                       ┌─ desktopApp         thin shells: s
 - **Platform code behind common contracts.** Mostly an interface in `commonMain` with one implementation per
   platform, bound in Koin (`HandTracker`, `VideoEngine`, `LanDiscovery`, `ReceivedFileStore`). `expect`/`actual`
   only for small UI pieces (a glow effect, image decoding, the video surface).
+  ```kotlin
+  // core/designsystem › commonMain › effects/FlowingGlow.kt
+  internal expect fun flowingGlowBrush(): FlowingGlowBrush?
+
+  // FlowingGlow.android.kt → an AGSL RuntimeShader on Android 13+
+  // FlowingGlow.jvm.kt     → the desktop draws the plain turning sweep for now:
+  internal actual fun flowingGlowBrush(): FlowingGlowBrush? = null
+  ```
 - **A custom middle source set.** `core/transfer/lan` has `jvmSharedMain`, shared by Android and the desktop (both
   JVMs): sockets and encryption are written once for both.
 
@@ -219,7 +233,7 @@ per platform is what has to: Nearby Connections, the camera and hand models, the
 | `LanDiscovery` | `NsdManager` | JmDNS |
 | `VideoEngine` | Media3 ExoPlayer | FFmpeg via JavaCV, drawn with Skia |
 | `HandTracker` | MediaPipe, front camera | OpenCV + ONNX palm and hand models, webcam |
-| `ReceivedFileStore` | MediaStore / Downloads | Downloads folder |
+| `ReceivedFileStore` | MediaStore / Downloads | `~/Downloads/TransferingFileByAir` |
 | `ShelfDatabaseFactory` | Room (Android) | Room (bundled SQLite) |
 
 ## How a slide works
