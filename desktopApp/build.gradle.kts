@@ -40,11 +40,14 @@ tasks.withType<JavaExec>().configureEach {
 
 compose.desktop {
     application {
-        mainClass = "com.kotlistine.transferingfilebyair.desktop.MainKt"
+        mainClass = "com.kotlistine.midair.desktop.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
-            packageName = "TransferingFileByAir"
+            packageName = "MidAir"
             packageVersion = "1.0.0"
+            windows { iconFile.set(project.file("icons/midair.ico")) }
+            macOS { iconFile.set(project.file("icons/midair.icns")) }
+            linux { iconFile.set(project.file("icons/midair.png")) }
         }
     }
 }

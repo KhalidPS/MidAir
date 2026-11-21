@@ -2,7 +2,7 @@
 <!--
     Debug builds only: the Twin Simulator, a developer tool that fakes two phones on one screen to tune the slide.
     It has no launcher icon, so the only icon is the real app. Open it with:
-    adb shell am start -n com.kotlistine.transferingfilebyair/.SimulatorActivity
+    adb shell am start -n com.kotlistine.midair/.SimulatorActivity
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -16,7 +16,7 @@
 
         <!--
             Debug builds only: 50 mm lines drawn from the reported screen density, to check it with a ruler.
-            adb shell am start -n com.kotlistine.transferingfilebyair/.RulerActivity
+            adb shell am start -n com.kotlistine.midair/.RulerActivity
         -->
         <activity
             android:name=".RulerActivity"

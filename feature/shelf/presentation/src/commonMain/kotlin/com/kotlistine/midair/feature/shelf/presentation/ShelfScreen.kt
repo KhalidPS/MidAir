@@ -1,0 +1,557 @@
+package com.kotlistine.midair.feature.shelf.presentation
+
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.AbsoluteAlignment
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kotlistine.midair.core.designsystem.effects.recede
+import com.kotlistine.midair.core.designsystem.motion.Motion
+import com.kotlistine.midair.core.designsystem.motion.awaitFrames
+import com.kotlistine.midair.core.designsystem.theme.AirColors
+import com.kotlistine.midair.core.designsystem.theme.AirDimens
+import com.kotlistine.midair.core.designsystem.theme.AirTheme
+import com.kotlistine.midair.core.domain.shelf.FileKind
+import com.kotlistine.midair.core.domain.util.DataError
+import com.kotlistine.midair.core.media.VideoEngine
+import com.kotlistine.midair.core.presentation.ObserveAsEvents
+import com.kotlistine.midair.core.presentation.file.OpenFileResult
+import com.kotlistine.midair.core.presentation.file.rememberFileOpener
+import com.kotlistine.midair.core.presentation.file.rememberFilePickerLauncher
+import com.kotlistine.midair.core.transfer.domain.ExitEdge
+import com.kotlistine.midair.feature.shelf.presentation.air.CatchHint
+import com.kotlistine.midair.feature.shelf.presentation.air.GrabState
+import com.kotlistine.midair.feature.shelf.presentation.air.GrabbedCard
+import com.kotlistine.midair.feature.shelf.presentation.air.HandCursor
+import com.kotlistine.midair.feature.shelf.presentation.air.HeldCardLight
+import com.kotlistine.midair.feature.shelf.presentation.air.HoldHint
+import com.kotlistine.midair.feature.shelf.presentation.air.rememberGrabState
+import com.kotlistine.midair.feature.shelf.presentation.components.CardVideo
+import com.kotlistine.midair.feature.shelf.presentation.components.EmptyShelf
+import com.kotlistine.midair.feature.shelf.presentation.components.LocalCardVideo
+import com.kotlistine.midair.feature.shelf.presentation.components.ShelfBottomBar
+import com.kotlistine.midair.feature.shelf.presentation.components.ShelfGrid
+import com.kotlistine.midair.feature.shelf.presentation.components.TransfersPill
+import com.kotlistine.midair.feature.shelf.presentation.components.TransfersSheet
+import com.kotlistine.midair.feature.shelf.presentation.components.arrivingKey
+import com.kotlistine.midair.feature.shelf.presentation.model.ArrivingItemUi
+import com.kotlistine.midair.feature.shelf.presentation.model.HandPointUi
+import com.kotlistine.midair.feature.shelf.presentation.model.ShelfItemUi
+import com.kotlistine.midair.feature.shelf.presentation.model.TransfersUi
+import com.kotlistine.midair.feature.shelf.presentation.permission.rememberCameraPermission
+import com.kotlistine.midair.feature.shelf.presentation.permission.rememberNotificationPermission
+import com.kotlistine.midair.feature.shelf.presentation.slide.ArrivalWave
+import com.kotlistine.midair.feature.shelf.presentation.slide.EdgeBloom
+import com.kotlistine.midair.feature.shelf.presentation.slide.IncomingCard
+import com.kotlistine.midair.feature.shelf.presentation.slide.IncomingSlideState
+import com.kotlistine.midair.feature.shelf.presentation.slide.LiftedCard
+import com.kotlistine.midair.feature.shelf.presentation.slide.SlideFrame
+import com.kotlistine.midair.feature.shelf.presentation.slide.SlideListener
+import com.kotlistine.midair.feature.shelf.presentation.slide.SlotRegistry
+import com.kotlistine.midair.feature.shelf.presentation.slide.rememberIncomingSlideState
+import com.kotlistine.midair.feature.shelf.presentation.slide.rememberSlideState
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.max
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.koin.compose.viewmodel.koinViewModel
+
+@Composable
+fun ShelfRoot(viewModel: ShelfViewModel = koinViewModel(), onDevicesClick: () -> Unit = {}) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val filePicker = rememberFilePickerLauncher { uris -> viewModel.onAction(ShelfAction.OnFilesPicked(uris)) }
+    val fileOpener = rememberFileOpener()
+    val incomingSlide = rememberIncomingSlideState()
+    val grabState = rememberGrabState { id, width, height, thumbnail ->
+        viewModel.onAction(ShelfAction.OnCardGrabbed(id, width, height, thumbnail))
+    }
+    val camera = rememberCameraPermission { granted ->
+        viewModel.onAction(ShelfAction.OnCameraPermission(granted, justAsked = true))
+    }
+    val hand = viewModel.hand.collectAsStateWithLifecycle()
+    // Read through a lambda, by the few composables that show progress: the rest of the screen doesn't follow it.
+    val transfers = viewModel.fileTransfers.collectAsStateWithLifecycle()
+    val notifications = rememberNotificationPermission()
+    // Asked for once, the first time a file starts moving: that's when its progress needs a notification.
+    val isMoving by remember { derivedStateOf { transfers.value.active.isNotEmpty() } }
+    var askedForNotifications by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isMoving) {
+        if (isMoving && !askedForNotifications) {
+            askedForNotifications = true
+            notifications.requestIfNeeded()
+        }
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onAction(ShelfAction.OnScreenHidden) }
+    // The camera only watches for air gestures while the shelf is on screen; the permission may change meanwhile.
+    LifecycleResumeEffect(camera) {
+        viewModel.onAction(ShelfAction.OnCameraPermission(camera.isGranted()))
+        viewModel.onAction(ShelfAction.OnScreenVisibilityChanged(isVisible = true))
+        onPauseOrDispose { viewModel.onAction(ShelfAction.OnScreenVisibilityChanged(isVisible = false)) }
+    }
+
+    fun showMessage(message: String) {
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
+    // The snackbar's own lifetime decides the send: it can stay up longer than its nominal duration (accessibility
+    // timeouts), and the item must stay recoverable for as long as Undo is visible.
+    fun offerUndo(event: ShelfEvent.ShowSent) {
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = try {
+                snackbarHostState.showSnackbar(event.toMessage(), UndoLabel, duration = SnackbarDuration.Short)
+            } catch (e: CancellationException) {
+                // The screen went away mid-offer: bring the item back rather than lose it.
+                viewModel.onAction(ShelfAction.OnUndoSend(event.id))
+                throw e
+            }
+            viewModel.onAction(
+                if (result == SnackbarResult.ActionPerformed) {
+                    ShelfAction.OnUndoSend(event.id)
+                } else {
+                    ShelfAction.OnUndoOfferClosed(event.id)
+                },
+            )
+        }
+    }
+
+    ObserveAsEvents(viewModel.events) { event ->
+        when (event) {
+            is ShelfEvent.OpenFile -> when (fileOpener.open(event.uri, event.mimeType)) {
+                OpenFileResult.OPENED -> Unit
+                OpenFileResult.NO_APP -> showMessage(NoAppToOpenMessage)
+                OpenFileResult.NOT_ACCESSIBLE -> showMessage(FileNotAccessibleMessage)
+            }
+            is ShelfEvent.ShowSent -> offerUndo(event)
+            is ShelfEvent.ShowAddFailed -> showMessage(event.toMessage())
+            is ShelfEvent.ShowError -> if (event.error == DataError.Local.CAMERA_BLOCKED) {
+                scope.launch {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    val result = snackbarHostState.showSnackbar(
+                        event.error.toMessage(),
+                        OpenSettingsLabel,
+                        duration = SnackbarDuration.Long,
+                    )
+                    if (result == SnackbarResult.ActionPerformed) camera.openSettings()
+                }
+            } else {
+                showMessage(event.error.toMessage())
+            }
+            is ShelfEvent.PeerCardLifted -> incomingSlide.onLifted(event.card)
+            is ShelfEvent.PeerCardMoved -> incomingSlide.onMoved(
+                id = event.id,
+                leftPx = event.leftPx,
+                topPx = event.topPx,
+                velocityXPxPerS = event.velocityXPxPerS,
+                velocityYPxPerS = event.velocityYPxPerS,
+                tiltDegrees = event.tiltDegrees,
+                arrival = event.arrival,
+                entryEdge = event.entryEdge,
+                sentAtMillis = event.sentAtMillis,
+                leadMillis = event.leadMillis,
+            )
+            is ShelfEvent.PeerCardWithdrawn -> incomingSlide.onWithdrawn(event.id)
+            is ShelfEvent.PeerCardArrived ->
+                incomingSlide.onArrived(event.id, Offset(event.velocityXPxPerS, event.velocityYPxPerS))
+            ShelfEvent.RequestCameraPermission -> camera.request()
+            is ShelfEvent.GrabCardAt -> grabState.grabAt(event.x, event.y)
+            is ShelfEvent.HeldCardPutBack -> grabState.putBack(event.id)
+            is ShelfEvent.HeldCardCaught -> grabState.caught(event.id)
+            is ShelfEvent.PeerCardCaught -> {
+                val size = incomingSlide.containerSize
+                incomingSlide.onCaught(event.id, Offset(event.x * size.width, event.y * size.height))
+            }
+            is ShelfEvent.ShowSendFailed -> scope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                val result = snackbarHostState.showSnackbar(event.toMessage(), RetryLabel, duration = SnackbarDuration.Long)
+                if (result == SnackbarResult.ActionPerformed) viewModel.onAction(ShelfAction.OnRetrySend(event.id))
+            }
+        }
+    }
+
+    ShelfScreen(
+        state = state,
+        onAction = { action ->
+            when (action) {
+                ShelfAction.OnAddClick -> filePicker.launch()
+                ShelfAction.OnDevicesClick -> onDevicesClick()
+                else -> viewModel.onAction(action)
+            }
+        },
+        snackbarHostState = snackbarHostState,
+        incomingSlide = incomingSlide,
+        videoEngine = viewModel.videoEngine,
+        grabState = grabState,
+        hand = { hand.value },
+        transfers = { transfers.value },
+    )
+}
+
+private enum class ShelfContent { Loading, Empty, Items }
+
+private const val PictureKeepMillis = 1_500L
+
+@Composable
+fun ShelfScreen(
+    state: ShelfState,
+    onAction: (ShelfAction) -> Unit,
+    modifier: Modifier = Modifier,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    incomingSlide: IncomingSlideState = rememberIncomingSlideState(),
+    /** Draws the picture of [ShelfState.playing]. */
+    videoEngine: VideoEngine? = null,
+    grabState: GrabState = rememberGrabState(),
+    /** Where the camera sees the hand, while air gestures watch. Read in the draw phase only. */
+    hand: () -> HandPointUi? = { null },
+    /** Every file moving either way. Read only by the pill, the list and the arriving cards. */
+    transfers: () -> TransfersUi = { TransfersUi() },
+) {
+    // Bottom chrome rises into place shortly after the first frame.
+    val barEnter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        awaitFrames()
+        delay(120)
+        barEnter.animateTo(1f, Motion.slideIn())
+    }
+
+    val slideState = rememberSlideState(
+        listener = object : SlideListener {
+            override fun onLifted(id: String, cardWidthPx: Float, cardHeightPx: Float, thumbnail: ByteArray?) =
+                onAction(ShelfAction.OnSlideLifted(id, cardWidthPx, cardHeightPx, thumbnail))
+
+            override fun onMoved(frame: SlideFrame) = onAction(ShelfAction.OnSlideMoved(frame))
+            override fun onReturned(id: String) = onAction(ShelfAction.OnSlideReturned(id))
+            override fun onSent(id: String, edge: ExitEdge) = onAction(ShelfAction.OnItemSent(id, edge))
+        },
+        isMirrored = state.isPaired,
+    )
+    LaunchedEffect(state.items) { slideState.followShelf(state.items) }
+
+    val gridState = rememberLazyStaggeredGridState()
+    val slots = remember { SlotRegistry() }
+
+    // The slot's rect in overlay coordinates, from both corners so it is right even while the shelf is scaled.
+    fun slotRect(id: String): Rect? {
+        val slot = slots[id] ?: return null
+        val size = slot.size
+        val topLeft = slideState.toOverlay(slot, Offset.Zero) ?: return null
+        val bottomRight = slideState.toOverlay(slot, Offset(size.width.toFloat(), size.height.toFloat())) ?: return null
+        return Rect(topLeft, bottomRight)
+    }
+
+    // The card a fist grabs: the one on screen nearest to the fist, unless a card is already being slid.
+    fun nearestCard(point: Offset): Pair<ShelfItemUi, Rect>? {
+        if (slideState.item != null) return null
+        val height = incomingSlide.containerSize.height
+        return state.items
+            .mapNotNull { item -> slotRect(item.id)?.let { item to it } }
+            .filter { (_, rect) -> rect.bottom > 0f && rect.top < height }
+            .minByOrNull { (_, rect) -> (rect.center - point).getDistanceSquared() }
+    }
+
+    // A card let go by the peer flies into its slot at the top of the shelf, so the top is brought into view.
+    SideEffect {
+        incomingSlide.slotOf = { id -> slotRect(arrivingKey(id)) }
+        grabState.pick = ::nearestCard
+    }
+    // The held card's light follows the hand around the screen.
+    val currentHand by rememberUpdatedState(hand)
+    LaunchedEffect(grabState) {
+        snapshotFlow { currentHand() }.collect(grabState::onHand)
+    }
+    val newestArriving = state.arriving.firstOrNull()?.id
+    LaunchedEffect(newestArriving) {
+        if (newestArriving != null && gridState.layoutInfo.totalItemsCount > 0) gridState.animateScrollToItem(0)
+    }
+    // Pictures are only needed while their cards wait, and for a moment while the received item takes over.
+    LaunchedEffect(state.arriving) {
+        delay(PictureKeepMillis)
+        val keep = state.arriving.mapTo(HashSet()) { it.id }
+        incomingSlide.card?.let { keep += it.id }
+        incomingSlide.pictures.keys.retainAll(keep)
+    }
+
+    val insets = WindowInsets.safeDrawing.asPaddingValues()
+    // Only whether the pill shows, not every progress reading, reaches this screen's composition.
+    val currentTransfers by rememberUpdatedState(transfers)
+    val isPillShown by remember { derivedStateOf { currentTransfers().active.isNotEmpty() } }
+    val content = when {
+        state.isLoading -> ShelfContent.Loading
+        state.items.isEmpty() && state.arriving.isEmpty() -> ShelfContent.Empty
+        else -> ShelfContent.Items
+    }
+
+    val playing = state.playing
+    val cardVideo = if (videoEngine != null && playing != null) {
+        CardVideo(videoEngine, playing.itemId, playing.isPaused)
+    } else {
+        null
+    }
+
+    // Back to front: the shelf (recedes while a card is lifted or arriving), the edge blooms, the cards in flight,
+    // then the snackbar, which stays sharp so "Undo" is readable while the shelf is still clearing.
+    // Clipped, so a card past the edge is cut there even when the screen is not the whole window (Twin Simulator).
+    CompositionLocalProvider(LocalCardVideo provides cardVideo) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .clipToBounds()
+                .background(AirColors.Background)
+                .onPlaced(slideState::attachOverlay)
+                .onSizeChanged { size ->
+                    incomingSlide.containerSize = size.toSize()
+                    grabState.containerSize = size.toSize()
+                    onAction(ShelfAction.OnViewportChanged(size.width, size.height))
+                },
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .recede(progress = { max(max(slideState.focus.value, incomingSlide.focus()), grabState.focus()) }),
+            ) {
+                AnimatedContent(
+                    targetState = content,
+                    transitionSpec = { fadeIn(tween(320, delayMillis = 90)) togetherWith fadeOut(tween(160)) },
+                    modifier = Modifier.fillMaxSize(),
+                ) { target ->
+                    when (target) {
+                        ShelfContent.Loading -> Box(Modifier.fillMaxSize())
+                        ShelfContent.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            EmptyShelf()
+                        }
+                        ShelfContent.Items -> ShelfGrid(
+                            items = state.items,
+                            onAction = onAction,
+                            slideState = slideState,
+                            slots = slots,
+                            arriving = state.arriving,
+                            arrivedFrom = state.arrivedFrom,
+                            pictures = incomingSlide.pictures,
+                            flyingId = incomingSlide.flyingId,
+                            transferOf = { id -> transfers().receiving(id) },
+                            gridState = gridState,
+                            grabState = grabState,
+                            contentPadding = PaddingValues(
+                                start = AirDimens.ScreenGutter,
+                                end = AirDimens.ScreenGutter,
+                                top = insets.calculateTopPadding() + 12.dp,
+                                bottom = insets.calculateBottomPadding() + 112.dp,
+                            ),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+
+                // Content melts under the status bar and the floating bar instead of being cut off.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(insets.calculateTopPadding() + 20.dp)
+                        .background(Brush.verticalGradient(listOf(AirColors.Background, Color.Transparent))),
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(insets.calculateBottomPadding() + 120.dp)
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, AirColors.Background))),
+                )
+
+                ShelfBottomBar(
+                    itemCount = state.items.size,
+                    isPaired = state.isPaired,
+                    isLinkSlow = state.isLinkSlow,
+                    onDevicesClick = { onAction(ShelfAction.OnDevicesClick) },
+                    onAddClick = { onAction(ShelfAction.OnAddClick) },
+                    onClearClick = { onAction(ShelfAction.OnClearClick) },
+                    isAirGestureAvailable = state.air.isAvailable,
+                    isAirGestureOn = state.air.isOn,
+                    onAirGestureClick = { onAction(ShelfAction.OnAirGestureToggle) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
+                        .widthIn(max = 420.dp)
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            val t = barEnter.value
+                            alpha = t.coerceIn(0f, 1f)
+                            translationY = (1f - t) * 56.dp.toPx()
+                        },
+                )
+            }
+
+            EdgeBloom(bloom = { width -> slideState.bloom(width) })
+            EdgeBloom(bloom = { incomingSlide.bloom() })
+            ArrivalWave(wave = { incomingSlide.wave() })
+            // Absolute, not start-aligned: the cards' offsets are overlay pixels, also in right-to-left layouts.
+            IncomingCard(incomingSlide, Modifier.align(AbsoluteAlignment.TopLeft))
+            HeldCardLight(grabState)
+            GrabbedCard(grabState, Modifier.align(AbsoluteAlignment.TopLeft))
+            LiftedCard(slideState, Modifier.align(AbsoluteAlignment.TopLeft))
+            HandCursor(hand)
+
+            CatchHint(
+                catchable = state.air.catchable,
+                isWatching = state.air.isWatching,
+                onTap = { onAction(ShelfAction.OnCatchTap) },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 12.dp, start = 24.dp, end = 24.dp),
+            )
+            HoldHint(
+                heldName = state.air.heldName,
+                onTap = { onAction(ShelfAction.OnPutBackTap) },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 12.dp, start = 24.dp, end = 24.dp),
+            )
+
+            // Above the bottom bar; the snackbar rises over it when both show.
+            TransfersPill(
+                transfers = transfers,
+                onClick = { onAction(ShelfAction.OnTransfersClick) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 84.dp),
+            )
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 84.dp)
+                    .padding(bottom = if (isPillShown) 48.dp else 0.dp),
+            )
+        }
+    }
+
+    if (state.isTransfersVisible) {
+        TransfersSheet(
+            transfers = transfers,
+            onCancel = { onAction(ShelfAction.OnCancelTransfer(it)) },
+            onCancelAll = { onAction(ShelfAction.OnCancelAllTransfers) },
+            onClearFinished = { onAction(ShelfAction.OnClearFinishedTransfers) },
+            onDismiss = { onAction(ShelfAction.OnTransfersDismiss) },
+        )
+    }
+
+    if (state.isClearConfirmationVisible) {
+        AlertDialog(
+            onDismissRequest = { onAction(ShelfAction.OnClearDismiss) },
+            title = { Text("Clear the shelf?") },
+            text = { Text("Files stay on your device. They're only removed from the shelf.") },
+            confirmButton = {
+                TextButton(onClick = { onAction(ShelfAction.OnClearConfirm) }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { onAction(ShelfAction.OnClearDismiss) }) { Text("Cancel") }
+            },
+            containerColor = AirColors.SurfaceRaised,
+        )
+    }
+}
+
+@Preview
+@Composable
+private fun ShelfScreenEmptyPreview() {
+    AirTheme {
+        ShelfScreen(state = ShelfState(isLoading = false), onAction = {})
+    }
+}
+
+@Preview
+@Composable
+private fun ShelfScreenItemsPreview() {
+    AirTheme {
+        ShelfScreen(
+            state = ShelfState(
+                isLoading = false,
+                items = listOf(
+                    previewItem("1", "Golden Hour.jpg", "367 KB · 13:25", FileKind.IMAGE, "JPG", 4f / 3f),
+                    previewItem("2", "Meeting notes.md", "208 bytes · 13:25", FileKind.TEXT, "MD", 0.78f),
+                    previewItem("3", "Strawberries.jpg", "319 KB · 13:25", FileKind.IMAGE, "JPG", 1.2f),
+                    previewItem("4", "Q4 Report.pdf", "16 KB · 13:25", FileKind.PDF, "PDF", 0.78f),
+                    previewItem("5", "Walrus.mp4", "18 MB · 13:24", FileKind.VIDEO, "MP4", 1.6f),
+                ),
+                arriving = listOf(ArrivingItemUi(id = "9", name = "River Valley.jpg", aspectRatio = 4f / 3f)),
+            ),
+            onAction = {},
+        )
+    }
+}
+
+private fun previewItem(id: String, name: String, details: String, kind: FileKind, badge: String, ratio: Float) =
+    ShelfItemUi(
+        id = id,
+        name = name,
+        details = details,
+        kind = kind,
+        badge = badge,
+        aspectRatio = ratio,
+        uri = "",
+        mimeType = "",
+    )

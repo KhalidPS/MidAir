@@ -17,6 +17,6 @@ internal fun VersionCatalog.version(alias: String): String =
 internal fun VersionCatalog.pluginId(alias: String): String =
     findPlugin(alias).get().get().pluginId
 
-/** `:feature:shelf:presentation` → `com.kotlistine.transferingfilebyair.feature.shelf.presentation` */
+/** `:feature:shelf:presentation` → `com.kotlistine.midair.feature.shelf.presentation` */
 internal val Project.derivedNamespace: String
-    get() = "com.kotlistine.transferingfilebyair" + path.replace(':', '.').replace('-', '_')
+    get() = "com.kotlistine.midair" + path.replace(':', '.').replace('-', '_')

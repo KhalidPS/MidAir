@@ -5,13 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.kotlistine.transferingfilebyair"
+    namespace = "com.kotlistine.midair"
     compileSdk {
         version = release(libs.versions.compileSdk.get().toInt())
     }
 
     defaultConfig {
-        applicationId = "com.kotlistine.transferingfilebyair"
+        applicationId = "com.kotlistine.midair"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1

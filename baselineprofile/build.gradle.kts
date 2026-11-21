@@ -7,7 +7,7 @@ plugins {
 //   ./gradlew :androidApp:generateBaselineProfile
 //   ./gradlew :baselineprofile:connectedBenchmarkReleaseAndroidTest
 android {
-    namespace = "com.kotlistine.transferingfilebyair.baselineprofile"
+    namespace = "com.kotlistine.midair.baselineprofile"
     compileSdk {
         version = release(libs.versions.compileSdk.get().toInt())
     }
