@@ -45,6 +45,9 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "MidAir"
             packageVersion = "1.0.0"
+            // The installer ships a trimmed Java runtime; these are the modules the app needs beyond the default set
+            // (from `suggestRuntimeModules`). Without java.management the installed app crashes at launch.
+            modules("java.instrument", "java.prefs", "jdk.management", "jdk.unsupported")
             windows { iconFile.set(project.file("icons/midair.ico")) }
             macOS { iconFile.set(project.file("icons/midair.icns")) }
             linux { iconFile.set(project.file("icons/midair.png")) }
