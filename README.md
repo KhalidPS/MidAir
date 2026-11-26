@@ -123,8 +123,8 @@ same way two phones do; a QR code is there as a fallback.
 | Network | For phone ↔ laptop: both on the same Wi-Fi / local network. Phone ↔ phone needs no network. |
 
 ```bash
-git clone TODO-repository-url
-cd TODO-repository-folder
+git clone https://github.com/KhalidPS/MidAir.git
+cd MidAir
 ```
 
 ### Android
