@@ -15,10 +15,9 @@
 
 Built for the [Kotlin Multiplatform Contest](https://kotlinconf.com/contest/) (KotlinConf 2027).
 
-<!-- TODO(media): hero GIF, the card crossing from phone to laptop, ~800 px wide → docs/media/hero.gif -->
-<img src="docs/media/hero.gif" width="800" alt="A card slides off a phone and lands on a laptop" />
+<img src="demos/card_crossing_edges.png" width="320" alt="A card crossing from one phone's edge onto the phone next to it" />
 
-▶️ **[Watch the demo (3–5 min)](TODO-video-link)** <!-- TODO(media): screencast link -->
+▶️ **[Watch the demo videos](#demo-videos)**
 
 </div>
 
@@ -49,37 +48,40 @@ shelf. Videos keep playing while they cross, and with the camera on you can **gr
 it on the other device by opening your hand**.
 
 It works **phone ↔ phone** (Android, over Nearby Connections, no Wi-Fi network needed) and **phone ↔ laptop**
-(Android ↔ Windows, macOS or Linux, over the local network, paired by scanning a QR code).
+(Android ↔ Windows, macOS or Linux, over the local network). The laptop and the phone find each other and pair the
+same way two phones do; a QR code is there as a fallback.
 
 ## Screenshots
 
-<!-- TODO(media): drop the images into docs/media/ with these names, or change the paths. -->
+**Phones**
 
-| Shelf (phone) | Pairing (phone) | Line-up (phone) |
+| Line-up | Receiving | Transfers sheet |
 |:---:|:---:|:---:|
-| <img src="docs/media/phone-shelf.png" width="220" alt="Phone shelf" /> | <img src="docs/media/phone-pairing.png" width="220" alt="Pairing" /> | <img src="docs/media/phone-lineup.png" width="220" alt="Line-up" /> |
-| **Card crossing the edge** | **Receiving** | **Transfers** |
-| <img src="docs/media/phone-crossing.png" width="220" alt="Card crossing the edge" /> | <img src="docs/media/phone-receiving.png" width="220" alt="Receiving" /> | <img src="docs/media/phone-transfers.png" width="220" alt="Transfers sheet" /> |
+| <img src="demos/phones_lineup.png" width="220" alt="Two phones side by side doing the line-up swipe" /> | <img src="demos/receiving.jpg" width="220" alt="A card arriving on the receiving phone" /> | <img src="demos/transfer_sheet.jpg" width="220" alt="Transfers sheet with progress and Stop buttons" /> |
+
+**Desktop**
 
 | Desktop shelf | Pairing QR code on the laptop |
 |:---:|:---:|
-| <img src="docs/media/desktop-shelf.png" width="420" alt="Desktop shelf" /> | <img src="docs/media/desktop-qr.png" width="420" alt="QR pairing window" /> |
+| <img src="demos/desktop_shelf.png" width="420" alt="Desktop shelf" /> | <img src="demos/pairing_qr_code.png" width="260" alt="QR pairing window" /> |
+| **Pairing confirmation** | **Which side the phone is on** |
+| <img src="demos/desktop_pairing.png" width="420" alt="Desktop pairing screen with the matching code" /> | <img src="demos/desktop_sending_side_selection.png" width="420" alt="Phone menu: On my left / On my right" /> |
 
-| Air gestures: grab | Air gestures: release |
+**Air gestures**
+
+| Grab: close your hand into a fist | Release: open it over the other device |
 |:---:|:---:|
-| <img src="docs/media/air-grab.png" width="420" alt="Grabbing a card with a fist" /> | <img src="docs/media/air-release.png" width="420" alt="Opening the hand to drop it" /> |
+| <img src="demos/grap.gif" width="420" alt="Grabbing a card with a fist" /> | <img src="demos/release.gif" width="420" alt="Opening the hand to drop it" /> |
 
 ## Demo videos
 
-<!-- TODO(media): paste the GitHub video links (drag an .mp4 into a GitHub comment to get one) or GIFs. -->
-
-| Clip | Link |
+| Clip | Video |
 |---|---|
-| Phone → phone slide | TODO |
-| Phone → laptop slide | TODO |
-| A video playing while it crosses | TODO |
-| Air gestures: grab here, release there | TODO |
-| Full screencast | TODO |
+| Phone ↔ phone: pair, line up, slide | [Phone Phone Workflow.mp4](demos/Phone%20Phone%20Workflow.mp4) |
+| Phone ↔ laptop: pair, pick a side, slide both ways | [Desktop Phone Workflow.mp4](demos/Desktop%20Phone%20Workflow.mp4) |
+| Air gestures between two phones | [Air Gesture Phones.mp4](demos/Air%20Gesture%20Phones.mp4) |
+| Air gestures with the laptop's webcam | [dektop_air_gesture.mp4](demos/dektop_air_gesture.mp4) |
+| Stopping a send from the Transfers sheet | [sending_cancel.mp4](demos/sending_cancel.mp4) |
 
 ## Features
 
@@ -87,16 +89,27 @@ It works **phone ↔ phone** (Android, over Nearby Connections, no Wi-Fi network
   same physical size and height, following your finger live.
 - **Pair once, line up once.** Phones pair by pressing and holding *Connect* on both; one swipe from one screen
   onto the other measures where the other phone is: which side, how many millimetres away, how much higher or
-  lower. A laptop shows a QR code; the phone scans it.
+  lower. A laptop pairs the same way: it finds the phone on the local network, both show the same code, and you
+  press and hold *Connect*. Where the network keeps them from finding each other, the laptop shows a **QR code** and
+  the phone scans it instead.
 - **Any file.** Photos, videos, PDFs, documents. The card's motion and the file's bytes travel separately, so a big
   file never makes the card stutter, and bytes start moving before you let go.
 - **Video that keeps playing.** A video card plays across both screens while it crosses, kept in step by a shared
   clock (ExoPlayer on Android, FFmpeg on the desktop).
 - **Air gestures.** Turn on the camera: make a fist over a card to grab it, open your hand in front of the other
   device to drop it there. MediaPipe on Android, OpenCV with ONNX hand models on the desktop.
-- **Transfers outlive the screen.** Leave the app or lock the phone; a foreground service keeps files moving, with a
-  progress notification and *Stop* per file.
-- **Encrypted on the local network.** The laptop link uses an authenticated, encrypted channel set up at pairing.
+- **Slide away to remove.** Once the devices are lined up, only the edge facing the other device sends. Drag a card
+  off the opposite edge and it leaves the shelf instead, with *Undo* to bring it back. On the laptop, the side you
+  pick in the menu (**Phone → On my left / On my right**) sets which edge sends and which one removes. Skip the
+  line-up on phones, or the side on the laptop, and **both edges send**: a card slid off either side crosses to the
+  other device.
+- **Clear the shelf.** One button in the shelf's bottom bar empties it, after a confirmation.
+- **Stop one or stop all.** The *Transfers* sheet lists every file moving either way, each with its own *Stop*, and
+  a **Stop all** button when more than one is running.
+- **Transfers outlive the screen.** On Android, leave the app or lock the phone; a foreground service keeps files
+  moving, with a progress notification and *Stop* per file.
+- **Desktop over the local network.** The laptop and the phone talk over the local network (same Wi-Fi), through an
+  authenticated, encrypted channel set up at pairing. Nearby Connections is only used phone ↔ phone.
 
 ## How to run
 
@@ -106,7 +119,7 @@ It works **phone ↔ phone** (Android, over Nearby Connections, no Wi-Fi network
 |---|---|
 | JDK | 17 or newer to start Gradle. The build provisions its own JDK through the Gradle daemon toolchain. |
 | Android | Android Studio (latest stable) or the Android SDK with platform 37. A device with Android 8.0+ and Google Play services. **Two phones** for phone ↔ phone. |
-| Desktop | Windows, macOS or Linux, x86-64 or ARM. A webcam for air gestures (optional). |
+| Desktop | Windows, macOS or Linux, x86-64 or ARM. A webcam for air gestures (optional). **Only tested on Windows**; the macOS build is untested (no Mac was available). |
 | Network | For phone ↔ laptop: both on the same Wi-Fi / local network. Phone ↔ phone needs no network. |
 
 ```bash
@@ -160,15 +173,22 @@ and add `--no-configuration-cache` if the cache still holds the old JDK path.
 5. Press a card, drag it off the edge facing the other phone, and watch it cross. Let go: it lands on the other
    shelf.
 6. Slide a **video** and watch it keep playing while it crosses.
-7. Open **Transfers** to see progress; slide a large file and press the Home button: it keeps going.
+7. Drag a card off the **other** edge, away from the second phone: it leaves the shelf. Tap *Undo* to bring it back.
+8. Open **Transfers** to see progress; slide a large file and press the Home button: it keeps going (a foreground
+   service with a notification). Slide a few files and try **Stop all**.
+9. Use the **Clear** button in the bottom bar to empty the shelf.
 
 **Phone ↔ laptop**
 
-1. Run the desktop app and choose **Phone → Pair with a QR code…** in its menu bar.
-2. On the phone, open pairing and tap **Scan code**, then scan the laptop's code.
+1. Run the desktop app and open MidAir on the phone, both on the same Wi-Fi.
+2. They find each other and show the same code. Check that it matches, then press and hold **Connect** on both.
+   *Fallback:* if they don't find each other, choose **Phone → Pair with a QR code…** in the desktop menu bar, then
+   on the phone tap **Scan code** and scan it.
 3. Hold the phone beside the laptop screen's left or right edge and tell the desktop which side
    (**Phone → On my left / On my right**); the window moves against that edge.
 4. Slide a card off the phone towards the laptop, then drag a file from the laptop shelf back to the phone.
+5. On the laptop, drag a card off the edge away from the phone: it is removed from the shelf, with *Undo*.
+   Switching the side in the menu swaps which edge sends and which removes.
 
 **Only one phone?** A debug build includes the *Twin Simulator*, two virtual phones on one screen:
 `adb shell am start -n com.kotlistine.midair/.SimulatorActivity`
@@ -309,7 +329,7 @@ adb shell am start -n com.kotlistine.midair/.SimulatorActivity
 | Problem | Try |
 |---|---|
 | Phones don't find each other | Allow *Nearby devices* and *Location*, turn on Bluetooth and Wi-Fi, keep the phones close. |
-| Phone can't reach the laptop | Both must be on the same network; some guest or office Wi-Fi blocks devices from seeing each other. Allow the desktop app through the firewall. |
+| Phone can't reach the laptop | Both must be on the same network; some guest or office Wi-Fi blocks devices from seeing each other. Allow the desktop app through the firewall, or pair with the QR code (**Phone → Pair with a QR code…**). |
 | Air gestures don't start on Windows | Check *Settings → Privacy → Camera*; the app offers *Open settings* when the camera is blocked. |
 | `jpackage` missing when packaging | Use a full JDK (not Android Studio's JBR) as `JAVA_HOME`, and run with `--no-configuration-cache`. |
 
