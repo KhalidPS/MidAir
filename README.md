@@ -75,13 +75,15 @@ same way two phones do; a QR code is there as a fallback.
 
 ## Demo videos
 
-| Clip | Video |
-|---|---|
-| Phone ↔ phone: pair, line up, slide | [Phone Phone Workflow.mp4](demos/Phone%20Phone%20Workflow.mp4) |
-| Phone ↔ laptop: pair, pick a side, slide both ways | [Desktop Phone Workflow.mp4](demos/Desktop%20Phone%20Workflow.mp4) |
-| Air gestures between two phones | [Air Gesture Phones.mp4](demos/Air%20Gesture%20Phones.mp4) |
-| Air gestures with the laptop's webcam | [dektop_air_gesture.mp4](demos/dektop_air_gesture.mp4) |
-| Stopping a send from the Transfers sheet | [sending_cancel.mp4](demos/sending_cancel.mp4) |
+Click a thumbnail to watch it on YouTube.
+
+| Phone ↔ phone | Phone ↔ laptop | Stopping a send |
+|:---:|:---:|:---:|
+| [<img src="https://img.youtube.com/vi/n41Fr1qAYyw/hqdefault.jpg" width="260" alt="Phone ↔ phone workflow" />](https://youtube.com/shorts/n41Fr1qAYyw) | [<img src="https://img.youtube.com/vi/IZVQliC9wKQ/hqdefault.jpg" width="260" alt="Phone ↔ laptop workflow" />](https://youtube.com/shorts/IZVQliC9wKQ) | [<img src="https://img.youtube.com/vi/XrKQSeXemEU/hqdefault.jpg" width="260" alt="Stopping a send" />](https://youtube.com/shorts/XrKQSeXemEU) |
+| Pair, line up, slide | Pair, pick a side, slide both ways | *Stop* from the Transfers sheet |
+| **Air gestures: phones** | **Air gestures: laptop** | |
+| [<img src="https://img.youtube.com/vi/VK4Tt7Vu548/hqdefault.jpg" width="260" alt="Air gestures between two phones" />](https://youtube.com/shorts/VK4Tt7Vu548) | [<img src="https://img.youtube.com/vi/hI6l4Ls_9y4/hqdefault.jpg" width="260" alt="Air gestures with the laptop's webcam" />](https://youtube.com/shorts/hI6l4Ls_9y4) | |
+| Grab on one phone, drop on the other | Grab and drop with the webcam | |
 
 ## Features
 
